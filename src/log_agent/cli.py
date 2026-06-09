@@ -270,26 +270,24 @@ def _run_streaming(agent, payload, config=None) -> None:
     shown_text_ids: set[str] = set()  # 已显示过正文的消息 id，避免 token 流与 updates 兜底重复
     rendered_any = False
     buffer = ""          # 当前正在累积的 AI 文本段
-    buffer_msg_id: str | None = None
     live: Live | None = None
-    pending_todos: list[dict] | None = None  # 报告流式输出期间到达的 todo，延后到最后渲染
+    latest_todos: list[dict] | None = None  # 最新一次 write_todos 的内容，统一在最后渲染
 
     def _flush_text() -> None:
         """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
-        nonlocal buffer, buffer_msg_id, live
+        nonlocal buffer, live
         if live is not None:
             live.update(Markdown(buffer))
             live.stop()
             live = None
         buffer = ""
-        buffer_msg_id = None
 
     for mode, data in agent.stream(
         payload, config=config, stream_mode=["messages", "updates"]
     ):
         if mode == "messages":
+            # 逐 token 的 AI 正文增量：用 Live 实现打字机效果
             token_msg, _meta = data
-            # 只渲染 AI 的文本增量；工具消息等跳过
             if getattr(token_msg, "type", "") != "ai":
                 continue
             delta = _content_to_text(getattr(token_msg, "content", ""))
@@ -300,7 +298,6 @@ def _run_streaming(agent, payload, config=None) -> None:
                 console.print()
                 live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
                 live.start()
-                buffer_msg_id = msg_id
             buffer += delta
             if msg_id:
                 shown_text_ids.add(msg_id)  # 标记：这条消息正文已通过 token 流显示
@@ -318,7 +315,7 @@ def _run_streaming(agent, payload, config=None) -> None:
                     msg_id = getattr(msg, "id", None)
 
                     # 正文兜底：若这条 AI 消息有正文，但没经过 token 流显示过，
-                    # 在此补渲染，避免某些模型/网关不发 token 流时报告丢失。
+                    # 在此补渲染，确保不发 token 流的模型/网关（如部分自建网关）报告不丢失。
                     text = _content_to_text(getattr(msg, "content", "")).strip()
                     if text and (not msg_id or msg_id not in shown_text_ids):
                         _flush_text()
@@ -334,27 +331,23 @@ def _run_streaming(agent, payload, config=None) -> None:
                             continue
                         seen_calls.add(call_id)
 
-                        # write_todos 若在报告正文流式输出期间到达（live 活跃），
-                        # 不要打断正文，延后到最后作为完成清单统一渲染；
-                        # 调查阶段（尚无正文）到达的 todo 仍内联渲染，保留实时进度感。
                         if tc.get("name") == "write_todos":
-                            if live is not None:
-                                pending_todos = (tc.get("args") or {}).get("todos") or []
-                            else:
-                                _render_tool_call(tc)
-                                rendered_any = True
+                            # 关键：write_todos 一律不在过程中渲染，只记录最新状态，
+                            # 统一在所有输出结束后渲染一次，确保它绝不会插在报告中间。
+                            latest_todos = (tc.get("args") or {}).get("todos") or []
                         else:
-                            # 真正的动作型工具调用：定格当前正文段后再渲染
+                            # 动作型工具调用（搜索日志 / 读取源码 / grep）：
+                            # 定格当前正文段后渲染，作为实时进度提示。
                             _flush_text()
                             _render_tool_call(tc)
                             rendered_any = True
 
     _flush_text()
 
-    # 报告输出完毕后，把延后的最终任务清单作为完成总结渲染在末尾
-    if pending_todos is not None:
+    # 所有报告/过程输出完毕后，把最终任务清单作为完成总结渲染在末尾
+    if latest_todos is not None:
         console.print()
-        _render_todos(pending_todos)
+        _render_todos(latest_todos)
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
