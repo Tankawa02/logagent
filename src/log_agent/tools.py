@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import os
-import subprocess
+import re
 from pathlib import Path
+
+# 搜索时跳过的目录（跨平台，纯 Python 实现，不依赖外部 grep 命令）
+SKIP_DIRS = {
+    ".git", "node_modules", ".venv", "venv", "__pycache__",
+    "dist", "build", ".next", ".idea", ".mypy_cache", ".pytest_cache",
+}
 
 
 def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 500) -> str:
@@ -54,23 +60,25 @@ def search_logs(path: str, pattern: str, max_results: int = 100) -> str:
     if not p.is_file():
         return f"[错误] 日志文件不存在: {path}"
     try:
-        proc = subprocess.run(
-            ["grep", "-n", "-E", pattern, str(p)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
+        regex = re.compile(pattern)
+    except re.error as exc:
+        return f"[错误] 正则表达式无效: {exc}"
+
+    matches: list[str] = []
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, start=1):
+                if regex.search(line):
+                    matches.append(f"{i}: {line.rstrip()}")
+                    if len(matches) > max_results:
+                        break
+    except OSError as exc:
         return f"[错误] 搜索失败: {exc}"
 
-    if proc.returncode not in (0, 1):
-        return f"[错误] grep 退出码 {proc.returncode}: {proc.stderr.strip()}"
-
-    matches = proc.stdout.splitlines()
     if not matches:
         return f"[提示] 未匹配到 '{pattern}'。"
     truncated = matches[:max_results]
-    note = "" if len(matches) <= max_results else f"\n... 共 {len(matches)} 条，仅显示前 {max_results} 条。"
+    note = "" if len(matches) <= max_results else f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条。"
     return "\n".join(truncated) + note
 
 
@@ -85,13 +93,9 @@ def list_code_files(code_dir: str, max_files: int = 300) -> str:
     if not base.is_dir():
         return f"[错误] 代码目录不存在: {code_dir}"
 
-    skip_dirs = {
-        ".git", "node_modules", ".venv", "venv", "__pycache__",
-        "dist", "build", ".next", ".idea", ".mypy_cache", ".pytest_cache",
-    }
     results: list[str] = []
     for root, dirs, files in os.walk(base):
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for name in files:
             rel = os.path.relpath(os.path.join(root, name), base)
             results.append(rel)
@@ -113,8 +117,8 @@ def read_code_file(code_dir: str, rel_path: str, max_chars: int = 20000) -> str:
     """
     base = Path(code_dir).expanduser().resolve()
     target = (base / rel_path).resolve()
-    # 防止路径穿越读到目录之外的文件
-    if not str(target).startswith(str(base)):
+    # 防止路径穿越读到目录之外的文件（跨平台安全）
+    if not target.is_relative_to(base):
         return f"[错误] 非法路径（越界）: {rel_path}"
     if not target.is_file():
         return f"[错误] 文件不存在: {rel_path}"
@@ -140,24 +144,36 @@ def grep_code(code_dir: str, pattern: str, max_results: int = 80) -> str:
     base = Path(code_dir).expanduser()
     if not base.is_dir():
         return f"[错误] 代码目录不存在: {code_dir}"
-    cmd = [
-        "grep", "-rn", "-E", pattern, str(base),
-        "--exclude-dir=.git", "--exclude-dir=node_modules",
-        "--exclude-dir=.venv", "--exclude-dir=venv",
-        "--exclude-dir=__pycache__", "--exclude-dir=dist",
-        "--exclude-dir=build", "--exclude-dir=.next",
-    ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except (subprocess.SubprocessError, OSError) as exc:
-        return f"[错误] 搜索失败: {exc}"
-    if proc.returncode not in (0, 1):
-        return f"[错误] grep 退出码 {proc.returncode}: {proc.stderr.strip()}"
-    matches = proc.stdout.splitlines()
+        regex = re.compile(pattern)
+    except re.error as exc:
+        return f"[错误] 正则表达式无效: {exc}"
+
+    matches: list[str] = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in files:
+            fpath = Path(root) / name
+            try:
+                with fpath.open("r", encoding="utf-8", errors="replace") as f:
+                    for i, line in enumerate(f, start=1):
+                        if regex.search(line):
+                            rel = os.path.relpath(fpath, base)
+                            matches.append(f"{rel}:{i}: {line.rstrip()}")
+                            if len(matches) > max_results:
+                                break
+            except (OSError, UnicodeError):
+                # 跳过二进制文件或无法读取的文件
+                continue
+            if len(matches) > max_results:
+                break
+        if len(matches) > max_results:
+            break
+
     if not matches:
         return f"[提示] 源码中未匹配到 '{pattern}'。"
     truncated = matches[:max_results]
-    note = "" if len(matches) <= max_results else f"\n... 共 {len(matches)} 条，仅显示前 {max_results} 条。"
+    note = "" if len(matches) <= max_results else f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条。"
     return "\n".join(truncated) + note
 
 
