@@ -267,19 +267,22 @@ def _run_streaming(agent, payload, config=None) -> None:
     AI 文本可能分多段（详细报告 + 收尾），每段独立用一个 Live 渲染，工具调用穿插其间。
     """
     seen_calls: set[str] = set()
+    shown_text_ids: set[str] = set()  # 已显示过正文的消息 id，避免 token 流与 updates 兜底重复
     rendered_any = False
     buffer = ""          # 当前正在累积的 AI 文本段
+    buffer_msg_id: str | None = None
     live: Live | None = None
     pending_todos: list[dict] | None = None  # 报告流式输出期间到达的 todo，延后到最后渲染
 
     def _flush_text() -> None:
         """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
-        nonlocal buffer, live
+        nonlocal buffer, buffer_msg_id, live
         if live is not None:
             live.update(Markdown(buffer))
             live.stop()
             live = None
         buffer = ""
+        buffer_msg_id = None
 
     for mode, data in agent.stream(
         payload, config=config, stream_mode=["messages", "updates"]
@@ -292,20 +295,39 @@ def _run_streaming(agent, payload, config=None) -> None:
             delta = _content_to_text(getattr(token_msg, "content", ""))
             if not delta:
                 continue
+            msg_id = getattr(token_msg, "id", None)
             if live is None:
                 console.print()
                 live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
                 live.start()
+                buffer_msg_id = msg_id
             buffer += delta
+            if msg_id:
+                shown_text_ids.add(msg_id)  # 标记：这条消息正文已通过 token 流显示
             live.update(Markdown(buffer))
             rendered_any = True
 
         elif mode == "updates":
-            # 节点更新：从中找出工具调用
+            # 节点更新：完整消息形式，既含正文也含工具调用
             for node_state in (data or {}).values():
                 if not isinstance(node_state, dict):
                     continue
                 for msg in node_state.get("messages", []) or []:
+                    if getattr(msg, "type", "") != "ai":
+                        continue
+                    msg_id = getattr(msg, "id", None)
+
+                    # 正文兜底：若这条 AI 消息有正文，但没经过 token 流显示过，
+                    # 在此补渲染，避免某些模型/网关不发 token 流时报告丢失。
+                    text = _content_to_text(getattr(msg, "content", "")).strip()
+                    if text and (not msg_id or msg_id not in shown_text_ids):
+                        _flush_text()
+                        console.print()
+                        console.print(Markdown(text))
+                        if msg_id:
+                            shown_text_ids.add(msg_id)
+                        rendered_any = True
+
                     for tc in getattr(msg, "tool_calls", None) or []:
                         call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
                         if call_id in seen_calls:
