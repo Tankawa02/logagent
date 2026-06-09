@@ -9,6 +9,7 @@
 - 内置只读工具：分块读日志、搜索日志、列源码、读源码、grep 源码
 - 利用 deepagents 的 `write_todos` 规划与上下文压缩，能处理大日志
 - 使用 OpenAI 模型（可切换其他 provider）
+- 跨平台：macOS / Linux / Windows 行为一致（搜索为纯 Python 实现，不依赖系统 `grep`）
 
 ## 团队安装（uv）
 
@@ -41,11 +42,37 @@ uv run log-agent --help
 
 ## 配置 API Key
 
-每个团队成员各自设置自己的 OpenAI key（不要写进代码或仓库）：
+每个团队成员各自设置自己的 OpenAI key（不要写进代码或仓库）。不同系统设置方式不同：
+
+### macOS / Linux
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
+
+写进 `~/.zshrc` 或 `~/.bashrc` 可永久生效。
+
+### Windows（PowerShell）
+
+```powershell
+# 仅当前会话生效
+$env:OPENAI_API_KEY="sk-..."
+
+# 永久生效（写入用户环境变量，需重开终端）
+setx OPENAI_API_KEY "sk-..."
+```
+
+### Windows（CMD）
+
+```cmd
+:: 仅当前会话生效
+set OPENAI_API_KEY=sk-...
+
+:: 永久生效（需重开终端）
+setx OPENAI_API_KEY "sk-..."
+```
+
+> 提示：用 `setx` 设置后，需要**重新打开终端**才能读到新变量。
 
 ## 使用
 
