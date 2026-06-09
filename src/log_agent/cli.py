@@ -252,6 +252,7 @@ def _run_streaming(agent, payload, config=None) -> None:
     rendered_any = False
     buffer = ""          # 当前正在累积的 AI 文本段
     live: Live | None = None
+    pending_todos: list[dict] | None = None  # 报告流式输出期间到达的 todo，延后到最后渲染
 
     def _flush_text() -> None:
         """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
@@ -282,7 +283,7 @@ def _run_streaming(agent, payload, config=None) -> None:
             rendered_any = True
 
         elif mode == "updates":
-            # 节点更新：从中找出工具调用，渲染前先把当前文本段定格
+            # 节点更新：从中找出工具调用
             for node_state in (data or {}).values():
                 if not isinstance(node_state, dict):
                     continue
@@ -292,11 +293,27 @@ def _run_streaming(agent, payload, config=None) -> None:
                         if call_id in seen_calls:
                             continue
                         seen_calls.add(call_id)
-                        _flush_text()
-                        _render_tool_call(tc)
-                        rendered_any = True
+
+                        # write_todos 若在报告正文流式输出期间到达（live 活跃），
+                        # 不要打断正文，延后到最后作为完成清单统一渲染；
+                        # 调查阶段（尚无正文）到达的 todo 仍内联渲染，保留实时进度感。
+                        if tc.get("name") == "write_todos":
+                            if live is not None:
+                                pending_todos = (tc.get("args") or {}).get("todos") or []
+                            else:
+                                _render_tool_call(tc)
+                                rendered_any = True
+                        else:
+                            # 真正的动作型工具调用：定格当前正文段后再渲染
+                            _flush_text()
+                            _render_tool_call(tc)
+                            rendered_any = True
 
     _flush_text()
+
+    # 报告输出完毕后，把延后的最终任务清单作为完成总结渲染在末尾
+    if pending_todos is not None:
+        _render_todos(pending_todos)
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
