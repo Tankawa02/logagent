@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 from rich import box
 from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
@@ -130,8 +131,7 @@ def analyze(
     else:
         with console.status("[cyan]分析中...[/cyan]", spinner="dots"):
             result = agent.invoke(payload)
-        final = result["messages"][-1].content
-        console.print(Markdown(final if isinstance(final, str) else str(final)))
+        console.print(Markdown(_collect_ai_texts(result["messages"])))
 
 
 @app.command()
@@ -235,54 +235,71 @@ def chat(
             else:
                 with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
                     result = agent.invoke(payload, config=config)
-                final = result["messages"][-1].content
-                console.print(
-                    Markdown(final if isinstance(final, str) else str(final))
-                )
+                console.print(Markdown(_collect_ai_texts(result["messages"])))
     finally:
         conn.close()
 
 
 def _run_streaming(agent, payload, config=None) -> None:
-    """流式增量渲染整个执行过程。
+    """逐 token 流式渲染整个执行过程。
 
-    模型会在中途以 AI 文本消息的形式输出详细报告，随后才调用 write_todos 收尾，
-    因此不能只渲染工具调用、最后取 messages[-1]（那往往只是一句简短总结）。
-    这里按消息 id 去重，逐条增量渲染：AI 文本内容当作正文渲染，工具调用渲染成
-    美观的过程提示，从而完整保留模型输出的报告。
+    用 stream_mode=["messages", "updates"] 同时拿到两路数据：
+      - "messages"：逐 token 的 AI 文本增量，用 Live 实时刷新，实现打字机效果；
+      - "updates"：每个节点产生的工具调用，渲染成美观的过程提示。
+    AI 文本可能分多段（详细报告 + 收尾），每段独立用一个 Live 渲染，工具调用穿插其间。
     """
-    seen_msgs: set[str] = set()
-    rendered_any_text = False
-    last_chunk = None
+    seen_calls: set[str] = set()
+    rendered_any = False
+    buffer = ""          # 当前正在累积的 AI 文本段
+    live: Live | None = None
 
-    for chunk in agent.stream(payload, config=config, stream_mode="values"):
-        last_chunk = chunk
-        messages = chunk.get("messages", [])
-        for idx, msg in enumerate(messages):
-            msg_id = getattr(msg, "id", None) or f"idx-{idx}"
-            if msg_id in seen_msgs:
+    def _flush_text() -> None:
+        """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
+        nonlocal buffer, live
+        if live is not None:
+            live.update(Markdown(buffer))
+            live.stop()
+            live = None
+        buffer = ""
+
+    for mode, data in agent.stream(
+        payload, config=config, stream_mode=["messages", "updates"]
+    ):
+        if mode == "messages":
+            token_msg, _meta = data
+            # 只渲染 AI 的文本增量；工具消息等跳过
+            if getattr(token_msg, "type", "") != "ai":
                 continue
-            seen_msgs.add(msg_id)
-
-            msg_type = getattr(msg, "type", "")
-            # 只展示 AI 的文本与工具调用；用户消息和工具原始结果（可能是超长日志）跳过
-            if msg_type != "ai":
+            delta = _content_to_text(getattr(token_msg, "content", ""))
+            if not delta:
                 continue
-
-            text = _content_to_text(getattr(msg, "content", ""))
-            if text.strip():
+            if live is None:
                 console.print()
-                console.print(Markdown(text))
-                rendered_any_text = True
+                live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
+                live.start()
+            buffer += delta
+            live.update(Markdown(buffer))
+            rendered_any = True
 
-            for tc in getattr(msg, "tool_calls", None) or []:
-                _render_tool_call(tc)
+        elif mode == "updates":
+            # 节点更新：从中找出工具调用，渲染前先把当前文本段定格
+            for node_state in (data or {}).values():
+                if not isinstance(node_state, dict):
+                    continue
+                for msg in node_state.get("messages", []) or []:
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
+                        if call_id in seen_calls:
+                            continue
+                        seen_calls.add(call_id)
+                        _flush_text()
+                        _render_tool_call(tc)
+                        rendered_any = True
 
-    # 兜底：若整个过程没渲染出任何 AI 文本（异常情况），再从末尾状态取一次
-    if not rendered_any_text:
-        console.print()
-        console.rule("[bold green]最终报告[/bold green]")
-        console.print(Markdown(_extract_final_text(last_chunk)))
+    _flush_text()
+
+    if not rendered_any:
+        console.print("[dim]未获取到模型输出。[/dim]")
 
 
 def _render_tool_call(tc: dict) -> None:
@@ -345,6 +362,30 @@ def _render_todos(todos: list[dict]) -> None:
     )
 
 
+def _collect_ai_texts(messages) -> str:
+    """收集本轮所有 AI 文本消息并拼成完整报告。
+
+    模型会分多条 AI 消息产出（详细报告 + 收尾总结），只取 messages[-1] 会丢掉
+    前面的详细报告。这里从末尾往前扫，把本轮（直到上一条 human 消息为止）的所有
+    AI 文本按时间顺序拼接，从而保留完整报告。
+    """
+    collected: list[str] = []
+    for msg in reversed(messages):
+        msg_type = getattr(msg, "type", "")
+        if msg_type == "human":
+            # 到达本轮用户提问，停止（不跨越到上一轮）
+            break
+        if msg_type != "ai":
+            continue
+        text = _content_to_text(getattr(msg, "content", "")).strip()
+        if text:
+            collected.append(text)
+    if not collected:
+        return "[未获取到模型输出]"
+    # collected 是逆序的，翻转回正常时间顺序
+    return "\n\n".join(reversed(collected))
+
+
 def _content_to_text(content) -> str:
     """把消息 content 统一转成纯文本（兼容字符串与结构化内容块列表）。"""
     if isinstance(content, str):
@@ -360,16 +401,6 @@ def _content_to_text(content) -> str:
                     parts.append(block["text"])
         return "\n".join(parts)
     return str(content) if content else ""
-
-
-def _extract_final_text(chunk) -> str:
-    """从状态快照里取最终回答，与 agent.invoke 的取法一致（含非字符串兜底）。"""
-    if not chunk:
-        return "[未获取到模型输出]"
-    messages = chunk.get("messages", [])
-    if not messages:
-        return "[未获取到模型输出]"
-    return _content_to_text(messages[-1].content) or "[未获取到模型输出]"
 
 
 def main() -> None:
