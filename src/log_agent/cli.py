@@ -47,15 +47,34 @@ def _check_api_key() -> None:
         raise typer.Exit(code=1)
 
 
-def _build_context_message(log_path: str, code_path: str | None, question: str) -> str:
+def _build_context_message(log_path: str, code_paths: list[str], question: str) -> str:
     """把日志/源码路径和问题拼成给 agent 的首条消息。"""
     context_lines = [f"日志文件路径：{log_path}"]
-    if code_path:
-        context_lines.append(f"源码目录路径：{code_path}")
+    if code_paths:
+        if len(code_paths) == 1:
+            context_lines.append(f"源码目录路径：{code_paths[0]}")
+        else:
+            # 多个代码库：逐个列出，并提示 agent 每个工具调用都要带上对应的 code_dir
+            context_lines.append(f"共提供了 {len(code_paths)} 个源码目录，可分别检索：")
+            for i, p in enumerate(code_paths, start=1):
+                context_lines.append(f"  {i}. {p}")
+            context_lines.append(
+                "（调用 list_code_files / read_code_file / grep_code 时，"
+                "请用对应仓库的目录路径作为 code_dir，按需逐个排查。）"
+            )
     else:
         context_lines.append("（本次未提供源码目录，只分析日志。）")
     context_lines.append(f"\n用户问题：{question}")
     return "\n".join(context_lines)
+
+
+def _format_code_paths(code_paths: list[str]) -> str:
+    """把源码目录列表格式化成 Panel 里展示的字符串。"""
+    if not code_paths:
+        return "（无）"
+    if len(code_paths) == 1:
+        return code_paths[0]
+    return "\n      ".join(code_paths)
 
 
 @app.command()
@@ -63,8 +82,10 @@ def analyze(
     log: Path = typer.Option(
         ..., "--log", "-l", help="日志文件路径", exists=True, dir_okay=False, readable=True
     ),
-    code: Path = typer.Option(
-        None, "--code", "-c", help="源码目录路径（可选）", exists=True, file_okay=False
+    code: list[Path] = typer.Option(
+        None, "--code", "-c",
+        help="源码目录路径（可选，可重复传多个以同时分析多个代码库）",
+        exists=True, file_okay=False,
     ),
     question: str = typer.Option(
         "请分析这份日志，定位异常的根因并给出修复建议。",
@@ -81,19 +102,19 @@ def analyze(
         False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
     ),
 ) -> None:
-    """单次分析日志文件，结合源码定位根因（一问一答）。"""
+    """单次分析日志文件，结合源码定位根因（一问一答）。可传多个 -c 同时分析多个代码库。"""
     _check_api_key()
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
-    code_path = str(code.expanduser().resolve()) if code else None
+    code_paths = [str(c.expanduser().resolve()) for c in (code or [])]
 
-    user_message = _build_context_message(log_path, code_path, question)
+    user_message = _build_context_message(log_path, code_paths, question)
 
     console.print(
         Panel.fit(
             f"[bold]日志:[/bold] {log_path}\n"
-            f"[bold]源码:[/bold] {code_path or '（无）'}\n"
+            f"[bold]源码:[/bold] {_format_code_paths(code_paths)}\n"
             f"[bold]模型:[/bold] {model}"
             + (f"\n[bold]接口:[/bold] {base_url}" if base_url else ""),
             title="log-agent",
@@ -118,8 +139,10 @@ def chat(
     log: Path = typer.Option(
         ..., "--log", "-l", help="日志文件路径", exists=True, dir_okay=False, readable=True
     ),
-    code: Path = typer.Option(
-        None, "--code", "-c", help="源码目录路径（可选）", exists=True, file_okay=False
+    code: list[Path] = typer.Option(
+        None, "--code", "-c",
+        help="源码目录路径（可选，可重复传多个以同时分析多个代码库）",
+        exists=True, file_okay=False,
     ),
     model: str = typer.Option(
         "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
@@ -149,7 +172,7 @@ def chat(
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
-    code_path = str(code.expanduser().resolve()) if code else None
+    code_paths = [str(c.expanduser().resolve()) for c in (code or [])]
 
     # 会话数据库位置：默认放在 ~/.log-agent/sessions.db
     db_path = db.expanduser().resolve() if db else Path.home() / ".log-agent" / "sessions.db"
@@ -158,7 +181,7 @@ def chat(
     console.print(
         Panel.fit(
             f"[bold]日志:[/bold] {log_path}\n"
-            f"[bold]源码:[/bold] {code_path or '（无）'}\n"
+            f"[bold]源码:[/bold] {_format_code_paths(code_paths)}\n"
             f"[bold]模型:[/bold] {model}\n"
             + (f"[bold]接口:[/bold] {base_url}\n" if base_url else "")
             + f"[bold]会话:[/bold] {session}  [dim]({db_path})[/dim]\n"
@@ -200,7 +223,7 @@ def chat(
 
             # 首轮把日志/源码路径作为上下文一起带上，之后只发用户的问题
             if first_turn:
-                message = _build_context_message(log_path, code_path, user_input)
+                message = _build_context_message(log_path, code_paths, user_input)
                 first_turn = False
             else:
                 message = user_input
