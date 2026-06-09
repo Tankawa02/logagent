@@ -202,9 +202,14 @@ def chat(
 
 
 def _run_streaming(agent, payload, config=None) -> None:
-    """流式打印执行过程，并在最后渲染最终回答。"""
-    final_text = ""
+    """流式打印执行过程，并在最后渲染最终回答。
+
+    流式只负责展示中间的工具调用过程；最终报告统一从最后一个状态快照里取
+    messages[-1]，与非 verbose 模式（agent.invoke）保持完全一致，避免遗漏内容。
+    """
+    last_chunk = None
     for chunk in agent.stream(payload, config=config, stream_mode="values"):
+        last_chunk = chunk
         messages = chunk.get("messages", [])
         if not messages:
             continue
@@ -216,11 +221,21 @@ def _run_streaming(agent, payload, config=None) -> None:
                     f"[dim]→ 调用工具[/dim] [yellow]{tc.get('name')}[/yellow] "
                     f"[dim]{tc.get('args')}[/dim]"
                 )
-        content = getattr(last, "content", "")
-        if isinstance(content, str) and content.strip():
-            final_text = content
+
     console.rule("[bold green]最终报告[/bold green]")
-    console.print(Markdown(final_text))
+    final = _extract_final_text(last_chunk)
+    console.print(Markdown(final))
+
+
+def _extract_final_text(chunk) -> str:
+    """从状态快照里取最终回答，与 agent.invoke 的取法一致（含非字符串兜底）。"""
+    if not chunk:
+        return "[未获取到模型输出]"
+    messages = chunk.get("messages", [])
+    if not messages:
+        return "[未获取到模型输出]"
+    content = messages[-1].content
+    return content if isinstance(content, str) else str(content)
 
 
 def main() -> None:
