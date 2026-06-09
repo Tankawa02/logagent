@@ -75,6 +75,20 @@ setx OPENAI_API_KEY "sk-..."
 
 > 提示：用 `setx` 设置后，需要**重新打开终端**才能读到新变量。
 
+### 自定义接口地址（可选）
+
+如果你用的是自建网关、代理或第三方 OpenAI 兼容服务，可以指定 base URL。两种方式任选其一：
+
+```bash
+# 方式一：环境变量（推荐，团队统一配置）
+export OPENAI_BASE_URL="https://your-gateway.com/v1"
+
+# 方式二：命令行参数（临时覆盖）
+log-agent analyze -l app.log --base-url https://your-gateway.com/v1
+```
+
+命令行参数 `--base-url` 优先级高于环境变量。`analyze` 和 `chat` 两个命令都支持。
+
 ## 使用
 
 工具提供两种模式：

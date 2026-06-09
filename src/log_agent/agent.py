@@ -47,16 +47,28 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是排查
 """
 
 
-def build_agent(model: str = "openai:gpt-4.1", checkpointer=None):
+def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str | None = None):
     """创建并返回一个配置好的日志分析 deep agent。
 
     Args:
         model: provider:model 格式的模型字符串，默认使用 OpenAI。
         checkpointer: 可选的 checkpointer，用于在多轮对话中保存状态。
             传入后即可通过同一 thread_id 进行连续追问。
+        base_url: 可选的自定义 OpenAI 兼容接口地址（如自建网关 / 代理 /
+            Azure / 第三方兼容服务）。传入后会显式构造一个 ChatOpenAI 实例，
+            并把模型字符串里的 "openai:" 前缀去掉，只保留模型名。
     """
+    resolved_model = model
+    if base_url:
+        # 显式走 OpenAI 兼容接口：去掉可能存在的 "openai:" 前缀，得到纯模型名
+        model_name = model.split(":", 1)[1] if model.startswith("openai:") else model
+        from langchain_openai import ChatOpenAI
+
+        # api_key 仍从环境变量 OPENAI_API_KEY 读取
+        resolved_model = ChatOpenAI(model=model_name, base_url=base_url)
+
     return create_deep_agent(
-        model=model,
+        model=resolved_model,
         tools=ALL_TOOLS,
         system_prompt=SYSTEM_PROMPT,
         checkpointer=checkpointer,

@@ -54,6 +54,10 @@ def analyze(
     model: str = typer.Option(
         "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
     ),
+    base_url: str = typer.Option(
+        None, "--base-url",
+        help="自定义 OpenAI 兼容接口地址（如自建网关/代理）；默认读环境变量 OPENAI_BASE_URL",
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
     ),
@@ -61,6 +65,7 @@ def analyze(
     """单次分析日志文件，结合源码定位根因（一问一答）。"""
     _check_api_key()
 
+    base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
     code_path = str(code.expanduser().resolve()) if code else None
 
@@ -70,13 +75,14 @@ def analyze(
         Panel.fit(
             f"[bold]日志:[/bold] {log_path}\n"
             f"[bold]源码:[/bold] {code_path or '（无）'}\n"
-            f"[bold]模型:[/bold] {model}",
+            f"[bold]模型:[/bold] {model}"
+            + (f"\n[bold]接口:[/bold] {base_url}" if base_url else ""),
             title="log-agent",
             border_style="cyan",
         )
     )
 
-    agent = build_agent(model=model)
+    agent = build_agent(model=model, base_url=base_url)
     payload = {"messages": [{"role": "user", "content": user_message}]}
 
     if verbose:
@@ -99,6 +105,10 @@ def chat(
     model: str = typer.Option(
         "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
     ),
+    base_url: str = typer.Option(
+        None, "--base-url",
+        help="自定义 OpenAI 兼容接口地址（如自建网关/代理）；默认读环境变量 OPENAI_BASE_URL",
+    ),
     session: str = typer.Option(
         "default", "--session", "-s",
         help="会话名称，不同名称的对话历史互相隔离；用相同名称可续上之前的对话",
@@ -118,6 +128,7 @@ def chat(
     import sqlite3
     from langgraph.checkpoint.sqlite import SqliteSaver
 
+    base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
     code_path = str(code.expanduser().resolve()) if code else None
 
@@ -130,7 +141,8 @@ def chat(
             f"[bold]日志:[/bold] {log_path}\n"
             f"[bold]源码:[/bold] {code_path or '（无）'}\n"
             f"[bold]模型:[/bold] {model}\n"
-            f"[bold]会话:[/bold] {session}  [dim]({db_path})[/dim]\n"
+            + (f"[bold]接口:[/bold] {base_url}\n" if base_url else "")
+            + f"[bold]会话:[/bold] {session}  [dim]({db_path})[/dim]\n"
             f"[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]",
             title="log-agent · 多轮对话",
             border_style="cyan",
@@ -141,7 +153,7 @@ def chat(
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     try:
         checkpointer = SqliteSaver(conn)
-        agent = build_agent(model=model, checkpointer=checkpointer)
+        agent = build_agent(model=model, checkpointer=checkpointer, base_url=base_url)
         config = {"configurable": {"thread_id": session}}
 
         # 若该会话已有历史，提示用户这是续接而非新开
