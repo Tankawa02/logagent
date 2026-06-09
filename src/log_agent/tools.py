@@ -12,6 +12,25 @@ SKIP_DIRS = {
     "dist", "build", ".next", ".idea", ".mypy_cache", ".pytest_cache",
 }
 
+# 搜索源码时跳过的二进制 / 非文本扩展名（避免把图片、压缩包、字节码等当文本读）
+SKIP_EXTENSIONS = {
+    # 图片 / 媒体
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
+    ".mp3", ".mp4", ".avi", ".mov", ".wav", ".pdf",
+    # 压缩包 / 归档
+    ".zip", ".gz", ".tar", ".rar", ".7z", ".jar", ".war",
+    # 编译产物 / 字节码 / 二进制
+    ".class", ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".bin",
+    ".o", ".a", ".lib", ".obj",
+    # 字体
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    # 其它
+    ".lock", ".db", ".sqlite", ".sqlite3",
+}
+
+# 搜索 / 读取源码文件时的单文件大小上限（字节），超过则跳过，避免卡死或内存暴涨
+MAX_SEARCH_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
 # Windows 保留设备名：os.walk 可能列出同名文件/junction，
 # 一旦传给 os.path.relpath/abspath 会被解析成 \\.\nul 之类的设备路径，
 # 与正常盘符不在同一挂载点，导致 ValueError。这里直接跳过它们。
@@ -149,6 +168,16 @@ def read_code_file(code_dir: str, rel_path: str, max_chars: int = 20000) -> str:
         return f"[错误] 非法路径（越界）: {rel_path}"
     if not target.is_file():
         return f"[错误] 文件不存在: {rel_path}"
+    # 读取前先检查体积，避免把超大文件整个加载进内存（截断是读完之后才发生的）
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        return f"[错误] 无法访问文件: {exc}"
+    if size > MAX_SEARCH_FILE_SIZE:
+        return (
+            f"[错误] 文件过大（{size} 字节，上限 {MAX_SEARCH_FILE_SIZE} 字节），"
+            f"已拒绝读取。如需查看，请用 grep_code 检索关键字。"
+        )
     try:
         content = target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -184,6 +213,15 @@ def grep_code(code_dir: str, pattern: str, max_results: int = 80) -> str:
             rel = _safe_relpath(root, name, base)
             if rel is None:
                 # 跳过无法计算相对路径的特殊条目（如 Windows 保留设备名 nul/con 等）
+                continue
+            # 跳过二进制 / 非文本扩展名
+            if fpath.suffix.lower() in SKIP_EXTENSIONS:
+                continue
+            # 跳过超大文件，避免逐行读取时卡死或内存暴涨
+            try:
+                if fpath.stat().st_size > MAX_SEARCH_FILE_SIZE:
+                    continue
+            except OSError:
                 continue
             try:
                 with fpath.open("r", encoding="utf-8", errors="replace") as f:
