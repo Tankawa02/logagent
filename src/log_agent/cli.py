@@ -140,7 +140,7 @@ def chat(
         False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
     ),
 ) -> None:
-    """多轮对话模式：连续追问，agent 记住整段对话；会话持久化到本地 SQLite，关掉终端后还能续上。"""
+    """多轮对话模式：连续追问，agent 记住整段对话；会话持久化��本地 SQLite，关掉终端后还能续上。"""
     _check_api_key()
 
     # 延迟导入，单次 analyze 不需要它
@@ -221,34 +221,45 @@ def chat(
 
 
 def _run_streaming(agent, payload, config=None) -> None:
-    """流式打印执行过程，并在最后渲染最终回答。
+    """流式增量渲染整个执行过程。
 
-    流式只负责展示中间的工具调用过程；最终报告统一从最后一个状态快照里取
-    messages[-1]，与非 verbose 模式（agent.invoke）保持完全一致，避免遗漏内容。
+    模型会在中途以 AI 文本消息的形式输出详细报告，随后才调用 write_todos 收尾，
+    因此不能只渲染工具调用、最后取 messages[-1]（那往往只是一句简短总结）。
+    这里按消息 id 去重，逐条增量渲染：AI 文本内容当作正文渲染，工具调用渲染成
+    美观的过程提示，从而完整保留模型输出的报告。
     """
+    seen_msgs: set[str] = set()
+    rendered_any_text = False
     last_chunk = None
-    seen_calls: set[str] = set()
+
     for chunk in agent.stream(payload, config=config, stream_mode="values"):
         last_chunk = chunk
         messages = chunk.get("messages", [])
-        if not messages:
-            continue
-        last = messages[-1]
-        tool_calls = getattr(last, "tool_calls", None)
-        if not tool_calls:
-            continue
-        for tc in tool_calls:
-            # 同一条 tool_call 可能在多个快照里重复出现，按 id 去重避免重复打印
-            call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
-            if call_id in seen_calls:
+        for idx, msg in enumerate(messages):
+            msg_id = getattr(msg, "id", None) or f"idx-{idx}"
+            if msg_id in seen_msgs:
                 continue
-            seen_calls.add(call_id)
-            _render_tool_call(tc)
+            seen_msgs.add(msg_id)
 
-    console.print()
-    console.rule("[bold green]最终报告[/bold green]")
-    final = _extract_final_text(last_chunk)
-    console.print(Markdown(final))
+            msg_type = getattr(msg, "type", "")
+            # 只展示 AI 的文本与工具调用；用户消息和工具原始结果（可能是超长日志）跳过
+            if msg_type != "ai":
+                continue
+
+            text = _content_to_text(getattr(msg, "content", ""))
+            if text.strip():
+                console.print()
+                console.print(Markdown(text))
+                rendered_any_text = True
+
+            for tc in getattr(msg, "tool_calls", None) or []:
+                _render_tool_call(tc)
+
+    # 兜底：若整个过程没渲染出任何 AI 文本（异常情况），再从末尾状态取一次
+    if not rendered_any_text:
+        console.print()
+        console.rule("[bold green]最终报告[/bold green]")
+        console.print(Markdown(_extract_final_text(last_chunk)))
 
 
 def _render_tool_call(tc: dict) -> None:
@@ -311,6 +322,23 @@ def _render_todos(todos: list[dict]) -> None:
     )
 
 
+def _content_to_text(content) -> str:
+    """把消息 content 统一转成纯文本（兼容字符串与结构化内容块列表）。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                # 只取文本块，忽略其它类型（如思考块、引用块等）
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+        return "\n".join(parts)
+    return str(content) if content else ""
+
+
 def _extract_final_text(chunk) -> str:
     """从状态快照里取最终回答，与 agent.invoke 的取法一致（含非字符串兜底）。"""
     if not chunk:
@@ -318,8 +346,7 @@ def _extract_final_text(chunk) -> str:
     messages = chunk.get("messages", [])
     if not messages:
         return "[未获取到模型输出]"
-    content = messages[-1].content
-    return content if isinstance(content, str) else str(content)
+    return _content_to_text(messages[-1].content) or "[未获取到模型输出]"
 
 
 def main() -> None:
