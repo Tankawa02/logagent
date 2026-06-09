@@ -47,14 +47,17 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是排查
 """
 
 
-def build_agent(model: str = "openai:gpt-4.1"):
+def build_agent(model: str = "openai:gpt-4.1", checkpointer=None):
     """创建并返回一个配置好的日志分析 deep agent。
 
     Args:
         model: provider:model 格式的模型字符串，默认使用 OpenAI。
+        checkpointer: 可选的 checkpointer，用于在多轮对话中保存状态。
+            传入后即可通过同一 thread_id 进行连续追问。
     """
     return create_deep_agent(
         model=model,
         tools=ALL_TOOLS,
         system_prompt=SYSTEM_PROMPT,
+        checkpointer=checkpointer,
     )
