@@ -332,9 +332,15 @@ def _run_streaming(agent, payload, config=None) -> None:
                         seen_calls.add(call_id)
 
                         if tc.get("name") == "write_todos":
-                            # 关键：write_todos 一律不在过程中渲染，只记录最新状态，
-                            # 统一在所有输出结束后渲染一次，确保它绝不会插在报告中间。
-                            latest_todos = (tc.get("args") or {}).get("todos") or []
+                            todos = (tc.get("args") or {}).get("todos") or []
+                            if live is not None:
+                                # 报告正文正在流式输出：延后到末尾渲染，避免插进报告中间
+                                latest_todos = todos
+                            else:
+                                # 调查阶段或两段输出之间：立即内联渲染，展示实时进度
+                                _render_todos(todos)
+                                latest_todos = None  # 已展示，无需在末尾重复
+                                rendered_any = True
                         else:
                             # 动作型工具调用（搜索日志 / 读取源码 / grep）：
                             # 定格当前正文段后渲染，作为实时进度提示。
@@ -376,7 +382,7 @@ def _render_tool_call(tc: dict) -> None:
 
 
 def _render_todos(todos: list[dict]) -> None:
-    """把 todo 列表渲染成一个任务进度面板：已完成 / 进行中 / 待办 + 进度统计。"""
+    """把 todo 列表渲染成��个任务进度面板：已完成 / 进行中 / 待办 + 进度统计。"""
     if not todos:
         return
 
