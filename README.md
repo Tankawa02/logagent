@@ -116,7 +116,20 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 你> 退出
 ```
 
-输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。对话状态保存在当前进程内，关闭终端后不保留。
+输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。
+
+**会话持久化**：对话历史保存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
+
+```bash
+# 开一个名为 payment-bug 的会话
+log-agent chat -l app.log -c ./repo --session payment-bug
+
+# 关掉终端后，再次用同名会话继续之前的对话
+log-agent chat -l app.log -c ./repo --session payment-bug
+
+# 自定义数据库文件位置
+log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
+```
 
 ## 参数
 

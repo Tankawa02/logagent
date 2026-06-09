@@ -99,66 +99,94 @@ def chat(
     model: str = typer.Option(
         "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
     ),
+    session: str = typer.Option(
+        "default", "--session", "-s",
+        help="会话名称，不同名称的对话历史互相隔离；用相同名称可续上之前的对话",
+    ),
+    db: Path = typer.Option(
+        None, "--db",
+        help="会话数据库文件路径（默认 ~/.log-agent/sessions.db）",
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
     ),
 ) -> None:
-    """多轮对话模式：连续追问，agent 记住整段对话和已读过的日志。"""
+    """多轮对话模式：连续追问，agent 记住整段对话；会话持久化到本地 SQLite，关掉终端后还能续上。"""
     _check_api_key()
 
     # 延迟导入，单次 analyze 不需要它
-    from langgraph.checkpoint.memory import InMemorySaver
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
 
     log_path = str(log.expanduser().resolve())
     code_path = str(code.expanduser().resolve()) if code else None
+
+    # 会话数据库位置：默认放在 ~/.log-agent/sessions.db
+    db_path = db.expanduser().resolve() if db else Path.home() / ".log-agent" / "sessions.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
     console.print(
         Panel.fit(
             f"[bold]日志:[/bold] {log_path}\n"
             f"[bold]源码:[/bold] {code_path or '（无）'}\n"
             f"[bold]模型:[/bold] {model}\n"
+            f"[bold]会话:[/bold] {session}  [dim]({db_path})[/dim]\n"
             f"[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]",
             title="log-agent · 多轮对话",
             border_style="cyan",
         )
     )
 
-    # checkpointer 在进程内保存对话状态，靠固定 thread_id 串起多轮
-    agent = build_agent(model=model, checkpointer=InMemorySaver())
-    config = {"configurable": {"thread_id": "log-agent-session"}}
+    # SqliteSaver 把对话状态持久化到本地文件，靠 thread_id(=会话名) 串起多轮并跨进程恢复
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    try:
+        checkpointer = SqliteSaver(conn)
+        agent = build_agent(model=model, checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": session}}
 
-    first_turn = True
-    while True:
+        # 若该会话已有历史，提示用户这是续接而非新开
         try:
-            user_input = console.input("\n[bold cyan]你> [/bold cyan]").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]已退出。[/dim]")
-            break
+            resumed = checkpointer.get(config) is not None
+        except Exception:
+            resumed = False
+        if resumed:
+            console.print(f"[green]已加载会话 '{session}' 的历史，可直接继续追问。[/green]")
 
-        if not user_input:
-            continue
-        if user_input.lower() in {"exit", "quit"} or user_input in {"退出", "结束"}:
-            console.print("[dim]已退出。[/dim]")
-            break
+        # 只有全新会话才需要在首轮带上日志/源码路径上下文
+        first_turn = not resumed
+        while True:
+            try:
+                user_input = console.input("\n[bold cyan]你> [/bold cyan]").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]已退出（会话已保存）。[/dim]")
+                break
 
-        # 首轮把日志/源码路径作为上下文一起带上，之后只发用户的问题
-        if first_turn:
-            message = _build_context_message(log_path, code_path, user_input)
-            first_turn = False
-        else:
-            message = user_input
+            if not user_input:
+                continue
+            if user_input.lower() in {"exit", "quit"} or user_input in {"退出", "结束"}:
+                console.print("[dim]已退出（会话已保存）。[/dim]")
+                break
 
-        payload = {"messages": [{"role": "user", "content": message}]}
+            # 首轮把日志/源码路径作为上下文一起带上，之后只发用户的问题
+            if first_turn:
+                message = _build_context_message(log_path, code_path, user_input)
+                first_turn = False
+            else:
+                message = user_input
 
-        if verbose:
-            _run_streaming(agent, payload, config=config)
-        else:
-            with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
-                result = agent.invoke(payload, config=config)
-            final = result["messages"][-1].content
-            console.print(
-                Markdown(final if isinstance(final, str) else str(final))
-            )
+            payload = {"messages": [{"role": "user", "content": message}]}
+
+            if verbose:
+                _run_streaming(agent, payload, config=config)
+            else:
+                with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
+                    result = agent.invoke(payload, config=config)
+                final = result["messages"][-1].content
+                console.print(
+                    Markdown(final if isinstance(final, str) else str(final))
+                )
+    finally:
+        conn.close()
 
 
 def _run_streaming(agent, payload, config=None) -> None:
