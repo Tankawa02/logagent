@@ -12,6 +12,30 @@ SKIP_DIRS = {
     "dist", "build", ".next", ".idea", ".mypy_cache", ".pytest_cache",
 }
 
+# Windows 保留设备名：os.walk 可能列出同名文件/junction，
+# 一旦传给 os.path.relpath/abspath 会被解析成 \\.\nul 之类的设备路径，
+# 与正常盘符不在同一挂载点，导致 ValueError。这里直接跳过它们。
+_WINDOWS_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
+
+def _safe_relpath(root: str, name: str, base: Path) -> str | None:
+    """计算 base 下某文件的相对路径，跨平台安全。
+
+    使用纯词法运算（PurePath.relative_to），不触碰文件系统，也不会把
+    Windows 保留名（nul/con/...）解析成设备路径。无法计算时返回 None。
+    """
+    # 跳过 Windows 保留设备名（忽略扩展名，如 nul.txt 也按 nul 处理）
+    if os.name == "nt" and name.split(".")[0].lower() in _WINDOWS_RESERVED:
+        return None
+    try:
+        return str((Path(root) / name).relative_to(base))
+    except ValueError:
+        return None
+
 
 def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 500) -> str:
     """读取日志文件的指定行区间。
@@ -97,7 +121,10 @@ def list_code_files(code_dir: str, max_files: int = 300) -> str:
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for name in files:
-            rel = os.path.relpath(os.path.join(root, name), base)
+            rel = _safe_relpath(root, name, base)
+            if rel is None:
+                # 跳过无法计算相对路径的特殊条目（如 Windows 保留设备名 nul/con 等）
+                continue
             results.append(rel)
             if len(results) >= max_files:
                 results.append(f"... 已达上限 {max_files} 个文件，省略其余。")
@@ -154,11 +181,14 @@ def grep_code(code_dir: str, pattern: str, max_results: int = 80) -> str:
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for name in files:
             fpath = Path(root) / name
+            rel = _safe_relpath(root, name, base)
+            if rel is None:
+                # 跳过无法计算相对路径的特殊条目（如 Windows 保留设备名 nul/con 等）
+                continue
             try:
                 with fpath.open("r", encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f, start=1):
                         if regex.search(line):
-                            rel = os.path.relpath(fpath, base)
                             matches.append(f"{rel}:{i}: {line.rstrip()}")
                             if len(matches) > max_results:
                                 break
