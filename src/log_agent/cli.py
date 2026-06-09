@@ -353,6 +353,7 @@ def _run_streaming(agent, payload, config=None) -> None:
 
     # 报告输出完毕后，把延后的最终任务清单作为完成总结渲染在末尾
     if pending_todos is not None:
+        console.print()
         _render_todos(pending_todos)
 
     if not rendered_any:
