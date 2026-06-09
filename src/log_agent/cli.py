@@ -140,7 +140,7 @@ def chat(
         False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
     ),
 ) -> None:
-    """多轮对话模式：连续追问，agent 记住整段对话；会话持久化��本地 SQLite，关掉终端后还能续上。"""
+    """多轮对话模式：连续追问，agent 记住整段对话；会话持久化到本地 SQLite，关掉终端后还能续上。"""
     _check_api_key()
 
     # 延迟导入，单次 analyze 不需要它
