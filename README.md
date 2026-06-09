@@ -6,6 +6,7 @@
 ## 功能
 
 - 输入日志文件路径 + 源码目录路径，自动定位问题根因
+- 两种模式：`analyze` 单次分析，`chat` 多轮对话（连续追问，记住上下文）
 - 内置只读工具：分块读日志、搜索日志、列源码、读源码、grep 源码
 - 利用 deepagents 的 `write_todos` 规划与上下文压缩，能处理大日志
 - 使用 OpenAI 模型（可切换其他 provider）
@@ -74,7 +75,28 @@ setx OPENAI_API_KEY "sk-..."
 
 > 提示：用 `setx` 设置后，需要**重新打开终端**才能读到新变量。
 
+### 自定义接口地址（可选）
+
+如果你用的是自建网关、代理或第三方 OpenAI 兼容服务，可以指定 base URL。两种方式任选其一：
+
+```bash
+# 方式一：环境变量（推荐，团队统一配置）
+export OPENAI_BASE_URL="https://your-gateway.com/v1"
+
+# 方式二：命令行参数（临时覆盖）
+log-agent analyze -l app.log --base-url https://your-gateway.com/v1
+```
+
+命令行参数 `--base-url` 优先级高于环境变量。`analyze` 和 `chat` 两个命令都支持。
+
 ## 使用
+
+工具提供两种模式：
+
+- **`analyze`** — 单次一问一答，跑完出一份报告就结束。适合快速排查。
+- **`chat`** — 多轮对话，agent 记住整段对话和已读过的日志，可以连续追问。适合深入排查。
+
+### 单次分析（analyze）
 
 ```bash
 # 只分析日志
@@ -91,6 +113,36 @@ log-agent analyze -l app.log -c ./repo --verbose
 
 # 切换模型
 log-agent analyze -l app.log -m openai:gpt-4.1-mini
+```
+
+### 多轮对话（chat）
+
+```bash
+log-agent chat --log /path/to/app.log --code /path/to/your/repo
+```
+
+进入交互界面后可以连续追问，例如：
+
+```
+你> 先分析一下整体有哪些异常
+你> 那 14:02 那个 NullPointer 具体是哪段代码引起的？
+你> 这个问题和前面的超时有关联吗？
+你> 退出
+```
+
+输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。
+
+**会话持久化**：对话历史保存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
+
+```bash
+# 开一个名为 payment-bug 的会话
+log-agent chat -l app.log -c ./repo --session payment-bug
+
+# 关掉终端后，再次用同名会话继续之前的对话
+log-agent chat -l app.log -c ./repo --session payment-bug
+
+# 自定义数据库文件位置
+log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 ```
 
 ## 参数

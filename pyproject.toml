@@ -9,6 +9,7 @@ dependencies = [
     "langchain-openai>=0.3.0",
     "typer>=0.12.0",
     "rich>=13.7.0",
+    "langgraph-checkpoint-sqlite>=3.1.0",
 ]
 
 [project.scripts]
