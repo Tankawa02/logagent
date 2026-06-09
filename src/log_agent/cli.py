@@ -6,11 +6,30 @@ import os
 from pathlib import Path
 
 import typer
-from rich.console import Console
+from rich import box
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.text import Text
 
 from .agent import build_agent
+
+# 工具名 -> (友好中文名, 主要参数字段)，用于美化工具调用展示
+_TOOL_META = {
+    "read_log_chunk": ("读取日志片段", ("path", "start", "end")),
+    "search_logs": ("搜索日志", ("path", "pattern")),
+    "list_code_files": ("列出源码文件", ("code_dir",)),
+    "read_code_file": ("读取源码", ("code_dir", "rel_path")),
+    "grep_code": ("检索源码", ("code_dir", "pattern")),
+    "write_todos": ("规划任务", ()),
+}
+
+# todo 状态 -> (图标, 颜色)
+_TODO_STATUS = {
+    "completed": ("✓", "green"),
+    "in_progress": ("▶", "yellow"),
+    "pending": ("○", "bright_black"),
+}
 
 app = typer.Typer(
     help="基于 deepagents 的 CLI 日志分析智能体：结合日志与源码定位问题根因。",
@@ -208,6 +227,7 @@ def _run_streaming(agent, payload, config=None) -> None:
     messages[-1]，与非 verbose 模式（agent.invoke）保持完全一致，避免遗漏内容。
     """
     last_chunk = None
+    seen_calls: set[str] = set()
     for chunk in agent.stream(payload, config=config, stream_mode="values"):
         last_chunk = chunk
         messages = chunk.get("messages", [])
@@ -215,16 +235,80 @@ def _run_streaming(agent, payload, config=None) -> None:
             continue
         last = messages[-1]
         tool_calls = getattr(last, "tool_calls", None)
-        if tool_calls:
-            for tc in tool_calls:
-                console.print(
-                    f"[dim]→ 调用工具[/dim] [yellow]{tc.get('name')}[/yellow] "
-                    f"[dim]{tc.get('args')}[/dim]"
-                )
+        if not tool_calls:
+            continue
+        for tc in tool_calls:
+            # 同一条 tool_call 可能在多个快照里重复出现，按 id 去重避免重复打印
+            call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
+            if call_id in seen_calls:
+                continue
+            seen_calls.add(call_id)
+            _render_tool_call(tc)
 
+    console.print()
     console.rule("[bold green]最终报告[/bold green]")
     final = _extract_final_text(last_chunk)
     console.print(Markdown(final))
+
+
+def _render_tool_call(tc: dict) -> None:
+    """把单次工具调用渲染成美观的输出；write_todos 渲染成任务进度面板。"""
+    name = tc.get("name", "")
+    args = tc.get("args") or {}
+
+    if name == "write_todos":
+        _render_todos(args.get("todos") or [])
+        return
+
+    label, fields = _TOOL_META.get(name, (name, ()))
+    # 只挑关键参数，简洁展示，避免把整个 args 字典 dump 出来
+    parts = []
+    for f in fields:
+        if f in args and args[f] not in (None, ""):
+            parts.append(f"[cyan]{f}[/cyan]=[white]{args[f]}[/white]")
+    detail = "  ".join(parts)
+    line = Text.from_markup(f"  [dim]•[/dim] [bold]{label}[/bold]")
+    if detail:
+        line.append_text(Text.from_markup(f"  [dim]{detail}[/dim]"))
+    console.print(line)
+
+
+def _render_todos(todos: list[dict]) -> None:
+    """把 todo 列表渲染成一个任务进度面板：已完成 / 进行中 / 待办 + 进度统计。"""
+    if not todos:
+        return
+
+    rows = []
+    done = 0
+    for item in todos:
+        status = item.get("status", "pending")
+        content = item.get("content", "")
+        icon, color = _TODO_STATUS.get(status, ("○", "bright_black"))
+        if status == "completed":
+            done += 1
+            text = Text.from_markup(f"[{color}]{icon}[/{color}]  [strike dim]{content}[/strike dim]")
+        elif status == "in_progress":
+            text = Text.from_markup(f"[{color}]{icon}[/{color}]  [bold {color}]{content}[/bold {color}]")
+        else:
+            text = Text.from_markup(f"[{color}]{icon}[/{color}]  [white]{content}[/white]")
+        rows.append(text)
+
+    total = len(todos)
+    # 进度条：已完成比例
+    filled = int(round((done / total) * 12)) if total else 0
+    bar = f"[green]{'━' * filled}[/green][bright_black]{'━' * (12 - filled)}[/bright_black]"
+    header = Text.from_markup(f"{bar}  [bold]{done}/{total}[/bold] 已完成")
+
+    body = Group(header, Text(""), *rows)
+    console.print(
+        Panel(
+            body,
+            title="[bold]任务进度[/bold]",
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
 
 
 def _extract_final_text(chunk) -> str:
