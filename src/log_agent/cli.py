@@ -267,10 +267,11 @@ def _run_streaming(agent, payload, config=None) -> None:
     AI 文本可能分多段（详细报告 + 收尾），每段独立用一个 Live 渲染，工具调用穿插其间。
     """
     seen_calls: set[str] = set()
+    shown_text_ids: set[str] = set()  # 已显示过正文的消息 id，避免 token 流与 updates 兜底重复
     rendered_any = False
     buffer = ""          # 当前正在累积的 AI 文本段
     live: Live | None = None
-    pending_todos: list[dict] | None = None  # 报告流式输出期间到达的 todo，延后到最后渲染
+    latest_todos: list[dict] | None = None  # 最新一次 write_todos 的内容，统一在最后渲染
 
     def _flush_text() -> None:
         """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
@@ -285,53 +286,68 @@ def _run_streaming(agent, payload, config=None) -> None:
         payload, config=config, stream_mode=["messages", "updates"]
     ):
         if mode == "messages":
+            # 逐 token 的 AI 正文增量：用 Live 实现打字机效果
             token_msg, _meta = data
-            # 只渲染 AI 的文本增量；工具消息等跳过
             if getattr(token_msg, "type", "") != "ai":
                 continue
             delta = _content_to_text(getattr(token_msg, "content", ""))
             if not delta:
                 continue
+            msg_id = getattr(token_msg, "id", None)
             if live is None:
                 console.print()
                 live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
                 live.start()
             buffer += delta
+            if msg_id:
+                shown_text_ids.add(msg_id)  # 标记：这条消息正文已通过 token 流显示
             live.update(Markdown(buffer))
             rendered_any = True
 
         elif mode == "updates":
-            # 节点更新：从中找出工具调用
+            # 节点更新：完整消息形式，既含正文也含工具调用
             for node_state in (data or {}).values():
                 if not isinstance(node_state, dict):
                     continue
                 for msg in node_state.get("messages", []) or []:
+                    if getattr(msg, "type", "") != "ai":
+                        continue
+                    msg_id = getattr(msg, "id", None)
+
+                    # 正文兜底：若这条 AI 消息有正文，但没经过 token 流显示过，
+                    # 在此补渲染，确保不发 token 流的模型/网关（如部分自建网关）报告不丢失。
+                    text = _content_to_text(getattr(msg, "content", "")).strip()
+                    if text and (not msg_id or msg_id not in shown_text_ids):
+                        _flush_text()
+                        console.print()
+                        console.print(Markdown(text))
+                        if msg_id:
+                            shown_text_ids.add(msg_id)
+                        rendered_any = True
+
                     for tc in getattr(msg, "tool_calls", None) or []:
                         call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
                         if call_id in seen_calls:
                             continue
                         seen_calls.add(call_id)
 
-                        # write_todos 若在报告正文流式输出期间到达（live 活跃），
-                        # 不要打断正文，延后到最后作为完成清单统一渲染；
-                        # 调查阶段（尚无正文）到达的 todo 仍内联渲染，保留实时进度感。
                         if tc.get("name") == "write_todos":
-                            if live is not None:
-                                pending_todos = (tc.get("args") or {}).get("todos") or []
-                            else:
-                                _render_tool_call(tc)
-                                rendered_any = True
+                            # 关键：write_todos 一律不在过程中渲染，只记录最新状态，
+                            # 统一在所有输出结束后渲染一次，确保它绝不会插在报告中间。
+                            latest_todos = (tc.get("args") or {}).get("todos") or []
                         else:
-                            # 真正的动作型工具调用：定格当前正文段后再渲染
+                            # 动作型工具调用（搜索日志 / 读取源码 / grep）：
+                            # 定格当前正文段后渲染，作为实时进度提示。
                             _flush_text()
                             _render_tool_call(tc)
                             rendered_any = True
 
     _flush_text()
 
-    # 报告输出完毕后，把延后的最终任务清单作为完成总结渲染在末尾
-    if pending_todos is not None:
-        _render_todos(pending_todos)
+    # 所有报告/过程输出完毕后，把最终任务清单作为完成总结渲染在末尾
+    if latest_todos is not None:
+        console.print()
+        _render_todos(latest_todos)
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
