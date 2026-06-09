@@ -12,21 +12,39 @@ SKIP_DIRS = {
     "dist", "build", ".next", ".idea", ".mypy_cache", ".pytest_cache",
 }
 
-# 搜索源码时跳过的二进制 / 非文本扩展名（避免把图片、压缩包、字节码等当文本读）
-SKIP_EXTENSIONS = {
-    # 图片 / 媒体
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
-    ".mp3", ".mp4", ".avi", ".mov", ".wav", ".pdf",
-    # 压缩包 / 归档
-    ".zip", ".gz", ".tar", ".rar", ".7z", ".jar", ".war",
-    # 编译产物 / 字节码 / 二进制
-    ".class", ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".bin",
-    ".o", ".a", ".lib", ".obj",
-    # 字体
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    # 其它
-    ".lock", ".db", ".sqlite", ".sqlite3",
+# 只检索这些代码 / 文本扩展名（白名单），其它一律跳过。
+# 比黑名单更可靠：真实仓库里的二进制类型五花八门，列举永远不全；
+# 反过来只关注代码文件，既快又不会误读二进制。
+CODE_EXTENSIONS = {
+    # 常见编程语言
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".java", ".kt", ".kts", ".scala", ".groovy",
+    ".go", ".rs", ".rb", ".php", ".pl", ".pm",
+    ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx",
+    ".cs", ".swift", ".m", ".mm", ".dart", ".lua", ".r",
+    ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+    # 配置 / 标记 / 文本
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".xml", ".html", ".htm", ".css", ".scss", ".sass", ".less",
+    ".md", ".txt", ".env", ".properties", ".gradle",
+    ".vue", ".svelte", ".astro",
+    ".tf", ".tfvars", ".dockerfile",
 }
+
+# 没有扩展名但通常是文本的常见文件名（如 Dockerfile、Makefile）
+CODE_FILENAMES = {
+    "dockerfile", "makefile", "rakefile", "gemfile", "procfile",
+    ".gitignore", ".dockerignore", ".env",
+}
+
+
+def _is_code_file(name: str) -> bool:
+    """判断是否是值得检索的代码 / 文本文件（白名单）。"""
+    lower = name.lower()
+    if lower in CODE_FILENAMES:
+        return True
+    return Path(name).suffix.lower() in CODE_EXTENSIONS
+
 
 # 搜索 / 读取源码文件时的单文件大小上限（字节），超过则跳过，避免卡死或内存暴涨
 MAX_SEARCH_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
@@ -140,6 +158,9 @@ def list_code_files(code_dir: str, max_files: int = 300) -> str:
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for name in files:
+            # 只列代码 / 文本文件（白名单），跳过图片、二进制等无关文件
+            if not _is_code_file(name):
+                continue
             rel = _safe_relpath(root, name, base)
             if rel is None:
                 # 跳过无法计算相对路径的特殊条目（如 Windows 保留设备名 nul/con 等）
@@ -214,8 +235,8 @@ def grep_code(code_dir: str, pattern: str, max_results: int = 80) -> str:
             if rel is None:
                 # 跳过无法计算相对路径的特殊条目（如 Windows 保留设备名 nul/con 等）
                 continue
-            # 跳过二进制 / 非文本扩展名
-            if fpath.suffix.lower() in SKIP_EXTENSIONS:
+            # 只检索代码 / 文本文件（白名单），跳过图片、二进制、压缩包等
+            if not _is_code_file(name):
                 continue
             # 跳过超大文件，避免逐行读取时卡死或内存暴涨
             try:
