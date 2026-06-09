@@ -152,8 +152,9 @@ def chat(
         help="自定义 OpenAI 兼容接口地址（如自建网关/代理）；默认读环境变量 OPENAI_BASE_URL",
     ),
     session: str = typer.Option(
-        "default", "--session", "-s",
-        help="会话名称，不同名称的对话历史互相隔离；用相同名称可续上之前的对话",
+        None, "--session", "-s",
+        help="会话名称，不同名称的对话历史互相隔离；用相同名称可续上之前的对话。"
+             "不指定时自动生成一个唯一会话名（形如 chat-20260609-165130）",
     ),
     db: Path = typer.Option(
         None, "--db",
@@ -168,15 +169,31 @@ def chat(
 
     # 延迟导入，单次 analyze 不需要它
     import sqlite3
+    from datetime import datetime
+
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
     code_paths = [str(c.expanduser().resolve()) for c in (code or [])]
 
+    # 未指定会话名时，自动生成一个带时间戳的唯一会话名，并在面板中提示用户
+    auto_session = session is None
+    if auto_session:
+        session = "chat-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+
     # 会话数据库位置：默认放在 ~/.log-agent/sessions.db
     db_path = db.expanduser().resolve() if db else Path.home() / ".log-agent" / "sessions.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    session_line = f"[bold]会话:[/bold] [green]{session}[/green]"
+    if auto_session:
+        session_line += "  [yellow](自动生成)[/yellow]"
+    session_line += f"  [dim]({db_path})[/dim]\n"
+    resume_hint = (
+        f"[dim]提示：下次用 -s {session} 可续上这次对话。[/dim]\n"
+        if auto_session else ""
+    )
 
     console.print(
         Panel.fit(
@@ -184,8 +201,9 @@ def chat(
             f"[bold]源码:[/bold] {_format_code_paths(code_paths)}\n"
             f"[bold]模型:[/bold] {model}\n"
             + (f"[bold]接口:[/bold] {base_url}\n" if base_url else "")
-            + f"[bold]会话:[/bold] {session}  [dim]({db_path})[/dim]\n"
-            f"[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]",
+            + session_line
+            + resume_hint
+            + f"[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]",
             title="log-agent · 多轮对话",
             border_style="cyan",
         )
@@ -252,6 +270,7 @@ def _run_streaming(agent, payload, config=None) -> None:
     rendered_any = False
     buffer = ""          # 当前正在累积的 AI 文本段
     live: Live | None = None
+    pending_todos: list[dict] | None = None  # 报告流式输出期间到达的 todo，延后到最后渲染
 
     def _flush_text() -> None:
         """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
@@ -282,7 +301,7 @@ def _run_streaming(agent, payload, config=None) -> None:
             rendered_any = True
 
         elif mode == "updates":
-            # 节点更新：从中找出工具调用，渲染前先把当前文本段定格
+            # 节点更新：从中找出工具调用
             for node_state in (data or {}).values():
                 if not isinstance(node_state, dict):
                     continue
@@ -292,11 +311,27 @@ def _run_streaming(agent, payload, config=None) -> None:
                         if call_id in seen_calls:
                             continue
                         seen_calls.add(call_id)
-                        _flush_text()
-                        _render_tool_call(tc)
-                        rendered_any = True
+
+                        # write_todos 若在报告正文流式输出期间到达（live 活跃），
+                        # 不要打断正文，延后到最后作为完成清单统一渲染；
+                        # 调查阶段（尚无正文）到达的 todo 仍内联渲染，保留实时进度感。
+                        if tc.get("name") == "write_todos":
+                            if live is not None:
+                                pending_todos = (tc.get("args") or {}).get("todos") or []
+                            else:
+                                _render_tool_call(tc)
+                                rendered_any = True
+                        else:
+                            # 真正的动作型工具调用：定格当前正文段后再渲染
+                            _flush_text()
+                            _render_tool_call(tc)
+                            rendered_any = True
 
     _flush_text()
+
+    # 报告输出完毕后，把延后的最终任务清单作为完成总结渲染在末尾
+    if pending_todos is not None:
+        _render_todos(pending_todos)
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
