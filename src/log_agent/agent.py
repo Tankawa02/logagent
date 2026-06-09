@@ -3,8 +3,39 @@
 from __future__ import annotations
 
 from deepagents import create_deep_agent
+from langchain.agents.middleware import AgentMiddleware
 
 from .tools import ALL_TOOLS
+
+# deepagents 默认会注入一套内置文件工具，它们由一个以进程 cwd 为根的磁盘后端支撑，
+# 内部对每个路径做 path.relative_to(cwd)。在 Windows 上，当日志和源码位于不同盘符
+# （例如日志在 C:、源码在 D:、而命令从 D: 启动）时，跨盘符算相对路径会抛
+# ValueError: path is on mount ... start on mount ...。
+# 我们自己的 5 个工具是纯 Python、跨平台安全的，已完全覆盖读日志/读源码/搜索的需求，
+# 所以这里把这些会冲突的内置工具从模型请求中过滤掉，让模型只用我们的工具。
+_BUILTIN_FS_TOOLS = frozenset(
+    {"ls", "glob", "grep", "read_file", "edit_file", "write_file", "execute"}
+)
+
+
+def _tool_name(tool) -> str | None:
+    if isinstance(tool, dict):
+        name = tool.get("name")
+        return name if isinstance(name, str) else None
+    name = getattr(tool, "name", None)
+    return name if isinstance(name, str) else None
+
+
+class _StripBuiltinFsTools(AgentMiddleware):
+    """在每次模型调用前，剔除 deepagents 内置的磁盘文件工具（跨平台安全）。"""
+
+    def wrap_model_call(self, request, handler):
+        filtered = [t for t in request.tools if _tool_name(t) not in _BUILTIN_FS_TOOLS]
+        return handler(request.override(tools=filtered))
+
+    async def awrap_model_call(self, request, handler):
+        filtered = [t for t in request.tools if _tool_name(t) not in _BUILTIN_FS_TOOLS]
+        return await handler(request.override(tools=filtered))
 
 SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是排查线上故障。
 你的任务是：结合日志文件和源代码，定位问题的根因（root cause），并给出可执行的修复建议。
@@ -71,5 +102,6 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
         model=resolved_model,
         tools=ALL_TOOLS,
         system_prompt=SYSTEM_PROMPT,
+        middleware=[_StripBuiltinFsTools()],
         checkpointer=checkpointer,
     )
