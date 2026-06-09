@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 import typer
@@ -259,101 +260,90 @@ def chat(
 
 
 def _run_streaming(agent, payload, config=None) -> None:
-    """逐 token 流式渲染整个执行过程。
+    """用 LangChain v3 event streaming 逐 token 渲染整个执行过程。
 
-    用 stream_mode=["messages", "updates"] 同时拿到两路数据：
-      - "messages"：逐 token 的 AI 文本增量，用 Live 实时刷新，实现打字机效果；
-      - "updates"：每个节点产生的工具调用，渲染成美观的过程提示。
+    v3 的 `stream_events(..., version="v3")` 返回 typed projections：
+      - `messages`：每次模型调用的文本增量，用 Live 实时刷新；
+      - `tool_calls`：工具执行生命周期，在工具开始时渲染过程提示。
     AI 文本可能分多段（详细报告 + 收尾），每段独立用一个 Live 渲染，工具调用穿插其间。
     """
     seen_calls: set[str] = set()
-    shown_text_ids: set[str] = set()  # 已显示过正文的消息 id，避免 token 流与 updates 兜底重复
     rendered_any = False
-    buffer = ""          # 当前正在累积的 AI 文本段
-    live: Live | None = None
-    latest_todos: list[dict] | None = None  # 最新一次 write_todos 的内容，统一在最后渲染
 
-    def _flush_text() -> None:
-        """结束当前文本段：把累积内容定格为最终 Markdown 输出。"""
-        nonlocal buffer, live
-        if live is not None:
-            live.update(Markdown(buffer))
-            live.stop()
-            live = None
+    def _render_message_stream(message_stream) -> None:
+        """渲染 v3 messages projection 里的单次模型输出。"""
+        nonlocal rendered_any
         buffer = ""
+        live: Live | None = None
+        streamed_text = False
 
-    for mode, data in agent.stream(
-        payload, config=config, stream_mode=["messages", "updates"]
-    ):
-        if mode == "messages":
-            # 逐 token 的 AI 正文增量：用 Live 实现打字机效果
-            token_msg, _meta = data
-            if getattr(token_msg, "type", "") != "ai":
-                continue
-            delta = _content_to_text(getattr(token_msg, "content", ""))
+        def _stop_live() -> None:
+            nonlocal live
+            if live is not None:
+                live.update(Markdown(buffer))
+                live.stop()
+                live = None
+
+        for delta in message_stream.text:
             if not delta:
                 continue
-            msg_id = getattr(token_msg, "id", None)
             if live is None:
                 console.print()
                 live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
                 live.start()
             buffer += delta
-            if msg_id:
-                shown_text_ids.add(msg_id)  # 标记：这条消息正文已通过 token 流显示
             live.update(Markdown(buffer))
+            streamed_text = True
             rendered_any = True
 
-        elif mode == "updates":
-            # 节点更新：完整消息形式，既含正文也含工具调用
-            for node_state in (data or {}).values():
-                if not isinstance(node_state, dict):
-                    continue
-                for msg in node_state.get("messages", []) or []:
-                    if getattr(msg, "type", "") != "ai":
-                        continue
-                    msg_id = getattr(msg, "id", None)
+        _stop_live()
 
-                    # 正文兜底：若这条 AI 消息有正文，但没经过 token 流显示过，
-                    # 在此补渲染，确保不发 token 流的模型/网关（如部分自建网关）报告不丢失。
-                    text = _content_to_text(getattr(msg, "content", "")).strip()
-                    if text and (not msg_id or msg_id not in shown_text_ids):
-                        _flush_text()
-                        console.print()
-                        console.print(Markdown(text))
-                        if msg_id:
-                            shown_text_ids.add(msg_id)
-                        rendered_any = True
+        # 兜底：部分模型/网关可能不逐 token 推文本，但 v3 message.output 仍会给最终消息。
+        final_text = (buffer or _content_to_text(getattr(message_stream.output, "content", ""))).strip()
+        if final_text and not streamed_text:
+            console.print()
+            console.print(Markdown(final_text))
+            rendered_any = True
 
-                    for tc in getattr(msg, "tool_calls", None) or []:
-                        call_id = tc.get("id") or f"{tc.get('name')}:{tc.get('args')}"
-                        if call_id in seen_calls:
-                            continue
-                        seen_calls.add(call_id)
+    def _render_tool_stream(tool_stream) -> None:
+        """渲染 v3 tool_calls projection 里的单次工具执行开始事件。"""
+        nonlocal rendered_any
+        name = getattr(tool_stream, "tool_name", "")
+        args = getattr(tool_stream, "input", None) or {}
+        call_id = getattr(tool_stream, "tool_call_id", None) or f"{name}:{args}"
+        if call_id in seen_calls:
+            return
+        seen_calls.add(call_id)
 
-                        if tc.get("name") == "write_todos":
-                            todos = (tc.get("args") or {}).get("todos") or []
-                            if live is not None:
-                                # 报告正文正在流式输出：延后到末尾渲染，避免插进报告中间
-                                latest_todos = todos
-                            else:
-                                # 调查阶段或两段输出之间：立即内联渲染，展示实时进度
-                                _render_todos(todos)
-                                latest_todos = None  # 已展示，无需在末尾重复
-                                rendered_any = True
-                        else:
-                            # 动作型工具调用（搜索日志 / 读取源码 / grep）：
-                            # 定格当前正文段后渲染，作为实时进度提示。
-                            _flush_text()
-                            _render_tool_call(tc)
-                            rendered_any = True
+        if name == "write_todos":
+            todos = args.get("todos") or []
+            _render_todos(todos)
+            rendered_any = rendered_any or bool(todos)
+            return
 
-    _flush_text()
+        _render_tool_call({"id": call_id, "name": name, "args": args})
+        rendered_any = True
 
-    # 所有报告/过程输出完毕后，把最终任务清单作为完成总结渲染在末尾
-    if latest_todos is not None:
-        console.print()
-        _render_todos(latest_todos)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*v3 streaming protocol on Pregel is experimental.*",
+        )
+        with agent.stream_events(payload, config=config, version="v3") as stream:
+            for name, item in stream.interleave("messages", "tool_calls"):
+                if name == "messages":
+                    _render_message_stream(item)
+                elif name == "tool_calls":
+                    _render_tool_stream(item)
+
+            final_state = stream.output
+
+    # 兜底：若 projection 没有产出任何可见内容，尝试从最终 state 中提取本轮 AI 正文。
+    if not rendered_any and isinstance(final_state, dict):
+        text = _collect_ai_texts(final_state.get("messages", []))
+        if text and text != "[未获取到模型输出]":
+            console.print(Markdown(text))
+            rendered_any = True
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
