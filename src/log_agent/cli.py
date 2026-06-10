@@ -45,9 +45,9 @@ app = typer.Typer(
     help="基于 deepagents 的 CLI 日志分析智能体：结合日志与源码定位问题根因。",
     add_completion=False,
 )
-# 终端很宽时把正文限制在 100 列以内，避免一行两百字符影响可读性
-_terminal_width = Console().width
-console = Console(width=min(_terminal_width, 100))
+# 和 Claude Code 一样使用终端实际宽度，不做全局硬限宽——
+# 代码块尽量少折行；纯文本段落的可读性由 Markdown 渲染自身控制
+console = Console()
 
 
 def _check_api_key() -> None:
@@ -81,11 +81,13 @@ def _build_context_message(log_path: str, code_paths: list[str], question: str) 
 
 
 def _shorten_path(value: str, keep: int = 3) -> str:
-    """把长路径截断成 …/最后几段 的形式，避免撑爆一行。"""
-    parts = str(value).rstrip("/").split("/")
+    """把长路径截断成 …/最后几段 的形式，避免撑爆一行（兼容 Windows 反斜杠路径）。"""
+    raw = str(value)
+    sep = "\\" if ("\\" in raw and "/" not in raw) else "/"
+    parts = raw.rstrip(sep).split(sep)
     if len(parts) <= keep + 1:
-        return str(value)
-    return "…/" + "/".join(parts[-keep:])
+        return raw
+    return "…" + sep + sep.join(parts[-keep:])
 
 
 def _info_panel(rows: list[tuple[str, str]], title: str, footer: str = "") -> Panel:
@@ -368,7 +370,7 @@ def _run_streaming(agent, payload, config=None) -> None:
             buffer = view_state["buffer"]
             if not buffer:
                 return stats
-            # 预留 4 行给统计行/边距，其余留给预览，且至少 1 行、最多 6 行
+            # ��留 4 行给统计行/边距，其余留给预览，且至少 1 行、最多 6 行
             avail = max(1, min(6, console.size.height - 4))
             lines = buffer.splitlines() or [buffer]
             tail = lines[-avail:]
@@ -502,18 +504,24 @@ def _render_tool_call(tc: dict) -> None:
         return
 
     icon, color, label, fields = _TOOL_META.get(name, ("•", "cyan", name, ()))
-    # 只挑关键参数，简洁展示；路径类参数截断成 …/末尾几段，避免撑爆一行
+    # 只挑关键参数，简洁展示；路径类参数截断成 …/末尾几段；
+    # 其它超长值（如复杂正则）也截断，保证整行不折行（Claude Code 式单行）
     parts = []
     for f in fields:
         if f in args and args[f] not in (None, ""):
-            value = args[f]
+            value = str(args[f])
             if f in _PATH_FIELDS:
-                value = _shorten_path(str(value))
+                value = _shorten_path(value)
+            if len(value) > 60:
+                value = value[:57] + "…"
             parts.append(f"[cyan]{f}[/cyan]=[white]{value}[/white]")
     detail = "  ".join(parts)
     line = Text.from_markup(f"  [{color}]{icon}[/{color}] [bold]{label}[/bold]")
     if detail:
         line.append_text(Text.from_markup(f"  [dim]{detail}[/dim]"))
+    # 单行展示：超出终端宽度时用省略号截断，绝不折行
+    line.truncate(max(console.width - 1, 20), overflow="ellipsis")
+    line.no_wrap = True
     console.print(line)
 
 
