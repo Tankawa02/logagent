@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import warnings
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.text import Text
 
 from .agent import build_agent
@@ -130,9 +132,12 @@ def analyze(
     if verbose:
         _run_streaming(agent, payload)
     else:
+        start = time.perf_counter()
         with console.status("[cyan]分析中...[/cyan]", spinner="dots"):
             result = agent.invoke(payload)
+        elapsed = time.perf_counter() - start
         console.print(Markdown(_collect_ai_texts(result["messages"])))
+        _print_stats(elapsed, _collect_usage(result["messages"]))
 
 
 @app.command()
@@ -252,9 +257,12 @@ def chat(
             if verbose:
                 _run_streaming(agent, payload, config=config)
             else:
+                start = time.perf_counter()
                 with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
                     result = agent.invoke(payload, config=config)
+                elapsed = time.perf_counter() - start
                 console.print(Markdown(_collect_ai_texts(result["messages"])))
+                _print_stats(elapsed, _collect_usage(result["messages"]))
     finally:
         conn.close()
 
@@ -269,38 +277,70 @@ def _run_streaming(agent, payload, config=None) -> None:
     """
     seen_calls: set[str] = set()
     rendered_any = False
+    start = time.perf_counter()
+    # 已完成模型调用的精确 token 累计；进行中的调用用增量片段数粗略估算
+    usage_totals = {"input": 0, "output": 0, "total": 0}
+    # 常驻状态栏的可变状态：当前正在流式输出的文本 + 进行中调用的片段计数
+    view_state = {"buffer": "", "pending_chunks": 0}
+    spinner = Spinner("dots", style="cyan")
+
+    def _stats_renderable():
+        """每次刷新时重新计算耗时与 token，配合 Live 自动刷新实现持续跳动。"""
+        elapsed = time.perf_counter() - start
+        approx = usage_totals["total"] + view_state["pending_chunks"]
+        prefix = "~" if view_state["pending_chunks"] else ""
+        spinner.update(
+            text=Text.from_markup(
+                f" [dim]⏱ {_format_duration(elapsed)}  ·  tokens {prefix}{approx:,}[/dim]"
+            )
+        )
+        return spinner
+
+    class _LiveView:
+        """常驻底部的动态视图：流式正文（若有）+ 实时统计行。
+
+        Live 的后台刷新线程每次刷新都会重新调用 __rich__，因此即使主线程
+        阻塞在等待模型/工具返回，计时器也会持续跳动（类似 Claude Code）。
+        """
+
+        def __rich__(self):
+            if view_state["buffer"]:
+                return Group(Markdown(view_state["buffer"]), Text(""), _stats_renderable())
+            return _stats_renderable()
+
+    def _accumulate_usage(message) -> None:
+        """模型单次调用结束后，把精确的 usage_metadata 累加进总量。"""
+        usage = _usage_from_message(message) if message is not None else None
+        if usage:
+            for key in usage_totals:
+                usage_totals[key] += usage[key]
 
     def _render_message_stream(message_stream) -> None:
-        """渲染 v3 messages projection 里的单次模型输出。"""
-        nonlocal rendered_any
-        buffer = ""
-        live: Live | None = None
-        streamed_text = False
+        """渲染 v3 messages projection 里的单次模型输出。
 
-        def _stop_live() -> None:
-            nonlocal live
-            if live is not None:
-                live.update(Markdown(buffer))
-                live.stop()
-                live = None
+        流式期间正文显示在常驻 Live 区域内；该段输出完成后，把最终 Markdown
+        固化打印到 Live 区域上方，并清空 Live 中的正文，只留统计行继续跳动。
+        """
+        nonlocal rendered_any
 
         for delta in message_stream.text:
             if not delta:
                 continue
-            if live is None:
-                console.print()
-                live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
-                live.start()
-            buffer += delta
-            live.update(Markdown(buffer))
-            streamed_text = True
+            view_state["buffer"] += delta
+            view_state["pending_chunks"] += 1
             rendered_any = True
 
-        _stop_live()
+        final_text = (
+            view_state["buffer"]
+            or _content_to_text(getattr(message_stream.output, "content", ""))
+        ).strip()
 
-        # 兜底：部分模型/网关可能不逐 token 推文本，但 v3 message.output 仍会给最终消息。
-        final_text = (buffer or _content_to_text(getattr(message_stream.output, "content", ""))).strip()
-        if final_text and not streamed_text:
+        # 该段结束：固化正文到 Live 上方，重置进行中状态，统计行继续常驻跳动
+        view_state["buffer"] = ""
+        view_state["pending_chunks"] = 0
+        _accumulate_usage(getattr(message_stream, "output", None))
+
+        if final_text:
             console.print()
             console.print(Markdown(final_text))
             rendered_any = True
@@ -329,14 +369,24 @@ def _run_streaming(agent, payload, config=None) -> None:
             "ignore",
             message=".*v3 streaming protocol on Pregel is experimental.*",
         )
-        with agent.stream_events(payload, config=config, version="v3") as stream:
-            for name, item in stream.interleave("messages", "tool_calls"):
-                if name == "messages":
-                    _render_message_stream(item)
-                elif name == "tool_calls":
-                    _render_tool_stream(item)
+        # 常驻 Live：整轮执行期间状态栏一直显示在底部；后台刷新线程让计时
+        # 持续跳动（包括工具执行 / 等待模型响应的间隙）。期间的 console.print
+        # 输出会自动固化到 Live 区域上方。
+        with Live(
+            _LiveView(),
+            console=console,
+            refresh_per_second=10,
+            vertical_overflow="visible",
+            transient=True,
+        ):
+            with agent.stream_events(payload, config=config, version="v3") as stream:
+                for name, item in stream.interleave("messages", "tool_calls"):
+                    if name == "messages":
+                        _render_message_stream(item)
+                    elif name == "tool_calls":
+                        _render_tool_stream(item)
 
-            final_state = stream.output
+                final_state = stream.output
 
     # 兜底：若 projection 没有产出任何可见内容，尝试从最终 state 中提取本轮 AI 正文。
     if not rendered_any and isinstance(final_state, dict):
@@ -347,6 +397,13 @@ def _run_streaming(agent, payload, config=None) -> None:
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
+
+    # 兜底：若流式过程中没拿到任何 usage（部分网关不在流式 chunk 上带用量），
+    # 尝试从最终 state 的消息里汇总。
+    if usage_totals["total"] == 0 and isinstance(final_state, dict):
+        usage_totals = _collect_usage(final_state.get("messages", []))
+
+    _print_stats(time.perf_counter() - start, usage_totals)
 
 
 def _render_tool_call(tc: dict) -> None:
@@ -407,6 +464,51 @@ def _render_todos(todos: list[dict]) -> None:
             padding=(1, 2),
         )
     )
+
+
+def _format_duration(seconds: float) -> str:
+    """把秒数格式化成易读的时长字符串。"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(seconds, 60)
+    return f"{int(minutes)}m{secs:.0f}s"
+
+
+def _usage_from_message(msg) -> dict:
+    """从单条 AI 消息中提取 token 用量（usage_metadata），缺失时返回全 0。"""
+    usage = getattr(msg, "usage_metadata", None) or {}
+    return {
+        "input": int(usage.get("input_tokens") or 0),
+        "output": int(usage.get("output_tokens") or 0),
+        "total": int(usage.get("total_tokens") or 0),
+    }
+
+
+def _collect_usage(messages) -> dict:
+    """汇总本轮（自上一条 human 消息之后）所有 AI 消息的 token 用量。"""
+    totals = {"input": 0, "output": 0, "total": 0}
+    for msg in reversed(messages):
+        msg_type = getattr(msg, "type", "")
+        if msg_type == "human":
+            break
+        if msg_type != "ai":
+            continue
+        usage = _usage_from_message(msg)
+        for key in totals:
+            totals[key] += usage[key]
+    return totals
+
+
+def _print_stats(elapsed: float, usage: dict) -> None:
+    """在回答末尾打印一行总耗时 + token 统计。"""
+    if usage["total"] > 0:
+        console.print(
+            f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  "
+            f"tokens: 输入 {usage['input']:,} + 输出 {usage['output']:,} "
+            f"= 共 {usage['total']:,}[/dim]"
+        )
+    else:
+        console.print(f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  tokens: 未知（模型未返回用量）[/dim]")
 
 
 def _collect_ai_texts(messages) -> str:
