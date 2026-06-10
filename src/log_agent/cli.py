@@ -13,6 +13,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.text import Text
 
 from .agent import build_agent
@@ -279,15 +280,33 @@ def _run_streaming(agent, payload, config=None) -> None:
     start = time.perf_counter()
     # 已完成模型调用的精确 token 累计；进行中的调用用增量片段数粗略估算
     usage_totals = {"input": 0, "output": 0, "total": 0}
+    # 常驻状态栏的可变状态：当前正在流式输出的文本 + 进行中调用的片段计数
+    view_state = {"buffer": "", "pending_chunks": 0}
+    spinner = Spinner("dots", style="cyan")
 
-    def _stats_text(pending_chunks: int = 0) -> Text:
-        """生成实时统计行：已用时间 + 累计 token（进行中部分为估算值）。"""
+    def _stats_renderable():
+        """每次刷新时重新计算耗时与 token，配合 Live 自动刷新实现持续跳动。"""
         elapsed = time.perf_counter() - start
-        approx = usage_totals["total"] + pending_chunks
-        prefix = "~" if pending_chunks else ""
-        return Text.from_markup(
-            f"[dim]⏱ {_format_duration(elapsed)}  ·  tokens {prefix}{approx:,}[/dim]"
+        approx = usage_totals["total"] + view_state["pending_chunks"]
+        prefix = "~" if view_state["pending_chunks"] else ""
+        spinner.update(
+            text=Text.from_markup(
+                f" [dim]⏱ {_format_duration(elapsed)}  ·  tokens {prefix}{approx:,}[/dim]"
+            )
         )
+        return spinner
+
+    class _LiveView:
+        """常驻底部的动态视图：流式正文（若有）+ 实时统计行。
+
+        Live 的后台刷新线程每次刷新都会重新调用 __rich__，因此即使主线程
+        阻塞在等待模型/工具返回，计时器也会持续跳动（类似 Claude Code）。
+        """
+
+        def __rich__(self):
+            if view_state["buffer"]:
+                return Group(Markdown(view_state["buffer"]), Text(""), _stats_renderable())
+            return _stats_renderable()
 
     def _accumulate_usage(message) -> None:
         """模型单次调用结束后，把精确的 usage_metadata 累加进总量。"""
@@ -297,39 +316,31 @@ def _run_streaming(agent, payload, config=None) -> None:
                 usage_totals[key] += usage[key]
 
     def _render_message_stream(message_stream) -> None:
-        """渲染 v3 messages projection 里的单次模型输出。"""
-        nonlocal rendered_any
-        buffer = ""
-        chunk_count = 0
-        live: Live | None = None
-        streamed_text = False
+        """渲染 v3 messages projection 里的单次模型输出。
 
-        def _stop_live() -> None:
-            nonlocal live
-            if live is not None:
-                live.update(Markdown(buffer))
-                live.stop()
-                live = None
+        流式期间正文显示在常驻 Live 区域内；该段输出完成后，把最终 Markdown
+        固化打印到 Live 区域上方，并清空 Live 中的正文，只留统计行继续跳动。
+        """
+        nonlocal rendered_any
 
         for delta in message_stream.text:
             if not delta:
                 continue
-            if live is None:
-                console.print()
-                live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
-                live.start()
-            buffer += delta
-            chunk_count += 1
-            live.update(Group(Markdown(buffer), Text(""), _stats_text(pending_chunks=chunk_count)))
-            streamed_text = True
+            view_state["buffer"] += delta
+            view_state["pending_chunks"] += 1
             rendered_any = True
 
-        _stop_live()
+        final_text = (
+            view_state["buffer"]
+            or _content_to_text(getattr(message_stream.output, "content", ""))
+        ).strip()
+
+        # 该段结束：固化正文到 Live 上方，重置进行中状态，统计行继续常驻跳动
+        view_state["buffer"] = ""
+        view_state["pending_chunks"] = 0
         _accumulate_usage(getattr(message_stream, "output", None))
 
-        # 兜底：部分模型/网关可能不逐 token 推文本，但 v3 message.output 仍会给最终消息。
-        final_text = (buffer or _content_to_text(getattr(message_stream.output, "content", ""))).strip()
-        if final_text and not streamed_text:
+        if final_text:
             console.print()
             console.print(Markdown(final_text))
             rendered_any = True
@@ -358,14 +369,24 @@ def _run_streaming(agent, payload, config=None) -> None:
             "ignore",
             message=".*v3 streaming protocol on Pregel is experimental.*",
         )
-        with agent.stream_events(payload, config=config, version="v3") as stream:
-            for name, item in stream.interleave("messages", "tool_calls"):
-                if name == "messages":
-                    _render_message_stream(item)
-                elif name == "tool_calls":
-                    _render_tool_stream(item)
+        # 常驻 Live：整轮执行期间状态栏一直显示在底部；后台刷新线程让计时
+        # 持续跳动（包括工具执行 / 等待模型响应的间隙）。期间的 console.print
+        # 输出会自动固化到 Live 区域上方。
+        with Live(
+            _LiveView(),
+            console=console,
+            refresh_per_second=10,
+            vertical_overflow="visible",
+            transient=True,
+        ):
+            with agent.stream_events(payload, config=config, version="v3") as stream:
+                for name, item in stream.interleave("messages", "tool_calls"):
+                    if name == "messages":
+                        _render_message_stream(item)
+                    elif name == "tool_calls":
+                        _render_tool_stream(item)
 
-            final_state = stream.output
+                final_state = stream.output
 
     # 兜底：若 projection 没有产出任何可见内容，尝试从最终 state 中提取本轮 AI 正文。
     if not rendered_any and isinstance(final_state, dict):
