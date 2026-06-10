@@ -13,20 +13,26 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 
 from .agent import build_agent
 
-# 工具名 -> (友好中文名, 主要参数字段)，用于美化工具调用展示
+# 工具名 -> (图标, 图标颜色, 友好中文名, 主要参数字段)，用于美化工具调用展示
+# 日志类工具用黄色 ▤，源码类工具用蓝色 ◆，其它用青色 •
 _TOOL_META = {
-    "read_log_chunk": ("读取日志片段", ("path", "start", "end")),
-    "search_logs": ("搜索日志", ("path", "pattern")),
-    "list_code_files": ("列出源码文件", ("code_dir",)),
-    "read_code_file": ("读取源码", ("code_dir", "rel_path")),
-    "grep_code": ("检索源码", ("code_dir", "pattern")),
-    "write_todos": ("规划任务", ()),
+    "read_log_chunk": ("▤", "yellow", "读取日志片段", ("path", "start", "end")),
+    "search_logs": ("▤", "yellow", "搜索日志", ("path", "pattern")),
+    "list_code_files": ("◆", "blue", "列出源码文件", ("code_dir",)),
+    "read_code_file": ("◆", "blue", "读取源码", ("code_dir", "rel_path")),
+    "grep_code": ("◆", "blue", "检索源码", ("code_dir", "pattern")),
+    "write_todos": ("•", "cyan", "规划任务", ()),
 }
+
+# 工具参数里属于"路径"的字段，展示时做截断美化
+_PATH_FIELDS = {"path", "code_dir", "rel_path"}
 
 # todo 状态 -> (图标, 颜色)
 _TODO_STATUS = {
@@ -39,7 +45,9 @@ app = typer.Typer(
     help="基于 deepagents 的 CLI 日志分析智能体：结合日志与源码定位问题根因。",
     add_completion=False,
 )
-console = Console()
+# 终端很宽时把正文限制在 100 列以内，避免一行两百字符影响可读性
+_terminal_width = Console().width
+console = Console(width=min(_terminal_width, 100))
 
 
 def _check_api_key() -> None:
@@ -72,13 +80,32 @@ def _build_context_message(log_path: str, code_paths: list[str], question: str) 
     return "\n".join(context_lines)
 
 
+def _shorten_path(value: str, keep: int = 3) -> str:
+    """把长路径截断成 …/最后几段 的形式，避免撑爆一行。"""
+    parts = str(value).rstrip("/").split("/")
+    if len(parts) <= keep + 1:
+        return str(value)
+    return "…/" + "/".join(parts[-keep:])
+
+
+def _info_panel(rows: list[tuple[str, str]], title: str, footer: str = "") -> Panel:
+    """用两列对齐的 grid 构建启动信息面板，标签列等宽对齐。"""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(justify="right", style="bold cyan", no_wrap=True)
+    grid.add_column(overflow="fold")
+    for label, value in rows:
+        grid.add_row(label, Text.from_markup(value) if "[" in value else value)
+    body: Group | Table = grid
+    if footer:
+        body = Group(grid, Text(""), Text.from_markup(footer))
+    return Panel.fit(body, title=f"[bold]{title}[/bold]", border_style="cyan", box=box.ROUNDED)
+
+
 def _format_code_paths(code_paths: list[str]) -> str:
     """把源码目录列表格式化成 Panel 里展示的字符串。"""
     if not code_paths:
         return "（无）"
-    if len(code_paths) == 1:
-        return code_paths[0]
-    return "\n      ".join(code_paths)
+    return "\n".join(code_paths)
 
 
 @app.command()
@@ -115,16 +142,14 @@ def analyze(
 
     user_message = _build_context_message(log_path, code_paths, question)
 
-    console.print(
-        Panel.fit(
-            f"[bold]日志:[/bold] {log_path}\n"
-            f"[bold]源码:[/bold] {_format_code_paths(code_paths)}\n"
-            f"[bold]模型:[/bold] {model}"
-            + (f"\n[bold]接口:[/bold] {base_url}" if base_url else ""),
-            title="log-agent",
-            border_style="cyan",
-        )
-    )
+    rows = [
+        ("日志", log_path),
+        ("源码", _format_code_paths(code_paths)),
+        ("模型", model),
+    ]
+    if base_url:
+        rows.append(("接口", base_url))
+    console.print(_info_panel(rows, title="log-agent"))
 
     agent = build_agent(model=model, base_url=base_url)
     payload = {"messages": [{"role": "user", "content": user_message}]}
@@ -136,6 +161,9 @@ def analyze(
         with console.status("[cyan]分析中...[/cyan]", spinner="dots"):
             result = agent.invoke(payload)
         elapsed = time.perf_counter() - start
+        console.print()
+        console.print(Rule("[bold cyan]分析结果[/bold cyan]", style="dim"))
+        console.print()
         console.print(Markdown(_collect_ai_texts(result["messages"])))
         _print_stats(elapsed, _collect_usage(result["messages"]))
 
@@ -188,32 +216,29 @@ def chat(
     if auto_session:
         session = "chat-" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    # 会话数据库位置：默认放在 ~/.log-agent/sessions.db
+    # 会话数据库位置：��认放在 ~/.log-agent/sessions.db
     db_path = db.expanduser().resolve() if db else Path.home() / ".log-agent" / "sessions.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    session_line = f"[bold]会话:[/bold] [green]{session}[/green]"
+    session_value = f"[green]{session}[/green]"
     if auto_session:
-        session_line += "  [yellow](自动生成)[/yellow]"
-    session_line += f"  [dim]({db_path})[/dim]\n"
-    resume_hint = (
-        f"[dim]提示：下次用 -s {session} 可续上这次对话。[/dim]\n"
-        if auto_session else ""
-    )
+        session_value += "  [yellow](自动生成)[/yellow]"
+    session_value += f"\n[dim]{db_path}[/dim]"
 
-    console.print(
-        Panel.fit(
-            f"[bold]日志:[/bold] {log_path}\n"
-            f"[bold]源码:[/bold] {_format_code_paths(code_paths)}\n"
-            f"[bold]模型:[/bold] {model}\n"
-            + (f"[bold]接口:[/bold] {base_url}\n" if base_url else "")
-            + session_line
-            + resume_hint
-            + f"[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]",
-            title="log-agent · 多轮对话",
-            border_style="cyan",
-        )
-    )
+    footer = ""
+    if auto_session:
+        footer += f"[dim]提示：下次用 -s {session} 可续上这次对话。[/dim]\n"
+    footer += "[dim]输入问题开始对话；输入 exit / quit / 退出 结束。[/dim]"
+
+    rows = [
+        ("日志", log_path),
+        ("源码", _format_code_paths(code_paths)),
+        ("模型", model),
+    ]
+    if base_url:
+        rows.append(("接口", base_url))
+    rows.append(("会话", session_value))
+    console.print(_info_panel(rows, title="log-agent · 多轮对话", footer=footer))
 
     # SqliteSaver 把对话状态持久化到本地文件，靠 thread_id(=会话名) 串起多轮并跨进程恢复
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -232,7 +257,13 @@ def chat(
 
         # 只有全新会话才需要在首轮带上日志/源码路径上下文
         first_turn = not resumed
+        first_prompt = True
         while True:
+            # 第二轮起在新提问前画一条淡色分隔线，区分上下轮
+            if not first_prompt:
+                console.print()
+                console.print(Rule(style="bright_black"))
+            first_prompt = False
             try:
                 user_input = console.input("\n[bold cyan]你> [/bold cyan]").strip()
             except (EOFError, KeyboardInterrupt):
@@ -261,6 +292,7 @@ def chat(
                 with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
                     result = agent.invoke(payload, config=config)
                 elapsed = time.perf_counter() - start
+                console.print()
                 console.print(Markdown(_collect_ai_texts(result["messages"])))
                 _print_stats(elapsed, _collect_usage(result["messages"]))
     finally:
@@ -277,6 +309,7 @@ def _run_streaming(agent, payload, config=None) -> None:
     """
     seen_calls: set[str] = set()
     rendered_any = False
+    printed_answer_rule = False
     start = time.perf_counter()
     # 已完成模型调用的精确 token 累计；进行中的调用用增量片段数粗略估算
     usage_totals = {"input": 0, "output": 0, "total": 0}
@@ -341,7 +374,13 @@ def _run_streaming(agent, payload, config=None) -> None:
         _accumulate_usage(getattr(message_stream, "output", None))
 
         if final_text:
+            nonlocal printed_answer_rule
             console.print()
+            # 第一段正式回答前画一条"分析结果"分隔线，让结论与工具流水区分开
+            if not printed_answer_rule:
+                console.print(Rule("[bold cyan]分析结果[/bold cyan]", style="dim"))
+                console.print()
+                printed_answer_rule = True
             console.print(Markdown(final_text))
             rendered_any = True
 
@@ -370,7 +409,7 @@ def _run_streaming(agent, payload, config=None) -> None:
             message=".*v3 streaming protocol on Pregel is experimental.*",
         )
         # 常驻 Live：整轮执行期间状态栏一直显示在底部；后台刷新线程让计时
-        # 持续跳动（包括工具执行 / 等待模型响应的间隙）。期间的 console.print
+        # 持续跳动（包括工具执行 / 等待模型响应的��隙）。期间的 console.print
         # 输出会自动固化到 Live 区域上方。
         with Live(
             _LiveView(),
@@ -415,14 +454,17 @@ def _render_tool_call(tc: dict) -> None:
         _render_todos(args.get("todos") or [])
         return
 
-    label, fields = _TOOL_META.get(name, (name, ()))
-    # 只挑关键参数，简洁展示，避免把整个 args 字典 dump 出来
+    icon, color, label, fields = _TOOL_META.get(name, ("•", "cyan", name, ()))
+    # 只挑关键参数，简洁展示；路径类参数截断成 …/末尾几段，避免撑爆一行
     parts = []
     for f in fields:
         if f in args and args[f] not in (None, ""):
-            parts.append(f"[cyan]{f}[/cyan]=[white]{args[f]}[/white]")
+            value = args[f]
+            if f in _PATH_FIELDS:
+                value = _shorten_path(str(value))
+            parts.append(f"[cyan]{f}[/cyan]=[white]{value}[/white]")
     detail = "  ".join(parts)
-    line = Text.from_markup(f"  [dim]•[/dim] [bold]{label}[/bold]")
+    line = Text.from_markup(f"  [{color}]{icon}[/{color}] [bold]{label}[/bold]")
     if detail:
         line.append_text(Text.from_markup(f"  [dim]{detail}[/dim]"))
     console.print(line)
@@ -500,15 +542,16 @@ def _collect_usage(messages) -> dict:
 
 
 def _print_stats(elapsed: float, usage: dict) -> None:
-    """在回答末尾打印一行总耗时 + token 统计。"""
+    """在回答末尾打印一条统计分隔线：总耗时 + token 用量（↑输入 ↓输出）。"""
     if usage["total"] > 0:
-        console.print(
-            f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  "
-            f"tokens: 输入 {usage['input']:,} + 输出 {usage['output']:,} "
-            f"= 共 {usage['total']:,}[/dim]"
+        title = (
+            f"[dim]⏱ {_format_duration(elapsed)} · "
+            f"↑ {usage['input']:,} ↓ {usage['output']:,} · 共 {usage['total']:,} tokens[/dim]"
         )
     else:
-        console.print(f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  tokens: 未知（模型未返回用量）[/dim]")
+        title = f"[dim]⏱ {_format_duration(elapsed)} · tokens 未知（模型未返回用量）[/dim]"
+    console.print()
+    console.print(Rule(title, style="bright_black", align="right"))
 
 
 def _collect_ai_texts(messages) -> str:
