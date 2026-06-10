@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import warnings
 from pathlib import Path
 
@@ -130,9 +131,12 @@ def analyze(
     if verbose:
         _run_streaming(agent, payload)
     else:
+        start = time.perf_counter()
         with console.status("[cyan]分析中...[/cyan]", spinner="dots"):
             result = agent.invoke(payload)
+        elapsed = time.perf_counter() - start
         console.print(Markdown(_collect_ai_texts(result["messages"])))
+        _print_stats(elapsed, _collect_usage(result["messages"]))
 
 
 @app.command()
@@ -252,9 +256,12 @@ def chat(
             if verbose:
                 _run_streaming(agent, payload, config=config)
             else:
+                start = time.perf_counter()
                 with console.status("[cyan]思考中...[/cyan]", spinner="dots"):
                     result = agent.invoke(payload, config=config)
+                elapsed = time.perf_counter() - start
                 console.print(Markdown(_collect_ai_texts(result["messages"])))
+                _print_stats(elapsed, _collect_usage(result["messages"]))
     finally:
         conn.close()
 
@@ -269,11 +276,31 @@ def _run_streaming(agent, payload, config=None) -> None:
     """
     seen_calls: set[str] = set()
     rendered_any = False
+    start = time.perf_counter()
+    # 已完成模型调用的精确 token 累计；进行中的调用用增量片段数粗略估算
+    usage_totals = {"input": 0, "output": 0, "total": 0}
+
+    def _stats_text(pending_chunks: int = 0) -> Text:
+        """生成实时统计行：已用时间 + 累计 token（进行中部分为估算值）。"""
+        elapsed = time.perf_counter() - start
+        approx = usage_totals["total"] + pending_chunks
+        prefix = "~" if pending_chunks else ""
+        return Text.from_markup(
+            f"[dim]⏱ {_format_duration(elapsed)}  ·  tokens {prefix}{approx:,}[/dim]"
+        )
+
+    def _accumulate_usage(message) -> None:
+        """模型单次调用结束后，把精确的 usage_metadata 累加进总量。"""
+        usage = _usage_from_message(message) if message is not None else None
+        if usage:
+            for key in usage_totals:
+                usage_totals[key] += usage[key]
 
     def _render_message_stream(message_stream) -> None:
         """渲染 v3 messages projection 里的单次模型输出。"""
         nonlocal rendered_any
         buffer = ""
+        chunk_count = 0
         live: Live | None = None
         streamed_text = False
 
@@ -292,11 +319,13 @@ def _run_streaming(agent, payload, config=None) -> None:
                 live = Live(console=console, refresh_per_second=12, vertical_overflow="visible")
                 live.start()
             buffer += delta
-            live.update(Markdown(buffer))
+            chunk_count += 1
+            live.update(Group(Markdown(buffer), Text(""), _stats_text(pending_chunks=chunk_count)))
             streamed_text = True
             rendered_any = True
 
         _stop_live()
+        _accumulate_usage(getattr(message_stream, "output", None))
 
         # 兜底：部分模型/网关可能不逐 token 推文本，但 v3 message.output 仍会给最终消息。
         final_text = (buffer or _content_to_text(getattr(message_stream.output, "content", ""))).strip()
@@ -347,6 +376,13 @@ def _run_streaming(agent, payload, config=None) -> None:
 
     if not rendered_any:
         console.print("[dim]未获取到模型输出。[/dim]")
+
+    # 兜底：若流式过程中没拿到任何 usage（部分网关不在流式 chunk 上带用量），
+    # 尝试从最终 state 的消息里汇总。
+    if usage_totals["total"] == 0 and isinstance(final_state, dict):
+        usage_totals = _collect_usage(final_state.get("messages", []))
+
+    _print_stats(time.perf_counter() - start, usage_totals)
 
 
 def _render_tool_call(tc: dict) -> None:
@@ -407,6 +443,51 @@ def _render_todos(todos: list[dict]) -> None:
             padding=(1, 2),
         )
     )
+
+
+def _format_duration(seconds: float) -> str:
+    """把秒数格式化成易读的时长字符串。"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(seconds, 60)
+    return f"{int(minutes)}m{secs:.0f}s"
+
+
+def _usage_from_message(msg) -> dict:
+    """从单条 AI 消息中提取 token 用量（usage_metadata），缺失时返回全 0。"""
+    usage = getattr(msg, "usage_metadata", None) or {}
+    return {
+        "input": int(usage.get("input_tokens") or 0),
+        "output": int(usage.get("output_tokens") or 0),
+        "total": int(usage.get("total_tokens") or 0),
+    }
+
+
+def _collect_usage(messages) -> dict:
+    """汇总本轮（自上一条 human 消息之后）所有 AI 消息的 token 用量。"""
+    totals = {"input": 0, "output": 0, "total": 0}
+    for msg in reversed(messages):
+        msg_type = getattr(msg, "type", "")
+        if msg_type == "human":
+            break
+        if msg_type != "ai":
+            continue
+        usage = _usage_from_message(msg)
+        for key in totals:
+            totals[key] += usage[key]
+    return totals
+
+
+def _print_stats(elapsed: float, usage: dict) -> None:
+    """在回答末尾打印一行总耗时 + token 统计。"""
+    if usage["total"] > 0:
+        console.print(
+            f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  "
+            f"tokens: 输入 {usage['input']:,} + 输出 {usage['output']:,} "
+            f"= 共 {usage['total']:,}[/dim]"
+        )
+    else:
+        console.print(f"\n[dim]⏱ 总耗时 {_format_duration(elapsed)}  ·  tokens: 未知（模型未返回用量）[/dim]")
 
 
 def _collect_ai_texts(messages) -> str:
