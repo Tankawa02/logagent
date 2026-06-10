@@ -299,6 +299,28 @@ def chat(
         conn.close()
 
 
+def _split_complete_blocks(text: str) -> tuple[str, str]:
+    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式增量固化）。
+
+    以空行作为块边界，且绝不在未闭合的 ``` / ~~~ 代码围栏内部切分，
+    保证固化出去的部分总是可以独立渲染的合法 Markdown。
+    返回 (可固化部分, 剩余未完成部分)。
+    """
+    lines = text.split("\n")
+    in_fence = False
+    last_safe = -1  # 最后一个可安全切分的行号（空行且不在代码围栏内）
+    # 最后一行很可能还没接收完整，永远留在剩余部分里
+    for i, line in enumerate(lines[:-1]):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        elif not in_fence and stripped == "":
+            last_safe = i
+    if last_safe < 0:
+        return "", text
+    return "\n".join(lines[:last_safe]), "\n".join(lines[last_safe + 1 :])
+
+
 def _run_streaming(agent, payload, config=None) -> None:
     """用 LangChain v3 event streaming 逐 token 渲染整个执行过程。
 
@@ -360,13 +382,30 @@ def _run_streaming(agent, payload, config=None) -> None:
             for key in usage_totals:
                 usage_totals[key] += usage[key]
 
-    def _render_message_stream(message_stream) -> None:
-        """渲染 v3 messages projection 里的单次模型输出。
+    def _flush_answer(text: str) -> None:
+        """把一段完整的 Markdown 永久固化打印到 Live 区域上方。"""
+        nonlocal printed_answer_rule, rendered_any
+        if not text.strip():
+            return
+        # 第一块正式回答前画一条"分析结果"分隔线，让结论与工具流水区分开
+        if not printed_answer_rule:
+            console.print()
+            console.print(Rule("[bold cyan]分析结果[/bold cyan]", style="dim"))
+            printed_answer_rule = True
+        console.print()
+        console.print(Markdown(text))
+        rendered_any = True
 
-        流式期间正文显示在常驻 Live 区域内；该段输出完成后，把最终 Markdown
-        固化打印到 Live 区域上方，并清空 Live 中的正文，只留统计行继续跳动。
+    def _render_message_stream(message_stream) -> None:
+        """渲染 v3 messages projection 里的单次模型输出（Claude Code 式）。
+
+        增量固化：每当缓冲区里凑齐了完整的 Markdown 块（以空行为界、
+        不切开代码围栏），立刻把它固化打印到 Live 上方；Live 区只保留
+        "正在生成中的半个块"的预览。这样正文随生成源源不断地长出来，
+        而不是攒到最后一次性输出。
         """
         nonlocal rendered_any
+        segment_streamed = False
 
         for delta in message_stream.text:
             if not delta:
@@ -374,27 +413,23 @@ def _run_streaming(agent, payload, config=None) -> None:
             view_state["buffer"] += delta
             view_state["pending_chunks"] += 1
             rendered_any = True
+            segment_streamed = True
+            # 凑齐完整块就固化，剩余未完成部分继续留在 Live 预览里
+            flushable, remainder = _split_complete_blocks(view_state["buffer"])
+            if flushable.strip():
+                _flush_answer(flushable)
+                view_state["buffer"] = remainder
 
-        final_text = (
-            view_state["buffer"]
-            or _content_to_text(getattr(message_stream.output, "content", ""))
-        ).strip()
-
-        # 该段结束：固化正文到 Live 上方，重置进行中状态，统计行继续常驻跳动
+        # 该段结束：把最后剩余的尾部也固化掉。
+        # 兜底：本段完全没推流式文本时，取 message.output 的最终内容。
+        if segment_streamed:
+            final_text = view_state["buffer"].strip()
+        else:
+            final_text = _content_to_text(getattr(message_stream.output, "content", "")).strip()
         view_state["buffer"] = ""
         view_state["pending_chunks"] = 0
         _accumulate_usage(getattr(message_stream, "output", None))
-
-        if final_text:
-            nonlocal printed_answer_rule
-            console.print()
-            # 第一段正式回答前画一条"分析结果"分隔线，让结论与工具流水区分开
-            if not printed_answer_rule:
-                console.print(Rule("[bold cyan]分析结果[/bold cyan]", style="dim"))
-                console.print()
-                printed_answer_rule = True
-            console.print(Markdown(final_text))
-            rendered_any = True
+        _flush_answer(final_text)
 
     def _render_tool_stream(tool_stream) -> None:
         """渲染 v3 tool_calls projection 里的单次工具执行开始事件。"""
@@ -554,7 +589,7 @@ def _collect_usage(messages) -> dict:
 
 
 def _print_stats(elapsed: float, usage: dict) -> None:
-    """在回答末尾打印一条统计分隔线：总耗时 + token 用量（↑输入 ↓输出）。"""
+    """在回答末尾打印一条��计分隔线：总耗时 + token 用量（↑输入 ↓输出）。"""
     if usage["total"] > 0:
         title = (
             f"[dim]⏱ {_format_duration(elapsed)} · "
