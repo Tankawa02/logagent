@@ -330,16 +330,28 @@ def _run_streaming(agent, payload, config=None) -> None:
         return spinner
 
     class _LiveView:
-        """常驻底部的动态视图：流式正文（若有）+ 实时统计行。
+        """常驻底部的动态视图：流式正文预览（若有）+ 实时统计行。
 
         Live 的后台刷新线程每次刷新都会重新调用 __rich__，因此即使主线程
         阻塞在等待模型/工具返回，计时器也会持续跳动（类似 Claude Code）。
+
+        关键：这里**只渲染正文的末尾若干行纯文本预览**，且高度按终端实际高度
+        自适应封顶。绝不在 Live 内渲染完整且不断增长的 Markdown——否则当报告
+        高度超过终端高度时，Rich 无法正确回退覆盖旧内容，会反复重打、抖动。
+        完整 Markdown 在每段结束后由 _render_message_stream 一次性固化到上方。
         """
 
         def __rich__(self):
-            if view_state["buffer"]:
-                return Group(Markdown(view_state["buffer"]), Text(""), _stats_renderable())
-            return _stats_renderable()
+            stats = _stats_renderable()
+            buffer = view_state["buffer"]
+            if not buffer:
+                return stats
+            # 预留 4 行给统计行/边距，其余留给预览，且至少 1 行、最多 6 行
+            avail = max(1, min(6, console.size.height - 4))
+            lines = buffer.splitlines() or [buffer]
+            tail = lines[-avail:]
+            preview = Text("\n".join(tail), style="dim", no_wrap=False, overflow="ellipsis")
+            return Group(preview, Text(""), stats)
 
     def _accumulate_usage(message) -> None:
         """模型单次调用结束后，把精确的 usage_metadata 累加进总量。"""
@@ -415,7 +427,7 @@ def _run_streaming(agent, payload, config=None) -> None:
             _LiveView(),
             console=console,
             refresh_per_second=10,
-            vertical_overflow="visible",
+            vertical_overflow="crop",
             transient=True,
         ):
             with agent.stream_events(payload, config=config, version="v3") as stream:
