@@ -83,14 +83,29 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
 
     Args:
         model: provider:model 格式的模型字符串，默认使用 OpenAI。
+            特别地，以 "openrouter:" 开头时会走 OpenRouter（如
+            "openrouter:anthropic/claude-sonnet-4-5"），可访问数百个模型，
+            api_key 从环境变量 OPENROUTER_API_KEY 读取。
         checkpointer: 可选的 checkpointer，用于在多轮对话中保存状态。
             传入后即可通过同一 thread_id 进行连续追问。
         base_url: 可选的自定义 OpenAI 兼容接口地址（如自建网关 / 代理 /
             Azure / 第三方兼容服务）。传入后会显式构造一个 ChatOpenAI 实例，
             并把模型字符串里的 "openai:" 前缀去掉，只保留模型名。
+            对 OpenRouter，base_url 会作为其 API 基地址传入（一般无需指定）。
     """
     resolved_model = model
-    if base_url:
+    if model.startswith("openrouter:"):
+        # 走 OpenRouter：去掉 "openrouter:" 前缀，得到 OpenRouter 的模型名
+        # （形如 "anthropic/claude-sonnet-4-5"、"openai/gpt-4o-mini"）。
+        # api_key 从环境变量 OPENROUTER_API_KEY 读取。
+        model_name = model.split(":", 1)[1]
+        from langchain_openrouter import ChatOpenRouter
+
+        kwargs = {"model": model_name}
+        if base_url:
+            kwargs["base_url"] = base_url
+        resolved_model = ChatOpenRouter(**kwargs)
+    elif base_url:
         # 显式走 OpenAI 兼容接口：去掉可能存在的 "openai:" 前缀，得到纯模型名
         model_name = model.split(":", 1)[1] if model.startswith("openai:") else model
         from langchain_openai import ChatOpenAI

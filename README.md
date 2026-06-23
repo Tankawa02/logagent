@@ -9,7 +9,7 @@
 - 两种模式：`analyze` 单次分析，`chat` 多轮对话（连续追问，记住上下文）
 - 内置只读工具：分块读日志、搜索日志、列源码、读源码、grep 源码
 - 利用 deepagents 的 `write_todos` 规划与上下文压缩，能处理大日志
-- 使用 OpenAI 模型（可切换其他 provider）
+- 使用 OpenAI 模型（可切换其他 provider），也支持通过 OpenRouter 访问数百个模型
 - 跨平台：macOS / Linux / Windows 行为一致（搜索为纯 Python 实现，不依赖系统 `grep`）
 
 ## 团队安装（uv）
@@ -89,6 +89,21 @@ log-agent analyze -l app.log --base-url https://your-gateway.com/v1
 
 命令行参数 `--base-url` 优先级高于环境变量。`analyze` 和 `chat` 两个命令都支持。
 
+### 使用 OpenRouter（可选）
+
+[OpenRouter](https://openrouter.ai/) 是一个统一 API，可一个 key 访问 OpenAI / Anthropic / Google / Meta 等数百个模型。把模型字符串写成 `openrouter:模型名` 即可走 OpenRouter，此时使用 `OPENROUTER_API_KEY`（不再需要 `OPENAI_API_KEY`）：
+
+```bash
+# 设置 OpenRouter key（形如 sk-or-...）
+export OPENROUTER_API_KEY="sk-or-..."
+
+# 用 openrouter:模型名 选择模型（模型名见 https://openrouter.ai/models）
+log-agent analyze -l app.log -c ./repo -m openrouter:anthropic/claude-sonnet-4-5
+log-agent chat    -l app.log -c ./repo -m openrouter:openai/gpt-4o-mini
+```
+
+Windows 下设置 `OPENROUTER_API_KEY` 的方式与上文 `OPENAI_API_KEY` 完全一致（`$env:` / `set` / `setx`）。
+
 ## 使用
 
 工具提供两种模式：
@@ -141,7 +156,7 @@ log-agent chat -l app.log -c ./repo --session payment-bug
 # 关掉终端后，再次用同名会话继续之前的对话
 log-agent chat -l app.log -c ./repo --session payment-bug
 
-# 自定义数据库文件位置
+# 自定义数据库文件��置
 log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 ```
 
@@ -152,7 +167,7 @@ log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 | `--log` | `-l` | 日志文件路径（必填） |
 | `--code` | `-c` | 源码目录路径（可选） |
 | `--question` | `-q` | 想让 agent 回答的具体问题 |
-| `--model` | `-m` | 模型，`provider:model` 格式，默认 `openai:gpt-4.1` |
+| `--model` | `-m` | 模型，`provider:model` 格式，默认 `openai:gpt-4.1`；用 `openrouter:模型名` 走 OpenRouter |
 | `--verbose` | `-v` | 流式打印执行过程 |
 
 ## 安全说明

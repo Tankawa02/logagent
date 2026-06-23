@@ -50,11 +50,20 @@ app = typer.Typer(
 console = Console()
 
 
-def _check_api_key() -> None:
-    if not os.environ.get("OPENAI_API_KEY"):
+def _check_api_key(model: str) -> None:
+    """根据模型 provider 校验对应的 API Key 是否已设置。
+
+    以 "openrouter:" 开头的模型走 OpenRouter，需要 OPENROUTER_API_KEY；
+    其余默认走 OpenAI 兼容接口，需要 OPENAI_API_KEY。
+    """
+    if model.startswith("openrouter:"):
+        key, hint = "OPENROUTER_API_KEY", "export OPENROUTER_API_KEY=sk-or-..."
+    else:
+        key, hint = "OPENAI_API_KEY", "export OPENAI_API_KEY=sk-..."
+    if not os.environ.get(key):
         console.print(
-            "[bold red]缺少 OPENAI_API_KEY 环境变量。[/bold red]\n"
-            "请先设置：[cyan]export OPENAI_API_KEY=sk-...[/cyan]"
+            f"[bold red]缺少 {key} 环境变量。[/bold red]\n"
+            f"请先设置：[cyan]{hint}[/cyan]"
         )
         raise typer.Exit(code=1)
 
@@ -125,7 +134,9 @@ def analyze(
         "--question", "-q", help="你想让 agent 回答的具体问题",
     ),
     model: str = typer.Option(
-        "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
+        "openai:gpt-4.1", "--model", "-m",
+        help="模型，provider:model 格式；用 openrouter:模型名 走 OpenRouter"
+             "（如 openrouter:anthropic/claude-sonnet-4-5）",
     ),
     base_url: str = typer.Option(
         None, "--base-url",
@@ -136,7 +147,7 @@ def analyze(
     ),
 ) -> None:
     """单次分析日志文件，结合源码定位根因（一问一答）。可传多个 -c 同时分析多个代码库。"""
-    _check_api_key()
+    _check_api_key(model)
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     log_path = str(log.expanduser().resolve())
@@ -181,7 +192,9 @@ def chat(
         exists=True, file_okay=False,
     ),
     model: str = typer.Option(
-        "openai:gpt-4.1", "--model", "-m", help="模型，provider:model 格式"
+        "openai:gpt-4.1", "--model", "-m",
+        help="模型，provider:model 格式；用 openrouter:模型名 走 OpenRouter"
+             "（如 openrouter:anthropic/claude-sonnet-4-5）",
     ),
     base_url: str = typer.Option(
         None, "--base-url",
@@ -197,11 +210,11 @@ def chat(
         help="会话数据库文件路径（默认 ~/.log-agent/sessions.db）",
     ),
     verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="流式打印 agent 的每一步（工具调用 / 思考）"
+        False, "--verbose", "-v", help="流式打��� agent 的每一步（工具调用 / 思考）"
     ),
 ) -> None:
     """多轮对话模式：连续追问，agent 记住整段对话；会话持久化到本地 SQLite，关掉终端后还能续上。"""
-    _check_api_key()
+    _check_api_key(model)
 
     # 延迟导入，单次 analyze 不需要它
     import sqlite3
