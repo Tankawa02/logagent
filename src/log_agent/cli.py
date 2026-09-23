@@ -242,12 +242,15 @@ def _base_rows(
 ) -> list[tuple[str, Text | str]]:
     from . import redact
     from .logfile import open_log
+    from .render import display_path
 
+    # 面板边框、内边距、标签列约占 16 列，再给编码标签留 12 列
+    width = max(30, console.width - 16)
     log_value = Text()
     for i, path in enumerate(log_paths):
         if i:
             log_value.append("\n")
-        log_value.append(path)
+        log_value.append(display_path(path, width - 12))
         try:
             meta = open_log(path)
             tags = [meta.encoding] + (["gzip"] if meta.gz else [])
@@ -255,7 +258,9 @@ def _base_rows(
         except OSError:
             pass
 
-    code_value = Text("\n".join(code_paths)) if code_paths else Text("（无）", style="muted")
+    code_value = (
+        Text("\n".join(display_path(p, width) for p in code_paths)) if code_paths else Text("（无）", style="muted")
+    )
     rows: list[tuple[str, Text | str]] = [
         ("日志", log_value),
         ("源码", code_value),

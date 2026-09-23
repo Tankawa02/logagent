@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.live import Live
 from rich.markdown import Markdown
@@ -117,6 +120,33 @@ def shimmer(label: str, now: float) -> Text:
 # ---------------------------------------------------------------------------
 # 启动信息面板 / 统计行
 # ---------------------------------------------------------------------------
+
+
+def display_path(path: str, max_width: int) -> str:
+    """面板里展示的路径：家目录缩成 ~；仍然太长时从中间省略目录，始终保留完整的文件名。
+
+    直接交给 Rich 折行会把文件名拆成 `app.l` / `og` 两行，恰好把最关键的部分弄得最难认。
+    """
+    home = str(Path.home())
+    if home not in ("", "/") and (path == home or path.startswith(home + os.sep)):
+        path = "~" + path[len(home):]
+    if cell_len(path) <= max_width:
+        return path
+    sep = "\\" if "\\" in path and "/" not in path else "/"
+    head, _, name = path.rpartition(sep)
+    if not head:
+        return path
+    parts = head.split(sep)
+    anchor = sep.join(parts[:1]) + sep
+    kept: list[str] = []
+    budget = max_width - cell_len(anchor) - cell_len(glyphs.ellipsis) - cell_len(name) - 2
+    for part in reversed(parts[1:]):
+        if cell_len(part) + 1 > budget:
+            break
+        kept.insert(0, part)
+        budget -= cell_len(part) + 1
+    middle = sep.join([glyphs.ellipsis, *kept])
+    return f"{anchor}{middle}{sep}{name}"
 
 
 def info_panel(rows: list[tuple[str, Text | str]], title: str, subtitle: str = "", footer: list[Text] | None = None) -> Panel:
