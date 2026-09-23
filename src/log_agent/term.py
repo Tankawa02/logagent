@@ -207,3 +207,20 @@ REFRESH_PER_SECOND = 8 if _is_legacy_windows_console() else 12
 # 和 Claude Code 一样使用终端实际宽度，不做全局硬限宽。
 # emoji=False：日志 / 源码里常见 `a:b:c` 形式的文本，不能被当成 :emoji: 代码替换。
 console = Console(theme=THEME, highlight=False, emoji=False, safe_box=True)
+
+
+def reset_cursor_line() -> None:
+    """把光标拉回行首并清空当前行，再开始绘制任何带边框的内容。
+
+    VS Code 等终端的 shell integration 会在命令执行前发一段
+    `OSC 633;E;<命令行>;<nonce>` 标记；命令行折行时终端偶尔会把它的尾巴
+    （形如 `r.md;6f5008f7-...`）当普通文本打出来，光标停在行中间，
+    导致信息面板的上边框整体右移、与正文错位。
+    """
+    if not console.is_terminal or console.legacy_windows:
+        return
+    try:
+        console.file.write("\r\x1b[2K")
+        console.file.flush()
+    except (OSError, ValueError):
+        pass

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from .logfile import MAX_LINE_CHARS, clip_line, open_log, read_text_file
+from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
 from .redact import redact_code, redact_log
 from .timefilter import TimeWindow, WindowTracker, default_window, find_timestamp, parse_window
 
@@ -369,7 +369,8 @@ def _scan_search(
             if tracker.done:
                 break
             continue
-        if compiled.search(text):
+        match = compiled.search(text)
+        if match:
             if result.hits >= max_results:
                 result.truncated = True
                 break
@@ -380,7 +381,7 @@ def _scan_search(
                     out.append("--")
                 out.extend(f"{no}- {clip_line(t)}" for no, t in before)
                 before.clear()
-            out.append(f"{lineno}: {clip_line(text)}")
+            out.append(f"{lineno}: {clip_line(text, HIT_LINE_CHARS, focus=match.start())}")
             last_printed = lineno
             after_left = context
         elif after_left:
@@ -630,7 +631,7 @@ def grep_code(
     path_glob: str = "",
     max_results: int = 80,
 ) -> ToolOutput:
-    """在源码目录中递归搜索关键字/正则，返回 `文件:行号: 内容`。
+    """在源码目录���递归搜索关键字/正则，返回 `文件:行号: 内容`。
 
     用于把日志里的报错信息（函数名、错误字符串、异常类名）关联回源码位置。
 

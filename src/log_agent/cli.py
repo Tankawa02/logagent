@@ -14,7 +14,7 @@ from rich.text import Text
 
 from . import __version__
 from .render import StreamRenderer, TurnResult, format_duration, info_panel
-from .term import IS_WINDOWS, console, glyphs
+from .term import IS_WINDOWS, console, glyphs, reset_cursor_line
 
 app = typer.Typer(
     help="基于 deepagents 的 CLI 日志分析智能体：结合日志与源码定位问题根因。",
@@ -215,6 +215,7 @@ def analyze(
 
     from .agent import build_agent
 
+    reset_cursor_line()
     console.print(info_panel(_base_rows(log_paths, code_paths, model, base_url), "log-agent", f"v{__version__}"))
     with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
         agent = build_agent(model=model, base_url=base_url)
@@ -343,6 +344,7 @@ def chat(
         )
         rows = _base_rows(log_paths, code_paths, model, base_url)
         rows.append(("会话", session_value))
+        reset_cursor_line()
         console.print(info_panel(rows, "log-agent", f"多轮对话 {glyphs.sep} v{__version__}", footer))
 
         checkpointer = SqliteSaver(conn)
