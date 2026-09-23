@@ -17,7 +17,13 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
 from log_agent import netguard
-from log_agent.agent import _BREVITY_LINES, _HIDDEN_TOOLS, _TASK_SUMMARY_REPLACEMENT, _TASK_SUMMARY_RULE, build_agent
+from log_agent.agent import (
+    _BREVITY_LINES,
+    _HIDDEN_TOOLS,
+    _TASK_DESCRIPTION,
+    _todo_prompt_sections,
+    build_agent,
+)
 from log_agent.tools import ALL_TOOLS
 
 from .conftest import ScriptedChatModel, tool_call
@@ -61,11 +67,12 @@ def _run(script: list[AIMessage]) -> _CapturingModel:
 def test_upstream_prompt_still_contains_patched_text() -> None:
     """我们用精确字符串替换改写上游提示词；上游一改措辞，替换就会变成空操作。"""
     from deepagents.graph import BASE_AGENT_PROMPT
-    from deepagents.middleware.subagents import TASK_TOOL_DESCRIPTION
 
     for line in _BREVITY_LINES:
         assert line in BASE_AGENT_PROMPT, f"deepagents 基础提示词里找不到要删除的行：{line!r}"
-    assert _TASK_SUMMARY_RULE in TASK_TOOL_DESCRIPTION, "deepagents task 工具说明里找不到要替换的句子"
+    # TASK_SYSTEM_PROMPT 在 0.7 已被上游删除（那节委派指南本身也没了），所以不要求常量存在，
+    # 只在下面的用例里校验最终提示词里确实没有这一节。
+    assert _todo_prompt_sections(), "langchain 不再导出 WRITE_TODOS_SYSTEM_PROMPT，子代理提示词里会残留 todo 说明"
 
 
 def test_model_sees_patched_prompt_and_only_our_tools() -> None:
@@ -86,7 +93,13 @@ def test_model_sees_patched_prompt_and_only_our_tools() -> None:
 
     task = next(t for t in seen["tools"] if _tool_name(t) == "task")
     description = _tool_description(task)
-    assert _TASK_SUMMARY_REPLACEMENT in description and _TASK_SUMMARY_RULE not in description
+    assert description.startswith(_TASK_DESCRIPTION.split("{agents}")[0])
+    assert "code-investigator" in description and "log-investigator" in description
+
+    # 上游那节"尽量委派"的指南连同子代理名单要整段去掉，只剩我们自己的委派规则
+    assert "subagent spawner" not in seen["system"]
+    assert "Available subagent types" not in seen["system"]
+    assert "默认自己查" in seen["system"]
 
 
 def test_subagents_are_patched_too() -> None:
@@ -101,6 +114,9 @@ def test_subagents_are_patched_too() -> None:
     sub = model.calls[1]
     names = {_tool_name(t) for t in sub["tools"]}
     assert not names & _HIDDEN_TOOLS and "task" not in names
+    assert "write_todos" not in names, "子代理不该拿到 write_todos"
+    assert "## `write_todos`" not in sub["system"]
+    assert "总长度控制在" in sub["system"]
 
 
 def test_callbacks_reach_subagent_tools() -> None:
