@@ -19,7 +19,10 @@ from pathlib import Path
 INDEX_STEP = 10_000
 
 # 单行返回给模型的最大字符数。超长 JSON / SQL 行会被截断，避免一行撑爆上下文。
-MAX_LINE_CHARS = 500
+# 业务日志里路由、降级原因这类关键字段常埋在长 JSON 的后半段，500 太容易截掉。
+MAX_LINE_CHARS = 1000
+# 搜索命中行本身是证据，给更大的额度，并以命中位置为中心截取。
+HIT_LINE_CHARS = 2000
 
 _SNIFF_BYTES = 64 * 1024
 
@@ -72,10 +75,17 @@ def detect_encoding(sample: bytes) -> str:
     return "latin-1"
 
 
-def clip_line(text: str, limit: int = MAX_LINE_CHARS) -> str:
+def clip_line(text: str, limit: int = MAX_LINE_CHARS, focus: int | None = None) -> str:
+    """截断超长行。给出 focus（命中位置）时，截取命中点附近的窗口，避免关键字段被截掉。"""
     if len(text) <= limit:
         return text
-    return f"{text[:limit]} …(本行共 {len(text)} 字，已截断)"
+    if focus is None or focus < limit * 3 // 4:
+        return f"{text[:limit]} …(本行共 {len(text)} 字，已截断)"
+    start = max(0, focus - limit // 3)
+    end = min(len(text), start + limit)
+    start = max(0, end - limit)
+    tail = " …" if end < len(text) else ""
+    return f"… {text[start:end]}{tail}(本行共 {len(text)} 字，已截断，显示第 {start + 1}-{end} 字)"
 
 
 @dataclass
