@@ -18,6 +18,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from .citations import CitationLinker, LinkedMarkdown
 from .netguard import describe_api_error, retry_watch
 from .subtrace import SubagentTracker, SubCall
 from .term import REFRESH_PER_SECOND, console, glyphs
@@ -25,6 +26,7 @@ from .term import REFRESH_PER_SECOND, console, glyphs
 # 工具名 -> (类别, 友好中文名)。类别决定图标与颜色：日志 / 源码 / 其它
 _TOOL_META: dict[str, tuple[str, str]] = {
     "log_overview": ("log", "日志概览"),
+    "compare_windows": ("log", "窗口对比"),
     "read_log_chunk": ("log", "读取日志"),
     "search_logs": ("log", "搜索日志"),
     "trace_request": ("log", "追踪请求"),
@@ -170,6 +172,35 @@ def collect_ai_texts(messages: list[Any]) -> str:
     return "\n\n".join(reversed(collected))
 
 
+_TRAIL_MAX_STEPS = 8
+
+
+def tool_trail(records: list[ToolRecord]) -> Text | None:
+    """非 verbose 模式下，把主代理的工具过程折叠成一行，例如：查了 6 步：日志概览 → 搜索日志 ×3 → 委派子任务。
+
+    连续的同名工具合并计数；子代理内部的步骤计入总步数，但不单独列出。
+    """
+    main = [r for r in records if not r.subagent]
+    if not main:
+        return None
+    steps: list[list] = []
+    for record in main:
+        label = _TOOL_META.get(record.name, ("other", record.name))[1]
+        if steps and steps[-1][0] == label:
+            steps[-1][1] += 1
+        else:
+            steps.append([label, 1])
+    shown = [f"{label} ×{count}" if count > 1 else label for label, count in steps[:_TRAIL_MAX_STEPS]]
+    if len(steps) > _TRAIL_MAX_STEPS:
+        shown.append(glyphs.ellipsis)
+    trail = Text(f"查了 {len(records)} 步：", style="muted")
+    trail.append(" → ".join(shown), style="muted")
+    trail.append("   加 -v 查看每一步", style="muted")
+    trail.no_wrap = True
+    trail.overflow = "ellipsis"
+    return trail
+
+
 def print_stats(elapsed: float, usage: dict[str, int], tool_count: int, interrupted: bool = False) -> None:
     sep = f" {glyphs.sep} "
     title = Text()
@@ -234,6 +265,11 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((_path_name(arg("path")), "muted"))
         if window():
             parts.append((window(), "accent"))
+    elif name == "compare_windows":
+        if arg("path"):
+            parts.append((_path_name(arg("path")), "muted"))
+        parts.append((f"{arg('baseline_since')}~{arg('baseline_until')}", "accent"))
+        parts.append(("vs " + (window() or "全文"), "accent"))
     elif name == "read_log_chunk":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
@@ -313,6 +349,7 @@ _HINT_SUMMARIES = {
     "eof": "已到文件末尾",
     "empty": "内容为空",
     "empty_window": "时间窗口内无日志",
+    "no_timestamp": "无时间戳",
 }
 
 
@@ -327,6 +364,10 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
         if meta.get("cached"):
             parts.append("缓存")
         return sep.join(parts)
+    if name == "compare_windows":
+        summary = f"ERROR {meta.get('base_errors', 0):,} → {meta.get('target_errors', 0):,}"
+        new = meta.get("new_signatures", 0)
+        return f"{summary}{sep}新出现 {new} 类" if new else summary
     if name == "read_log_chunk":
         return f"{meta['end'] - meta['start'] + 1} 行"
     if name == "search_logs":
@@ -524,6 +565,34 @@ class MarkdownTail:
 # ---------------------------------------------------------------------------
 
 
+# 报告开头的一句话结论，例如 "一句话结论：Router.select 未判空（可信度：高）"；容忍加粗、引用块等包装
+_SUMMARY_LINE = re.compile(
+    r"^\s*(?:>\s*)?\**\s*一句话结论\s*\**\s*[:：]\s*\**\s*(?P<text>.+?)\s*\**\s*"
+    r"(?:[（(]\s*可信度\s*[:：]?\s*(?P<level>高|中|低)\s*[)）])?\s*\**\s*$"
+)
+_CONFIDENCE_STYLE = {"高": "ok", "中": "warn", "低": "err"}
+NO_FINDING_PREFIX = "未发现异常"
+
+
+def parse_summary_line(line: str) -> tuple[str, str] | None:
+    """识别一句话结论行，返回 (结论, 可信度)；可信度缺失时为空字符串。"""
+    match = _SUMMARY_LINE.match(line)
+    if not match:
+        return None
+    text = match.group("text").strip().strip("*").strip()
+    return (text, match.group("level") or "") if text else None
+
+
+def summary_banner(text: str, level: str) -> Text:
+    banner = Text()
+    banner.append(f"{glyphs.notice} ", style="accent.strong")
+    banner.append(text, style="bold")
+    if level:
+        banner.append(f"  {glyphs.sep}  ", style="muted")
+        banner.append(f"可信度 {level}", style=_CONFIDENCE_STYLE[level])
+    return banner
+
+
 @dataclass
 class ToolRecord:
     name: str
@@ -544,6 +613,16 @@ class TurnResult:
     tools: list[ToolRecord] = field(default_factory=list)
     interrupted: bool = False
     error: str = ""
+    summary: str = ""
+    confidence: str = ""
+    budget_hit: bool = False
+
+    @property
+    def finding(self) -> bool | None:
+        """是否发现了问题；没有一句话结论时无法判定，返回 None。"""
+        if not self.summary:
+            return None
+        return not self.summary.startswith(NO_FINDING_PREFIX)
 
     @property
     def ok(self) -> bool:
@@ -558,8 +637,11 @@ class StreamRenderer:
     - 上方永久区：完整 Markdown 块、已完成的工具行（verbose）。
     """
 
-    def __init__(self, verbose: bool) -> None:
+    def __init__(self, verbose: bool, linker: CitationLinker | None = None, budget: Any = None) -> None:
         self.verbose = verbose
+        self.linker = linker
+        self.budget = budget
+        self.summary: tuple[str, str] | None = None
         self.start = time.perf_counter()
         self.spinner = Spinner(glyphs.spinner, style="accent")
         self.tail = MarkdownTail()
@@ -687,10 +769,30 @@ class StreamRenderer:
             console.print()
             console.print(Rule(Text("分析结果", style="accent.strong"), style="muted", characters=glyphs.rule))
             self.printed_answer_rule = True
-        console.print()
-        console.print(Markdown(text))
+        for part in self._split_summary(text):
+            console.print()
+            console.print(part if isinstance(part, Text) else self._markdown(part))
         self.answer_parts.append(text)
         self.rendered_any = True
+
+    def _markdown(self, text: str) -> Markdown:
+        if self.linker is None or not self.linker.enabled:
+            return Markdown(text)
+        return LinkedMarkdown(self.linker.apply(text))
+
+    def _split_summary(self, text: str) -> list[str | Text]:
+        """把本轮第一处"一句话结论"行换成高亮横幅，其余部分照常按 Markdown 渲染。"""
+        if self.summary is not None:
+            return [text]
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            parsed = parse_summary_line(line)
+            if parsed is None:
+                continue
+            self.summary = parsed
+            before, after = "\n".join(lines[:i]).strip(), "\n".join(lines[i + 1 :]).strip()
+            return [p for p in (before, summary_banner(*parsed), after) if p]
+        return [text]
 
     def _record(self, run: ToolRun, subagent: str = "") -> None:
         error = getattr(run.handle, "error", None)
@@ -778,14 +880,16 @@ class StreamRenderer:
 
     def _with_tracker(self, config: dict[str, Any] | None) -> dict[str, Any]:
         merged = dict(config or {})
+        handlers = [self.tracker] + ([self.budget] if self.budget is not None else [])
         callbacks = merged.get("callbacks")
         if callbacks is None:
-            merged["callbacks"] = [self.tracker]
+            merged["callbacks"] = handlers
         elif isinstance(callbacks, list):
-            merged["callbacks"] = [*callbacks, self.tracker]
+            merged["callbacks"] = [*callbacks, *handlers]
         else:
             callbacks = callbacks.copy()
-            callbacks.add_handler(self.tracker, inherit=True)
+            for handler in handlers:
+                callbacks.add_handler(handler, inherit=True)
             merged["callbacks"] = callbacks
         return merged
 
@@ -796,6 +900,8 @@ class StreamRenderer:
         final_state: Any = None
         error = ""
         config = self._with_tracker(config)
+        if self.budget is not None:
+            self.budget.reset()
         retry_watch.reset()
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
@@ -860,6 +966,19 @@ class StreamRenderer:
                 self._settle(run)
         elapsed = time.perf_counter() - self.start
         usage = self._total_usage()
+        trail = None if self.verbose else tool_trail(self.records)
+        if trail is not None:
+            console.print()
+            console.print(trail)
+        budget_hit = self.budget is not None and self.budget.wrapped
+        if budget_hit:
+            from .budget import format_tokens
+
+            console.print(Text(
+                f"{glyphs.notice} 接近 tokens 预算 {format_tokens(self.budget.limit)}，"
+                "已让 agent 停止取证、基于现有证据收尾；需要查得更深可以调大 --budget。",
+                style="warn",
+            ))
         print_stats(elapsed, usage, self._total_tools(), self.interrupted or bool(error))
         return TurnResult(
             report="\n\n".join(self.answer_parts),
@@ -868,4 +987,7 @@ class StreamRenderer:
             tools=list(self.records),
             interrupted=self.interrupted,
             error=error,
+            summary=self.summary[0] if self.summary else "",
+            confidence=self.summary[1] if self.summary else "",
+            budget_hit=budget_hit,
         )

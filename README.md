@@ -149,7 +149,7 @@ log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 50
 log-agent analyze -l app.log -c ./repo --since "2026-06-09 14:00" --until "2026-06-09 14:05"
 log-agent analyze -l app.log --since 14:00
 
-# 保留每一步工具调用与计划变化的完整记录
+# 保留每一步工具调用（含结果摘要、耗时）的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
 
 # 切换模型（也可以设环境变量 LOG_AGENT_MODEL 作为团队默认）
@@ -171,9 +171,39 @@ log-agent analyze -l app.log -o result.json
 
 # GBK 等编码自动识别失败时手动指定；必要时关闭脱敏
 log-agent analyze -l app.log --encoding gbk --no-redact
+
+# 和正常时段对比："为什么 14 点后突然变多"——agent 会先拿到两段的级别分布与新出现 / 明显增多的错误
+log-agent analyze -l app.log -c ./repo --since 14:00 --until 14:30 --baseline "13:00~13:30"
+
+# 限制单轮 tokens：用到 80% 时 agent 停止取证、基于已有证据收尾出报告（证据不足处会标"待确认"）
+log-agent analyze -l huge.log -c ./repo --budget 200k
+
+# 接入 CI / 定时巡检：发现问题且可信度不低于 medium 时退出码为 3
+log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json
 ```
 
 退出码：`0` 成功，`1` 失败（如达到 `--max-steps` 上限），`2` 参数错误，`130` 被 Ctrl+C 中断。
+加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 报告缺少一句话结论、无法判定。
+是否发现问题看报告开头的一句话结论——没有异常时 agent 会写成"未发现异常……"；
+JSON 导出里对应 `finding`（`true` / `false` / `null`）、`confidence` 和 `budget_hit` 字段。
+
+### 追踪模式（watch）
+
+像 `tail -F` 一样盯着日志，出现新的 ERROR / FATAL（或 `--pattern` 匹配的行）时，把这一波攒齐后自动分析一次：
+
+```bash
+# 复现问题时开着，看到报告就知道刚才那一下发生了什么
+log-agent watch -l app.log -c ./repo
+
+# 只关心某类报错；分析一次就退出
+log-agent watch -l app.log -c ./repo --pattern "Timeout|Refused" --once
+
+# 错误持续刷屏时拉长攒批和间隔，避免反复消耗 tokens
+log-agent watch -l app.log --debounce 30 --cooldown 600 --budget 150k
+```
+
+只分析启动之后新写入的行；日志被截断或轮转时会自动从头继续跟随。`--debounce`（默认 10 秒）是新错误停止出现多久后开始分析，
+一直在刷的话最多攒 60 秒；`--cooldown`（默认 120 秒）是两次分析的最小间隔。分析中按 `Ctrl+C` 只中断这一次，空闲时按才退出。
 
 ### 多轮对话（chat）
 
@@ -190,6 +220,9 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 ❯ 退出
 ```
 
+新会话开场时会先在本地扫一遍日志（不调用模型、不耗 tokens），列出出现次数最多的几类错误作为候选问题，
+输入编号即可直接提问，也可以忽略它们自己输入问题。日志里没有 ERROR / FATAL 时不显示。
+
 输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。回答过程中按 `Ctrl+C` 只中断当前这一轮，
 已经输出的内容会保留，可以接着追问；在输入提示符处按 `Ctrl+C` 才会退出。
 
@@ -199,24 +232,35 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 # 开一个名为 payment-bug 的会话
 log-agent chat -l app.log -c ./repo --session payment-bug
 
-# 关掉终端后，再次用同名会话继续之前的对话
-log-agent chat -l app.log -c ./repo --session payment-bug
+# 关掉终端后，只写会话名就能续上：自动沿用上次的日志与源码
+log-agent chat --session payment-bug
+
+# 续上最近一次会话
+log-agent chat --resume
+
+# 续会话时换一份日志（传了 -l / -c 就以新传入的为准）
+log-agent chat -l app-new.log --session payment-bug
 
 # 自定义数据库文件位置
 log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 
-# 查看 / 删除会话
+# 查看 / 筛选 / 删除会话
 log-agent sessions list
+log-agent sessions list --search gateway   # 按会话名、首个问题或日志路径筛选
 log-agent sessions rm payment-bug
 ```
 
-续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。
+续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。上次的日志已被删除或移走时会提示你用 `-l` 重新指定。
 
 输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）：
 
 | 命令 | 说明 |
 |------|------|
 | `/save [路径]` | 保存上一条回答为 Markdown（`.json` 结尾则存 JSON） |
+| `/copy` | 把上一条回答（Markdown 原文）复制到剪贴板，方便贴进工单或群聊 |
+| `/retry [补充]` | 重新回答上一个问题，比如回答被中断或答偏了；可以附一句补充，如 `/retry 重点看 14:02 之后` |
+| `/add-log <路径>` | 排查中途给当前会话追加日志（支持通配符），不用退出重开，前面的对话都保留 |
+| `/add-code <目录>` | 追加源码目录，比如问题牵涉到另一个服务 |
 | `/new` | 开一个新会话 |
 | `/sources` | 查看当前日志与源码 |
 | `/stats` | 查看本次运行累计的轮次、耗时、工具次数与 tokens |
@@ -239,7 +283,10 @@ log-agent sessions rm payment-bug
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |
 | `--max-steps` | | 单轮最大推理步数，默认 120 |
-| `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
+| `--budget` | | 单轮 tokens 上限，如 `200k`、`1.5m`；用到 80% 时自动收尾出报告（也可写进配置文件） |
+| `--baseline` | | 正常时段，如 `13:00~13:30`（带日期时用 `~` 分隔），让 agent 先做前后对比（analyze / chat） |
+| `--fail-on` | | `high` / `medium` / `low`：发现问题且可信度不低于该级别时退出码为 3（analyze） |
+| `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）的完整记录 |
 | `--memory` | | 长期记忆：`suggest`（默认）/ `explicit` / `off`，见下方「长期记忆」 |
 
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：
@@ -310,6 +357,14 @@ description: 短信供应商路由、降级、切换问题的排查手册
 - 不加 `-v` 时过程信息只在底部状态栏滚动、结束即消失，屏幕上只留报告；加 `-v` 会把每步都保留下来。
 - 子代理的每一步缩进显示在对应的"委派子任务"下面（运行中只滚动显示最近 3 步），
   并行的多个子代理各自计时；token 与工具次数统计包含子代理，JSON 报告里子代理的调用带 `subagent` 字段。
+- 默认模式下工具过程只在运行时显示，结束后折叠成一行，例如 `查了 6 步：日志概览 → 搜索日志 ×3 → 委派子任务`；
+  加 `-v` 会保留每一步的完整记录。
+- 完整报告的第一行是**一句话结论 + 可信度**（高 / 中 / 低），终端里显示成高亮摘要；
+  导出的 JSON 里对应 `summary` 与 `confidence` 字段（模型没写这一行时为 `null`）。
+- 报告里的 `app.log:42`、`app/order.py:88` 这类引用可以直接点击（终端超链接 OSC 8）：
+  VS Code / Cursor 内置终端里跳到对应行，其它终端（iTerm2、Windows Terminal、GNOME Terminal 等）打开对应文件。
+  用 `LOG_AGENT_LINKS` 调整：`vscode` 总是生成 `vscode://` 链接，`file` 总是生成 `file://`，`off` 关闭。
+  只影响终端显示，导出的报告保持原文，不写入本机绝对路径。
 - 同一次运行里对同一份日志、同一时间窗口重复调用"日志概览"会直接命中缓存（摘要里标"缓存"），
   日志文件被改写后自动失效。
 

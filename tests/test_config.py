@@ -72,12 +72,13 @@ def test_analyze_reads_config_defaults(sample_log: Path, code_repo: Path, tmp_pa
     context: dict = {}
     real_message = cli._build_context_message
     monkeypatch.setattr(
-        cli, "_build_context_message", lambda logs, code, q: context.update(code=code) or real_message(logs, code, q)
+        cli, "_build_context_message", lambda logs, code, q, *rest: context.update(code=code) or real_message(logs, code, q, *rest)
     )
     result, seen = _run_analyze(monkeypatch, project, sample_log)
     assert result.exit_code == 0, result.output
     memory = seen.pop("memory")
     assert memory.mode == "suggest" and memory.project == str(code_repo)
+    assert seen.pop("budget") is None
     assert seen == {"model": "openai:cfg-model", "base_url": "https://gw.example/v1", "skill_dirs": []}
     assert context["code"] == [str(code_repo)]
     assert "配置" in result.output
@@ -90,7 +91,16 @@ def test_cli_and_env_beat_config(sample_log: Path, tmp_path: Path, monkeypatch: 
     result, seen = _run_analyze(monkeypatch, tmp_path, sample_log, "-m", "openai:cli-model")
     assert result.exit_code == 0, result.output
     assert seen.pop("memory").project is None
+    assert seen.pop("budget") is None
     assert seen == {"model": "openai:cli-model", "base_url": "https://env/v1", "skill_dirs": []}
+
+
+def test_budget_from_config(sample_log: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write(tmp_path / ".log-agent.toml", 'budget = "300k"\n')
+    result, seen = _run_analyze(monkeypatch, tmp_path, sample_log)
+    assert result.exit_code == 0, result.output
+    assert seen["budget"].limit == 300_000
+    assert "300k tokens" in result.output
 
 
 def test_memory_mode_from_config(sample_log: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

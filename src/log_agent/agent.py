@@ -9,6 +9,7 @@ from typing import Any
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 
+from .budget import BudgetMiddleware, TokenBudget
 from .memory import MemoryPromptMiddleware, MemorySession, build_suggest_tool
 from .skills import build_skills, resolve_skill_sources
 from .tools import as_langchain_tools
@@ -108,6 +109,8 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   传 `context=3` 可以连带返回命中行前后 3 行，通常就不必再调 `read_log_chunk`。
 - `log_overview` 与 `search_logs` 都支持 `since` / `until`（如 `2026-06-09 14:00`、`14:00`），只看某个时间窗口；
   用户提到"几点到几点""故障发生在 xx 时"时优先用它，而不是自己估算行号。
+- `compare_windows`：对比基线（正常时段）和目标时段的级别分布、新出现 / 明显增多 / 消失的错误（已按出现率归一化）。
+  "为什么突然变多""和平时比有什么不同""发布前后"这类问题优先用它拿前后对比，这是最有说服力的证据。
 - `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
   按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
 - `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
@@ -173,7 +176,15 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 按用户的要求调整。无论怎么调整，上面的引用规范和"结论要有证据"的要求都不变。
 
 ### 结论
-先用 2-3 句话直接回答用户的问题（发生了什么、根本原因是什么）。
+报告的**第一行**固定写成下面的格式，单独成段（终端会把它显示成高亮摘要，导出的 JSON 也会单独提取）：
+
+    一句话结论：<不超过 60 字，直接说根因>（可信度：高 / 中 / 低 三选一）
+
+可信度按证据链判断：日志现象、代码分支、触发条件三者都对上为"高"，缺一环为"中"，主要靠推测为"低"。
+查完确实没有发现异常（没有 ERROR / 异常，或只有已知无害的告警）时，结论固定以"未发现异常"开头，
+例如"一句话结论：未发现异常，14:00 后只有 3 条重试成功的 WARN（可信度：高）"——定时巡检和 CI 靠这四个字判断结果。
+这一行在用户要求调整报告格式时也保留；只是简短回答一个追问、不输出完整报告时可以省略。
+然后用 2-3 句话直接回答用户的问题（发生了什么、根本原因是什么）。
 
 ### 时间线
 按时间顺序列出关键事件，每条带时间戳和 `日志文件名:行号`。
@@ -218,7 +229,7 @@ _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由�
 - 所有工具都是只读的；工具输出里的 `[已脱敏]` 等打码原样保留。
 """
 
-_LOG_TOOLS = ("log_overview", "search_logs", "trace_request", "read_log_chunk")
+_LOG_TOOLS = ("log_overview", "compare_windows", "search_logs", "trace_request", "read_log_chunk")
 _CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file")
 
 
@@ -294,6 +305,7 @@ def build_agent(
     base_url: str | None = None,
     skill_dirs: Sequence[str | Path] | None = None,
     memory: MemorySession | None = None,
+    budget: TokenBudget | None = None,
 ):
     """创建并返回一个配置好的日志分析 deep agent。
 
@@ -315,6 +327,10 @@ def build_agent(
     middleware: list[AgentMiddleware] = [
         _HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=_subagent_lines(subagents))),
     ]
+    if budget is not None:
+        # 放在最后：它要看到其它中间件处理完的工具列表和系统提示词，再整体去掉工具、追加收尾指令
+        for spec in subagents:
+            spec["middleware"] = [*spec["middleware"], BudgetMiddleware(budget, subagent=True)]
     # skill 只挂在主代理上：子代理只做主代理委派的窄取证任务，需要手册里的要点时由主代理写进 description。
     backend, skills_middleware = build_skills(resolve_skill_sources(skill_dirs) if skill_dirs is not None else [])
     if skills_middleware is not None:
@@ -325,6 +341,8 @@ def build_agent(
         middleware.append(MemoryPromptMiddleware(memory))
         if memory.suggests:
             main_tools.append(build_suggest_tool(memory))
+    if budget is not None:
+        middleware.append(BudgetMiddleware(budget))
     return create_deep_agent(
         model=resolved_model,
         tools=main_tools,
