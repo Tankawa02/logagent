@@ -105,6 +105,24 @@ def test_rejections_and_deletions_block_resuggestion(store: MemoryStore) -> None
     assert mem.finish_turn("记住网关在 gateway-b") == []
 
 
+def test_confirm_keys_x_is_permanent_and_upper_n_is_plain_no(store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent import memory_cli
+
+    mem = _session(store)
+    mem.suggest("老通道指 Nexmo", "term", "correction")
+    mem.suggest("新通道指 Twilio", "term", "correction")
+    candidates = mem.finish_turn("不对")
+    assert [c.text for c in candidates] == ["老通道指 Nexmo", "新通道指 Twilio"]
+    answers = iter(["X", "N"])
+    monkeypatch.setattr(memory_cli.console, "input", lambda *_a, **_k: next(answers))
+    memory_cli.confirm(mem, candidates)
+
+    rows = dict(store.conn.execute("SELECT text, until FROM memory_rejections").fetchall())
+    assert rows["老通道指 Nexmo"] is None
+    assert rows["新通道指 Twilio"] is not None
+    assert store.memories(all_projects=True) == []
+
+
 def test_existing_memory_is_not_suggested_again(store: MemoryStore) -> None:
     store.add("老通道指 Nexmo", "term", "/repo")
     mem = _session(store)

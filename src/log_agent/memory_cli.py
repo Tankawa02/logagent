@@ -128,30 +128,30 @@ def confirm(mem: MemorySession, candidates: list[Candidate], *, force: bool = Fa
         default = "y" if candidate.signal == "explicit" else "s"
         prompt = Text.assemble(
             ("  保存？", ""),
-            ("[y] 是  [n] 否  [e] 编辑  [N] 不再提示  [s] 稍后", "muted"),
+            ("[y] 是  [n] 否  [e] 编辑  [x] 不再提示  [s] 稍后", "muted"),
             (f"（回车 = {default}）", "muted"),
             (" ", ""),
         )
         try:
-            answer = console.input(prompt).strip() or default
-            if answer.lower() == "e":
+            answer = (console.input(prompt).strip() or default).lower()
+            if answer == "e":
                 edited = console.input(Text("  改成：", style="muted")).strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             console.print(Text("  已跳过，之后可以用 /memory review 处理。", style="muted"))
             return
         try:
-            if answer == "N":
+            if answer == "x":
                 store.reject(candidate, permanent=True)
                 console.print(Text("  好的，以后不再提示这条。", style="muted"))
-            elif answer.lower() in ("y", "yes", "是"):
+            elif answer in ("y", "yes", "是"):
                 _saved(store.accept(candidate))
-            elif answer.lower() == "e":
+            elif answer == "e":
                 if edited:
                     _saved(store.accept(candidate, edited))
                 else:
                     console.print(Text("  内容为空，已跳过。", style="muted"))
-            elif answer.lower() in ("n", "no", "否"):
+            elif answer in ("n", "no", "否"):
                 store.reject(candidate, permanent=False)
                 console.print(Text("  好的，不保存。", style="muted"))
             else:
