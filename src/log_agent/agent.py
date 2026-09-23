@@ -6,24 +6,19 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import SystemMessage
 
 from .tools import as_langchain_tools
 
-# 从模型请求里剔除的 deepagents 内置工具：
-# - 磁盘文件工具由一个以进程 cwd 为根的后端支撑，内部对每个路径做 path.relative_to(cwd)。
-#   Windows 上日志和源码位于不同盘符时会抛 ValueError: path is on mount ...。
-#   我们自己的工具是纯 Python、跨平台安全的，已完全覆盖读日志/读源码/搜索的需求。
+# 从模型请求里剔除的 deepagents 内置工具（0.7 起多了 delete）：
+# - 这些文件工具默认由 StateBackend 支撑，操作的是代理状态里的虚拟文件，不是真实磁盘，
+#   模型用它们"读日志 / 读源码"只会拿到空结果；delete / write / edit 对只读排查也毫无意义。
+# - 我们自己的工具是纯 Python、跨平台安全的，已完全覆盖读日志/读源码/搜索的需求。
 # 子代理的 spec 里也挂了本中间件，所以子代理同样看不到这些内置工具。
-_HIDDEN_TOOLS = frozenset({"ls", "glob", "grep", "read_file", "edit_file", "write_file", "execute"})
+_HIDDEN_TOOLS = frozenset({"ls", "glob", "grep", "read_file", "edit_file", "write_file", "delete", "execute"})
 
-# deepagents 基础提示词里的"简洁"要求，会把最终报告压得只剩几句话。
-_BREVITY_LINES = ("- Be concise and direct. Don't over-explain unless asked.\n",)
-
-# deepagents 0.6 的 `task` 工具说明有 6k+ 字符，全是"尽量拆成子任务并行"的示例，基础提示词里还有一整节
-# "Whenever possible ... kick off tasks"。结果单仓库、单日志的问题也会被拆给子代理：子代理要从零重新
-# 熟悉源码，还会自己写 todo、交回两万字"证据"，整体比主代理自己查慢好几倍。
-# 所以 task 说明整段换成我们自己的（子代理名单也是我们定义的，不依赖上游措辞），上游那节委派指南整段去掉，
+# 上游 `task` 工具说明是一长串"尽量拆成子任务并行"的示例，单仓库、单日志的问题也会被拆给子代理：
+# 子代理要从零重新熟悉源码、交回两万字"证据"，整体比主代理自己查慢好几倍。
+# 所以 task 说明整段换成我们自己的（子代理名单也是我们定义的，不依赖上游措辞），
 # 何时委派以 SYSTEM_PROMPT 里的规则为准。
 _TASK_DESCRIPTION = """把一个独立的取证子问题交给子代理，在独立上下文里执行，完成后返回一条取证结果。
 
@@ -38,57 +33,12 @@ _TASK_DESCRIPTION = """把一个独立的取证子问题交给子代理，在独
 - 子代理的结果用户看不到，只作为证据；最终报告由你按 system prompt 的报告格式完整撰写。"""
 
 
-def _upstream_prompt_sections() -> tuple[str, ...]:
-    """要从系统提示词里整段去掉的上游说明；上游改名或删掉常量时返回空，由契约测试提醒。"""
-    sections = []
-    try:
-        from deepagents.middleware.subagents import TASK_SYSTEM_PROMPT
-
-        sections.append(TASK_SYSTEM_PROMPT)
-    except ImportError:
-        pass
-    return tuple(sections)
-
-
-def _todo_prompt_sections() -> tuple[str, ...]:
-    try:
-        from langchain.agents.middleware.todo import WRITE_TODOS_SYSTEM_PROMPT
-    except ImportError:
-        return ()
-    return (WRITE_TODOS_SYSTEM_PROMPT,)
-
-
 def _tool_name(tool) -> str | None:
     if isinstance(tool, dict):
         name = tool.get("name")
         return name if isinstance(name, str) else None
     name = getattr(tool, "name", None)
     return name if isinstance(name, str) else None
-
-
-def _strip(text: str, removals: tuple[str, ...]) -> str:
-    for piece in removals:
-        text = text.replace(piece, "")
-    return text
-
-
-def _patch_system_message(message: SystemMessage | None, removals: tuple[str, ...]) -> SystemMessage | None:
-    if message is None:
-        return None
-    content = message.content
-    if isinstance(content, str):
-        patched = _strip(content, removals)
-        return message if patched == content else SystemMessage(content=patched)
-    blocks = []
-    changed = False
-    for block in content:
-        if isinstance(block, dict) and isinstance(block.get("text"), str):
-            text = _strip(block["text"], removals)
-            if text != block["text"]:
-                block = {**block, "text": text}
-                changed = True
-        blocks.append(block)
-    return SystemMessage(content=blocks) if changed else message
 
 
 def _with_description(tool, description: str):
@@ -101,42 +51,26 @@ def _with_description(tool, description: str):
 
 
 class _HarnessOverrides(AgentMiddleware):
-    """在每次模型调用前剔除冲突/不需要的内置工具，并改写上游那些会误导排查的提示词。
+    """在每次模型调用前剔除不需要的内置工具，并把主代理的 task 说明换成我们的版本。
 
-    - 所有代理：隐藏内置文件工具，去掉会压缩报告的"简洁"要求。
-    - 主代理（传入 task_description）：task 说明换成我们的版本，去掉上游"尽量委派"的整节说明。
-    - 子代理（hide_todos=True）：不给 write_todos。子代理只做一个聚焦的子问题，写计划只是白白多几轮模型调用。
+    deepagents 0.7 起不再注入自带的基础提示词和委派指南，系统提示词就是我们传入的原文，
+    这里只需要处理工具列表；契约测试会盯住上游是否又往系统提示词里加了东西。
     """
 
-    def __init__(self, task_description: str | None = None, subagent_lines: str = "", hide_todos: bool = False):
+    def __init__(self, task_description: str | None = None):
         super().__init__()
         self.task_description = task_description
-        self.hidden = _HIDDEN_TOOLS | ({"write_todos"} if hide_todos else frozenset())
-        removals = list(_BREVITY_LINES)
-        if task_description is not None:
-            for section in _upstream_prompt_sections():
-                # 上游在这节后面紧跟着追加 "Available subagent types" 名单，连同名单一起去掉
-                removals.append(f"{section}\n\nAvailable subagent types:\n\n{subagent_lines}")
-                removals.append(section)
-        if hide_todos:
-            removals.extend(_todo_prompt_sections())
-        self.removals = tuple(removals)
 
     def _patch(self, request):
         tools = []
         for tool in request.tools:
             name = _tool_name(tool)
-            if name in self.hidden:
+            if name in _HIDDEN_TOOLS:
                 continue
             if name == "task" and self.task_description is not None:
                 tool = _with_description(tool, self.task_description)
             tools.append(tool)
-        overrides = {"tools": tools}
-        system_message = getattr(request, "system_message", None)
-        patched = _patch_system_message(system_message, self.removals)
-        if patched is not system_message:
-            overrides["system_message"] = patched
-        return request.override(**overrides)
+        return request.override(tools=tools)
 
     def wrap_model_call(self, request, handler):
         return handler(self._patch(request))
@@ -158,7 +92,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   用户提到"几点到几点""故障发生在 xx 时"时优先用它，而不是自己估算行号。
 - `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
   按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
-- `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
+- `read_log_chunk`：���行区间读取日志（日志可能很大，不要试图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
@@ -198,14 +132,13 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 ## 推荐工作流
 
 1. 每份日志先调用一次 `log_overview`，掌握全局。
-2. 用 `write_todos` 制定排查计划。
-3. 按问题类型搜索日志，配合 `context` 看上下文，理清完整时间线（请求进来 → 各次尝试 → 最终结果）。
-4. 用 `grep_code` 把日志里的关键字、类名、方法名、错误串关联到源码，再用 `read_code_file`
+2. 按问题类型搜索日志，配合 `context` 看上下文，理清完整时间线（请求进来 → 各次尝试 → 最终结果）。
+3. 用 `grep_code` 把日志里的关键字、类名、方法名、错误串关联到源码，再用 `read_code_file`
    读取命中行附近足够大的区间（例如命中第 120 行就读 80-200 行），必要时继续追调用方和配置。
    互不依赖的搜索和读取放在同一条消息里并行发起。
-5. 证据链闭环之前不要急着下结论：至少要有"日志现象 ↔ 代码分支 ↔ 触发条件"三者对应。
+4. 证据链闭环之前不要急着下结论：至少要有"日志现象 ↔ 代码分支 ↔ 触发条件"三者对应。
    查不到时换关键词、放宽正则、扩大时间窗口再试。
-6. 输出最终报告。
+5. 输出最终报告。
 
 ## 引用规范
 
@@ -268,7 +201,6 @@ _CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file")
 
 
 def _subagent_lines(subagents: list[dict]) -> str:
-    # 与 deepagents 追加到系统提示词里的名单格式一致，方便整段去掉
     return "\n".join(f"- {s['name']}: {s['description']}" for s in subagents)
 
 
@@ -284,7 +216,7 @@ def _subagents(tools: list) -> list[dict]:
             "description": description,
             "system_prompt": _SUBAGENT_PROMPT,
             "tools": spec_tools,
-            "middleware": [_HarnessOverrides(hide_todos=True)],
+            "middleware": [_HarnessOverrides()],
         }
 
     return [
@@ -348,12 +280,11 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
     resolved_model = _resolve_chat_model(model, base_url)
     tools = as_langchain_tools()
     subagents = _subagents(tools)
-    lines = _subagent_lines(subagents)
     return create_deep_agent(
         model=resolved_model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         subagents=subagents,
-        middleware=[_HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=lines), subagent_lines=lines)],
+        middleware=[_HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=_subagent_lines(subagents)))],
         checkpointer=checkpointer,
     )

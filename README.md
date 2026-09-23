@@ -1,7 +1,7 @@
 # log-agent
 
 基于 [deepagents](https://docs.langchain.com/oss/python/deepagents/overview) 的命令行日志分析智能体。
-它会结合**日志文件**和**源代码目录**，自动规划排查步骤、检索异常、关联代码，最终输出根因分析与修复建议。
+它会结合**日志文件**和**源代码目录**，自动检索异常、关联代码，最终输出根因分析与修复建议。
 
 ## 功能
 
@@ -15,7 +15,7 @@
 - 大日志友好：稀疏行索引让跳读 GB 级日志的第 N 行近乎瞬时，超长单行自动截断
 - 默认脱敏：token、密码、手机号、身份证、邮箱、IP 在发给模型前打码
 - 报告可导出为 Markdown / JSON，方便贴进工单或接入自动化
-- 利用 deepagents 的 `write_todos` 规划与上下文压缩
+- 利用 deepagents 的子代理委派与上下文压缩
 - 使用 OpenAI 模型（可切换其他 provider）
 - 跨平台：macOS / Linux / Windows 行为一致（搜索为纯 Python 实现，不依赖系统 `grep`）
 

@@ -18,10 +18,10 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
 from log_agent import netguard
 from log_agent.agent import (
-    _BREVITY_LINES,
     _HIDDEN_TOOLS,
+    _SUBAGENT_PROMPT,
     _TASK_DESCRIPTION,
-    _todo_prompt_sections,
+    SYSTEM_PROMPT,
     build_agent,
 )
 from log_agent.tools import ALL_TOOLS
@@ -64,23 +64,13 @@ def _run(script: list[AIMessage]) -> _CapturingModel:
     return model
 
 
-def test_upstream_prompt_still_contains_patched_text() -> None:
-    """我们用精确字符串替换改写上游提示词；上游一改措辞，替换就会变成空操作。"""
-    from deepagents.graph import BASE_AGENT_PROMPT
-
-    for line in _BREVITY_LINES:
-        assert line in BASE_AGENT_PROMPT, f"deepagents 基础提示词里找不到要删除的行：{line!r}"
-    # TASK_SYSTEM_PROMPT 在 0.7 已被上游删除（那节委派指南本身也没了），所以不要求常量存在，
-    # 只在下面的用例里校验最终提示词里确实没有这一节。
-    assert _todo_prompt_sections(), "langchain 不再导出 WRITE_TODOS_SYSTEM_PROMPT，子代理提示词里会残留 todo 说明"
-
-
-def test_model_sees_patched_prompt_and_only_our_tools() -> None:
+def test_model_sees_our_prompt_and_only_our_tools() -> None:
     model = _run([AIMessage(content="done")])
     seen = model.calls[0]
 
-    for line in _BREVITY_LINES:
-        assert line.strip() not in seen["system"]
+    # deepagents 0.7 起不再注入基础提示词（含会压缩报告的"Be concise"）和委派指南，
+    # 所以我们不再改写系统提示词。上游哪天又往里加东西，这里会失败，届时再决定要不要剔除。
+    assert seen["system"] == SYSTEM_PROMPT, "deepagents 又往主代理系统提示词里追加了内容"
 
     names = {_tool_name(t) for t in seen["tools"]}
     ours = {t.__name__ for t in ALL_TOOLS}
@@ -88,18 +78,13 @@ def test_model_sees_patched_prompt_and_only_our_tools() -> None:
     leaked = names & _HIDDEN_TOOLS
     assert not leaked, f"应被隐藏的内置工具又出现了：{leaked}"
     # 精确比对：上游新增或改名了内置工具（比如 read_file 改叫 read）时，这里会失败，
-    # 提醒我们判断新工具是否也要加进 _HIDDEN_TOOLS。
-    assert names - ours == {"task", "write_todos"}, f"出现了未知的内置工具：{names - ours - {'task', 'write_todos'}}"
+    # 提醒我们判断新工具是否也要加进 _HIDDEN_TOOLS。0.7 起不再默认挂 TodoListMiddleware，没有 write_todos。
+    assert names - ours == {"task"}, f"出现了未知的内置工具：{names - ours - {'task'}}"
 
     task = next(t for t in seen["tools"] if _tool_name(t) == "task")
     description = _tool_description(task)
     assert description.startswith(_TASK_DESCRIPTION.split("{agents}")[0])
     assert "code-investigator" in description and "log-investigator" in description
-
-    # 上游那节"尽量委派"的指南连同子代理名单要整段去掉，只剩我们自己的委派规则
-    assert "subagent spawner" not in seen["system"]
-    assert "Available subagent types" not in seen["system"]
-    assert "默认自己查" in seen["system"]
 
 
 def test_subagents_are_patched_too() -> None:
@@ -113,10 +98,8 @@ def test_subagents_are_patched_too() -> None:
     assert len(model.calls) == 3
     sub = model.calls[1]
     names = {_tool_name(t) for t in sub["tools"]}
-    assert not names & _HIDDEN_TOOLS and "task" not in names
-    assert "write_todos" not in names, "子代理不该拿到 write_todos"
-    assert "## `write_todos`" not in sub["system"]
-    assert "总长度控制在" in sub["system"]
+    assert names == {"list_code_files", "grep_code", "read_code_file"}, f"code-investigator 的工具不对：{names}"
+    assert sub["system"] == _SUBAGENT_PROMPT, "deepagents 又往子代理系统提示词里追加了内容"
 
 
 def test_callbacks_reach_subagent_tools() -> None:

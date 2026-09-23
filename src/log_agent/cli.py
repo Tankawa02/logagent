@@ -393,7 +393,7 @@ def chat(
         if not first_turn:
             console.print(Text(f"{glyphs.ok} 已加载会话 '{session}' 的历史，可直接继续追问。", style="ok"))
             if source_note:
-                console.print(Text(f"{glyphs.todo_active} 日志/源码与上次不同，会在下一条消息里告知 agent。", style="warn"))
+                console.print(Text(f"{glyphs.notice} 日志/源码与上次不同，会在下一条消息里告知 agent。", style="warn"))
         store.touch(session, log_paths, code_paths, model)
 
         chat_input = ChatInput(db_path.parent / "history")
