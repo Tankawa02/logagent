@@ -113,6 +113,10 @@ log-agent analyze --log /path/to/app.log --code /path/to/your/repo
 # 指定问题
 log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 500？"
 
+# 只看某个时间窗口（堆栈等无时间戳的行跟随上一条日志；'14:05' 包含到 14:05:59）
+log-agent analyze -l app.log -c ./repo --since "2026-06-09 14:00" --until "2026-06-09 14:05"
+log-agent analyze -l app.log --since 14:00
+
 # 保留每一步工具调用与计划变化的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
 
@@ -191,6 +195,7 @@ log-agent sessions rm payment-bug
 | `--code` | `-c` | 源码目录（可选，可重复） |
 | `--question` | `-q` | 想让 agent 回答的具体问题（analyze） |
 | `--output` / `--format` | `-o` / `-f` | 导出报告到文件，`markdown` 或 `json`（analyze） |
+| `--since` / `--until` | | 只分析该时间窗口内的日志，支持 `2026-06-09 14:00`、`2026-06-09T14:00:30`、`2026-06-09`、`14:00`；agent 需要对比时仍可显式查窗口外 |
 | `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |

@@ -5,7 +5,7 @@ from __future__ import annotations
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 
-from .tools import ALL_TOOLS
+from .tools import as_langchain_tools
 
 # deepagents 默认会注入一套内置文件工具，它们由一个以进程 cwd 为根的磁盘后端支撑，
 # 内部对每个路径做 path.relative_to(cwd)。在 Windows 上，当日志和源码位于不同盘符
@@ -45,6 +45,8 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是排查
 - `log_overview`：一次拿到日志全貌——行数、时间范围、各级别数量、高频错误签名、异常类型及首次出现的行号。
 - `search_logs`：在日志里搜索。默认按正则；搜 `[ERROR]`、`foo(bar)` 这类含元字符的原文时传 `regex=False`。
   传 `context=3` 可以连带返回命中行前后 3 行，通常就不必再调 `read_log_chunk`。
+- `log_overview` 与 `search_logs` 都支持 `since` / `until`（如 `2026-06-09 14:00`、`14:00`），只看某个时间窗口；
+  用户提到"几点到几点""故障发生在 xx 时"时优先用它，而不是自己估算行号。
 - `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的报错信息关联回具体代码位置（返回 `文件:行号`）。
@@ -107,7 +109,7 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
 
     return create_deep_agent(
         model=resolved_model,
-        tools=ALL_TOOLS,
+        tools=as_langchain_tools(),
         system_prompt=SYSTEM_PROMPT,
         middleware=[_StripBuiltinFsTools()],
         checkpointer=checkpointer,

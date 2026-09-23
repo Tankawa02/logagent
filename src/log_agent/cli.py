@@ -47,6 +47,8 @@ _opt_encoding = typer.Option(None, "--encoding", help="强制指定日志编码�
 _opt_no_redact = typer.Option(False, "--no-redact", help="关闭敏感信息脱敏（默认会打码 token、手机号、身份证、邮箱、IP 等）")
 _opt_max_steps = typer.Option(120, "--max-steps", min=10, help="单轮最多推理步数，防止 agent 陷入反复搜索")
 _opt_verbose = typer.Option(False, "--verbose", "-v", help="保留每一步工具调用与计划变化的完整记录")
+_opt_since = typer.Option(None, "--since", help="只分析该时间之后的日志，如 '2026-06-09 14:00' 或 '14:00'")
+_opt_until = typer.Option(None, "--until", help="只分析到该时间为止（按给出的精度包含整段，'14:05' 含 14:05:59）")
 
 
 def _check_api_key() -> None:
@@ -71,16 +73,28 @@ def _fail(message: str) -> None:
     raise typer.Exit(code=2)
 
 
-def _prepare(log: list[str], code: list[Path] | None, encoding: str | None, no_redact: bool) -> tuple[list[str], list[str]]:
-    """解析日志输入、应用编码与脱敏设置，返回 (日志绝对路径, 源码绝对路径)。"""
+def _prepare(
+    log: list[str],
+    code: list[Path] | None,
+    encoding: str | None,
+    no_redact: bool,
+    since: str | None = None,
+    until: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """解析日志输入、应用编码 / 脱敏 / 时间窗口设置，返回 (日志绝对路径, 源码绝对路径)。"""
     from . import redact
     from .inputs import LogInputError, resolve_log_inputs
     from .logfile import set_forced_encoding
+    from .timefilter import set_default_window
 
     try:
         set_forced_encoding(encoding)
     except LookupError:
         _fail(f"不认识的编码名: {encoding}")
+    try:
+        set_default_window(since, until)
+    except ValueError as exc:
+        _fail(str(exc))
     redact.set_enabled(not no_redact)
     try:
         log_paths = resolve_log_inputs(log)
@@ -115,6 +129,15 @@ def _build_context_message(log_paths: list[str], code_paths: list[str], question
             )
     else:
         lines.append("（本次未提供源码目录，只分析日志。）")
+
+    from .timefilter import default_window
+
+    window = default_window()
+    if window:
+        lines.append(
+            f"时间窗口：{window.describe()}。log_overview / search_logs 不传 since/until 时会自动只看这个窗口；"
+            "需要对比窗口之前的情况时可以显式传入其它时间。read_log_chunk 按行号读取，不受窗口限制。"
+        )
     lines.append(f"\n用户问题：{question}")
     return "\n".join(lines)
 
@@ -143,6 +166,11 @@ def _base_rows(log_paths: list[str], code_paths: list[str], model: str, base_url
     ]
     if base_url:
         rows.append(("接口", base_url))
+
+    from .timefilter import default_window
+
+    if default_window():
+        rows.append(("时间", Text(default_window().describe(), style="accent")))
     rows.append(("脱敏", Text("开启", style="ok") if redact.is_enabled() else Text("已关闭", style="warn")))
     return rows
 
@@ -172,6 +200,8 @@ def analyze(
     fmt: ReportFormat = typer.Option(None, "--format", "-f", help="报告格式；默认按 -o 的扩展名推断"),
     model: str = _opt_model,
     base_url: str = _opt_base_url,
+    since: str = _opt_since,
+    until: str = _opt_until,
     encoding: str = _opt_encoding,
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
@@ -179,7 +209,7 @@ def analyze(
 ) -> None:
     """单次分析日志，结合源码定位根因（一问一答）。"""
     _check_api_key()
-    log_paths, code_paths = _prepare(log, code, encoding, no_redact)
+    log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
 
@@ -259,6 +289,8 @@ def chat(
         help="会话名称；用相同名称可续上之前的对话。不指定时自动生成（形如 chat-20260609-165130）",
     ),
     db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认 ~/.log-agent/sessions.db）"),
+    since: str = _opt_since,
+    until: str = _opt_until,
     encoding: str = _opt_encoding,
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
@@ -268,7 +300,7 @@ def chat(
     if "-" in log:
         _fail("chat 模式需要在终端里输入问题，不能用 -l - 从管道读日志；请先把日志保存成文件，或改用 analyze。")
     _check_api_key()
-    log_paths, code_paths = _prepare(log, code, encoding, no_redact)
+    log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
 

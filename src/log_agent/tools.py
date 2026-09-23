@@ -1,21 +1,58 @@
 """自定义工具：让 agent 能安全地读取日志文件、检索源码（全部只读、纯 Python、跨平台）。
 
-约定：成功时返回正文；失败以 `[错误]` 开头，无结果以 `[提示]` 开头（展示层据此判断状态）。
+每个工具返回 `ToolOutput`：它本身是 str（发给模型的正文，失败以 `[错误]`、无结果以 `[提示]`
+开头，方便模型理解），同时带 `status` 与 `meta` 结构化字段。注册给 agent 时经
+`as_langchain_tools()` 包装，`meta` 作为 ToolMessage.artifact 传给展示层，不进入模型上下文。
 """
 
 from __future__ import annotations
 
 import fnmatch
+import functools
 import os
 import re
 import shutil
 import subprocess
 import time
 from collections import Counter, deque
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Literal
 
 from .logfile import MAX_LINE_CHARS, clip_line, open_log, read_text_file
 from .redact import redact_code, redact_log
+from .timefilter import TimeWindow, WindowTracker, default_window, find_timestamp, parse_window
+
+Status = Literal["ok", "hint", "error"]
+
+
+class ToolOutput(str):
+    """工具结果：字符串内容 + 结构化状态。继承 str，直接调用工具函数时用法与普通字符串一致。"""
+
+    status: Status
+    meta: dict[str, Any]
+
+    def __new__(cls, text: str, status: Status = "ok", **meta: Any) -> ToolOutput:
+        obj = super().__new__(cls, text)
+        obj.status = status
+        obj.meta = meta
+        return obj
+
+    @property
+    def artifact(self) -> dict[str, Any]:
+        return {"status": self.status, **self.meta}
+
+
+def _ok(text: str, **meta: Any) -> ToolOutput:
+    return ToolOutput(text, "ok", **meta)
+
+
+def _hint(message: str, kind: str, **meta: Any) -> ToolOutput:
+    return ToolOutput(f"[提示] {message}", "hint", kind=kind, message=message, **meta)
+
+
+def _err(message: str) -> ToolOutput:
+    return ToolOutput(f"[错误] {message}", "error", message=message)
 
 # 搜索时跳过的目录
 SKIP_DIRS = {
@@ -90,9 +127,22 @@ def _open_log_or_error(path: str):
     try:
         return open_log(path), None
     except FileNotFoundError:
-        return None, f"[错误] 日志文件不存在: {path}"
+        return None, _err(f"日志文件不存在: {path}")
     except OSError as exc:
-        return None, f"[错误] 无法打开日志: {exc}"
+        return None, _err(f"无法打开日志: {exc}")
+
+
+def _resolve_window(since: str, until: str) -> tuple[TimeWindow, ToolOutput | None]:
+    """显式传了边界就用显式的，否则沿用 CLI 设置的默认窗口。"""
+    if since or until:
+        try:
+            return parse_window(since, until), None
+        except ValueError as exc:
+            return TimeWindow(), _err(str(exc))
+    return default_window(), None
+
+
+NO_TIMESTAMP_NOTE = "（日志中没有识别到时间戳，已忽略时间窗口，按全文处理）"
 
 
 def _human_size(size: int) -> str:
@@ -111,10 +161,6 @@ def _human_size(size: int) -> str:
 _LEVEL_RE = re.compile(r"\b(FATAL|CRITICAL|SEVERE|ERROR|ERR|WARNING|WARN|INFO|DEBUG|TRACE)\b")
 _LEVEL_ALIAS = {"CRITICAL": "FATAL", "SEVERE": "FATAL", "ERR": "ERROR", "WARNING": "WARN"}
 _LEVEL_ORDER = ("FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE")
-_TS_RE = re.compile(
-    r"\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?"
-    r"|\b\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?\b"
-)
 _EXC_RE = re.compile(r"\b((?:[a-z_][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error))\b")
 _NORMALIZE = [
     (re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"), "<uuid>"),
@@ -131,7 +177,58 @@ def _error_signature(line: str, level_end: int) -> str:
     return body[:160].strip()
 
 
-def log_overview(path: str) -> str:
+class _OverviewStats:
+    def __init__(self) -> None:
+        self.levels: Counter[str] = Counter()
+        self.signatures: Counter[str] = Counter()
+        self.first_seen: dict[str, int] = {}
+        self.exceptions: Counter[str] = Counter()
+        self.exc_first: dict[str, int] = {}
+        self.first_ts = ""
+        self.last_ts = ""
+        self.total = 0
+        self.window_first = 0
+        self.window_last = 0
+        self.window_lines = 0
+        self.saw_timestamp = False
+
+
+def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
+    """扫描全文统计概览。时间范围总是按全文统计，级别/错误/异常只统计窗口内的行。"""
+    stats = _OverviewStats()
+    tracker = WindowTracker(window)
+    for lineno, line in log.iter_lines(1):
+        stats.total = lineno
+        if len(line) > 4000:
+            line = line[:4000]
+        found = find_timestamp(line)
+        if found:
+            stats.saw_timestamp = True
+            if not stats.first_ts:
+                stats.first_ts = found[0]
+            stats.last_ts = found[0]
+        # 概览要报告全文行数与时间范围，所以越过窗口后也不提前结束
+        if window and not tracker.accept(line):
+            continue
+        stats.window_lines += 1
+        stats.window_first = stats.window_first or lineno
+        stats.window_last = lineno
+        level_match = _LEVEL_RE.search(line[:200])
+        if level_match:
+            level = _LEVEL_ALIAS.get(level_match.group(1), level_match.group(1))
+            stats.levels[level] += 1
+            if level in ("FATAL", "ERROR"):
+                sig = _error_signature(line, level_match.end())
+                if sig:
+                    stats.signatures[sig] += 1
+                    stats.first_seen.setdefault(sig, lineno)
+        for exc in set(_EXC_RE.findall(line)):
+            stats.exceptions[exc] += 1
+            stats.exc_first.setdefault(exc, lineno)
+    return stats
+
+
+def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
     """快速了解整份日志：行数、大小、编码、时间范围、各级别数量、高频错误与异常类型。
 
     建议作为排查的第一步调用，先掌握全局再决定搜索什么。大文件会扫描一遍全文，
@@ -139,53 +236,51 @@ def log_overview(path: str) -> str:
 
     Args:
         path: 日志文件路径。
+        since: 可选，只统计该时间及之后的日志，如 `2026-06-09 14:00`、`14:00`。
+        until: 可选，只统计到该时间为止（按给出的精度包含整段，`14:05` 包含 14:05:59）。
     """
     log, error = _open_log_or_error(path)
     if error:
         return error
+    window, error = _resolve_window(since, until)
+    if error:
+        return error
 
-    levels: Counter[str] = Counter()
-    signatures: Counter[str] = Counter()
-    first_seen: dict[str, int] = {}
-    exceptions: Counter[str] = Counter()
-    exc_first: dict[str, int] = {}
-    first_ts = last_ts = ""
-    total = 0
-
+    note = ""
     try:
-        for lineno, line in log.iter_lines(1):
-            total = lineno
-            if len(line) > 4000:
-                line = line[:4000]
-            ts = _TS_RE.search(line[:80])
-            if ts:
-                if not first_ts:
-                    first_ts = ts.group(0)
-                last_ts = ts.group(0)
-            level_match = _LEVEL_RE.search(line[:200])
-            if level_match:
-                level = _LEVEL_ALIAS.get(level_match.group(1), level_match.group(1))
-                levels[level] += 1
-                if level in ("FATAL", "ERROR"):
-                    sig = _error_signature(line, level_match.end())
-                    if sig:
-                        signatures[sig] += 1
-                        first_seen.setdefault(sig, lineno)
-            for exc in set(_EXC_RE.findall(line)):
-                exceptions[exc] += 1
-                exc_first.setdefault(exc, lineno)
+        stats = _scan_overview(log, window)
+        if window and not stats.saw_timestamp:
+            window, note = TimeWindow(), NO_TIMESTAMP_NOTE
+            stats = _scan_overview(log, window)
     except OSError as exc:
-        return f"[错误] 读取失败: {exc}"
+        return _err(f"读取失败: {exc}")
 
-    if total == 0:
-        return f"[提示] 日志为空: {path}"
+    if stats.total == 0:
+        return _hint(f"日志为空: {path}", "empty")
+    time_range = f"{stats.first_ts} → {stats.last_ts}" if stats.first_ts else ""
+    if window and stats.window_lines == 0:
+        return _hint(
+            f"时间窗口 {window.describe()} 内没有日志（日志时间范围：{time_range}，共 {stats.total:,} 行）。",
+            "empty_window",
+            total_lines=stats.total,
+        )
 
-    meta = [f"大小 {_human_size(log.size)}", f"共 {total:,} 行", f"编码 {log.encoding}"]
+    levels = stats.levels
+    meta = [f"大小 {_human_size(log.size)}", f"共 {stats.total:,} 行", f"编码 {log.encoding}"]
     if log.gz:
         meta.append("gzip 压缩")
     out = [f"--- 日志概览 {log.path.name} ---", " · ".join(meta)]
-    if first_ts:
-        out.append(f"时间范围：{first_ts} → {last_ts}")
+    if note:
+        out.append(note)
+    if time_range:
+        out.append(f"时间范围：{time_range}")
+    if window:
+        out.append(
+            f"时间窗口：{window.describe()}，对应 L{stats.window_first}-L{stats.window_last}，"
+            f"共 {stats.window_lines:,} 行（以下统计只含窗口内）"
+        )
+    signatures, first_seen = stats.signatures, stats.first_seen
+    exceptions, exc_first = stats.exceptions, stats.exc_first
     if levels:
         ordered = [f"{name} {levels[name]:,}" for name in _LEVEL_ORDER if levels[name]]
         out.append("级别分布：" + " · ".join(ordered))
@@ -202,10 +297,17 @@ def log_overview(path: str) -> str:
         out.append("异常类型：")
         for exc, count in exceptions.most_common(10):
             out.append(f"  {exc}  x{count}  首次 L{exc_first[exc]}")
-    return "\n".join(out)
+    return _ok(
+        "\n".join(out),
+        total_lines=stats.total,
+        errors=levels["FATAL"] + levels["ERROR"],
+        warnings=levels["WARN"],
+        window=window.describe() if window else None,
+        window_lines=stats.window_lines if window else None,
+    )
 
 
-def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 200) -> str:
+def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 200) -> ToolOutput:
     """读取日志文件的指定行区间（带行号）。
 
     日志通常很大，不要试图一次读完。单行超过 500 字会被截断。
@@ -229,15 +331,66 @@ def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 200) -> str:
                 break
             lines.append(f"{lineno}: {clip_line(text)}")
     except OSError as exc:
-        return f"[错误] 读取失败: {exc}"
+        return _err(f"读取失败: {exc}")
 
     if not lines:
         total = f"（文件共 {log.total_lines:,} 行）" if log.total_lines is not None else ""
-        return f"[提示] 第 {start_line} 行之后没有内容{total}。"
+        return _hint(f"第 {start_line} 行之后没有内容{total}。", "eof", total_lines=log.total_lines)
     last = start_line + len(lines) - 1
     total = f"，共 {log.total_lines:,} 行" if log.total_lines is not None else ""
     header = f"--- {path} 第 {start_line}-{last} 行{total} ---"
-    return header + "\n" + redact_log("\n".join(lines))
+    return _ok(header + "\n" + redact_log("\n".join(lines)), start=start_line, end=last, total_lines=log.total_lines)
+
+
+class _SearchResult:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.hits = 0
+        self.truncated = False
+        self.saw_timestamp = False
+
+
+def _scan_search(
+    log, compiled: re.Pattern[str], context: int, start_line: int, end_line: int, max_results: int, window: TimeWindow
+) -> _SearchResult:
+    result = _SearchResult()
+    out = result.lines
+    tracker = WindowTracker(window)
+    before: deque[tuple[int, str]] = deque(maxlen=context or 1)
+    after_left = 0
+    last_printed = 0
+    for lineno, text in log.iter_lines(start_line):
+        if end_line and lineno > end_line:
+            break
+        if window and not tracker.accept(text):
+            # 窗口外的行既不算命中也不作为上下文
+            before.clear()
+            after_left = 0
+            if tracker.done:
+                break
+            continue
+        if compiled.search(text):
+            if result.hits >= max_results:
+                result.truncated = True
+                break
+            result.hits += 1
+            if context:
+                first = before[0][0] if before else lineno
+                if out and first > last_printed + 1:
+                    out.append("--")
+                out.extend(f"{no}- {clip_line(t)}" for no, t in before)
+                before.clear()
+            out.append(f"{lineno}: {clip_line(text)}")
+            last_printed = lineno
+            after_left = context
+        elif after_left:
+            out.append(f"{lineno}- {clip_line(text)}")
+            last_printed = lineno
+            after_left -= 1
+        elif context:
+            before.append((lineno, text))
+    result.saw_timestamp = tracker.saw_timestamp
+    return result
 
 
 def search_logs(
@@ -248,8 +401,10 @@ def search_logs(
     context: int = 0,
     start_line: int = 1,
     end_line: int = 0,
+    since: str = "",
+    until: str = "",
     max_results: int = 50,
-) -> str:
+) -> ToolOutput:
     """在日志中搜索关键字/正则，返回命中行（`行号: 内容`）及可选的上下文行（`行号- 内容`）。
 
     用于快速定位 ERROR、Exception、Traceback、特定 request id 等。
@@ -263,54 +418,47 @@ def search_logs(
         context: 每个命中额外返回前后各几行上下文（0-10），省去再调 read_log_chunk。
         start_line: 只搜索从该行开始的内容。
         end_line: 只搜索到该行为止，0 表示到文件末尾。
+        since: 可选，只搜索该时间及之后的日志，如 `2026-06-09 14:00`、`14:00`。
+            没有时间戳的行（如堆栈）沿用上一条日志的时间。
+        until: 可选，只搜索到该时间为止（按给出的精度包含整段）。
         max_results: 最多返回的命中数。
     """
     log, error = _open_log_or_error(path)
     if error:
         return error
+    window, error = _resolve_window(since, until)
+    if error:
+        return error
     compiled, note = _compile(pattern, regex, ignore_case)
     context = max(0, min(int(context), MAX_CONTEXT_LINES))
     max_results = max(1, int(max_results))
+    start_line = max(1, int(start_line))
     end_line = int(end_line or 0)
 
-    out: list[str] = []
-    before: deque[tuple[int, str]] = deque(maxlen=context or 1)
-    after_left = 0
-    last_printed = 0
-    hits = 0
-    truncated = False
     try:
-        for lineno, text in log.iter_lines(max(1, int(start_line))):
-            if end_line and lineno > end_line:
-                break
-            if compiled.search(text):
-                if hits >= max_results:
-                    truncated = True
-                    break
-                hits += 1
-                if context:
-                    first = before[0][0] if before else lineno
-                    if out and first > last_printed + 1:
-                        out.append("--")
-                    out.extend(f"{no}- {clip_line(t)}" for no, t in before)
-                    before.clear()
-                out.append(f"{lineno}: {clip_line(text)}")
-                last_printed = lineno
-                after_left = context
-            elif after_left:
-                out.append(f"{lineno}- {clip_line(text)}")
-                last_printed = lineno
-                after_left -= 1
-            elif context:
-                before.append((lineno, text))
+        found = _scan_search(log, compiled, context, start_line, end_line, max_results, window)
+        if window and not found.saw_timestamp:
+            window, note = TimeWindow(), note + NO_TIMESTAMP_NOTE
+            found = _scan_search(log, compiled, context, start_line, end_line, max_results, window)
     except OSError as exc:
-        return f"[错误] 搜索失败: {exc}"
+        return _err(f"搜索失败: {exc}")
 
-    if not hits:
-        return f"[提示] 未匹配到 '{pattern}'{note}。"
-    body = redact_log("\n".join(out))
-    tail = f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条（可缩小行范围或换更精确的模式）。" if truncated else ""
-    return (f"{note}\n" if note else "") + body + tail
+    window_note = f"（时间窗口 {window.describe()}）" if window else ""
+    if not found.hits:
+        return _hint(f"未匹配到 '{pattern}'{window_note}{note}。", "no_match", hits=0)
+    body = redact_log("\n".join(found.lines))
+    tail = (
+        f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条（可缩小行范围、时间窗口或换更精确的模式）。"
+        if found.truncated
+        else ""
+    )
+    header = f"{window_note}{note}"
+    return _ok(
+        (f"{header}\n" if header else "") + body + tail,
+        hits=found.hits,
+        truncated=found.truncated,
+        window=window.describe() if window else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +490,7 @@ def _code_files(base: Path) -> list[str]:
     return results
 
 
-def list_code_files(code_dir: str, path_glob: str = "", max_files: int = 300) -> str:
+def list_code_files(code_dir: str, path_glob: str = "", max_files: int = 300) -> ToolOutput:
     """列出源码目录下的代码文件（自动跳过 node_modules、.git 等无关目录）。
 
     Args:
@@ -352,15 +500,15 @@ def list_code_files(code_dir: str, path_glob: str = "", max_files: int = 300) ->
     """
     base = Path(code_dir).expanduser()
     if not base.is_dir():
-        return f"[错误] 代码目录不存在: {code_dir}"
+        return _err(f"代码目录不存在: {code_dir}")
     files = _code_files(base)
     if path_glob:
         files = [f for f in files if _glob_match(f, path_glob)]
     if not files:
-        return f"[提示] {code_dir} 下没有匹配的代码文件。"
+        return _hint(f"{code_dir} 下没有匹配的代码文件。", "empty")
     shown = files[:max_files]
     tail = f"\n... 共 {len(files)} 个文件，已达上限 {max_files}，可用 path_glob 缩小范围。" if len(files) > max_files else ""
-    return "\n".join(shown) + tail
+    return _ok("\n".join(shown) + tail, shown=len(shown), total=len(files))
 
 
 def _glob_match(rel: str, pattern: str) -> bool:
@@ -369,7 +517,7 @@ def _glob_match(rel: str, pattern: str) -> bool:
     return fnmatch.fnmatch(normalized, pattern) or fnmatch.fnmatch(normalized.rsplit("/", 1)[-1], pattern)
 
 
-def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: int = 0) -> str:
+def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: int = 0) -> ToolOutput:
     """读取源码文件的指定行区间，每行带行号（报告里引用 `文件:行号` 时以此为准）。
 
     不指定 end_line 时最多返回 400 行；大文件请结合 grep_code 的行号按区间读取。
@@ -383,29 +531,29 @@ def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: 
     base = Path(code_dir).expanduser().resolve()
     target = (base / rel_path).resolve()
     if not target.is_relative_to(base):
-        return f"[错误] 非法路径（越界）: {rel_path}"
+        return _err(f"非法路径（越界）: {rel_path}")
     if not target.is_file():
-        return f"[错误] 文件不存在: {rel_path}"
+        return _err(f"文件不存在: {rel_path}")
     try:
         size = target.stat().st_size
     except OSError as exc:
-        return f"[错误] 无法访问文件: {exc}"
+        return _err(f"无法访问文件: {exc}")
     if size > MAX_SEARCH_FILE_SIZE:
-        return (
-            f"[错误] 文件过大（{_human_size(size)}，上限 {_human_size(MAX_SEARCH_FILE_SIZE)}），"
+        return _err(
+            f"文件过大（{_human_size(size)}，上限 {_human_size(MAX_SEARCH_FILE_SIZE)}），"
             f"已拒绝读取。请用 grep_code 定位行号后再按区间读取。"
         )
     try:
         all_lines = read_text_file(target).splitlines()
     except OSError as exc:
-        return f"[错误] 读取失败: {exc}"
+        return _err(f"读取失败: {exc}")
 
     total = len(all_lines)
     if total == 0:
-        return f"[提示] 文件为空: {rel_path}"
+        return _hint(f"文件为空: {rel_path}", "empty")
     start = max(1, int(start_line))
     if start > total:
-        return f"[提示] 第 {start} 行超出文件范围（共 {total} 行）。"
+        return _hint(f"第 {start} 行超出文件范围（共 {total} 行）。", "eof", total_lines=total)
     end = int(end_line or 0)
     end = min(total, end if end >= start else start + MAX_CODE_LINES - 1)
     end = min(end, start + MAX_CODE_LINES * 2 - 1)
@@ -416,7 +564,7 @@ def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: 
     )
     header = f"--- {rel_path} 第 {start}-{end} 行，共 {total} 行 ---"
     tail = f"\n... 还有 {total - end} 行未显示，用 start_line={end + 1} 继续读取。" if end < total else ""
-    return header + "\n" + redact_code(body) + tail
+    return _ok(header + "\n" + redact_code(body) + tail, start=start, end=end, total_lines=total)
 
 
 def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: bool, path_glob: str, max_results: int) -> list[str] | None:
@@ -468,7 +616,7 @@ def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: boo
         if proc.poll() is None:
             proc.kill()
         proc.wait()
-    # 退出码 2 = rg 报错（通常是正则语法与 Python 不兼容），回退
+    # 退出码 2 = rg 报错（通常是正则语法与 Python 不兼容），回���
     if proc.returncode == 2 and not matches:
         return None
     return matches
@@ -481,7 +629,7 @@ def grep_code(
     ignore_case: bool = False,
     path_glob: str = "",
     max_results: int = 80,
-) -> str:
+) -> ToolOutput:
     """在源码目录中递归搜索关键字/正则，返回 `文件:行号: 内容`。
 
     用于把日志里的报错信息（函数名、错误字符串、异常类名）关联回源码位置。
@@ -496,7 +644,7 @@ def grep_code(
     """
     base = Path(code_dir).expanduser()
     if not base.is_dir():
-        return f"[错误] 代码目录不存在: {code_dir}"
+        return _err(f"代码目录不存在: {code_dir}")
     compiled, note = _compile(pattern, regex, ignore_case)
     literal = not regex or bool(note)
 
@@ -522,13 +670,20 @@ def grep_code(
                 break
 
     if not matches:
-        return f"[提示] 源码中未匹配到 '{pattern}'{note}。"
+        return _hint(f"源码中未匹配到 '{pattern}'{note}。", "no_match", hits=0)
     shown = matches[:max_results]
-    tail = f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条（可用 path_glob 缩小范围）。" if len(matches) > max_results else ""
-    return (f"{note}\n" if note else "") + redact_code("\n".join(shown)) + tail
+    truncated = len(matches) > max_results
+    tail = f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条（可用 path_glob 缩小范围）。" if truncated else ""
+    files = {line.split(":", 1)[0] for line in shown}
+    return _ok(
+        (f"{note}\n" if note else "") + redact_code("\n".join(shown)) + tail,
+        hits=len(shown),
+        files=len(files),
+        truncated=truncated,
+    )
 
 
-ALL_TOOLS = [
+ALL_TOOLS: list[Callable[..., ToolOutput]] = [
     log_overview,
     read_log_chunk,
     search_logs,
@@ -536,3 +691,21 @@ ALL_TOOLS = [
     read_code_file,
     grep_code,
 ]
+
+
+def _with_artifact(func: Callable[..., ToolOutput]):
+    """包装成 LangChain 工具：正文给模型，结构化 meta 作为 artifact 只给展示层。"""
+    from langchain_core.tools import tool
+
+    @functools.wraps(func)
+    def runner(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        result = func(*args, **kwargs)
+        if isinstance(result, ToolOutput):
+            return str(result), result.artifact
+        return str(result), {"status": "ok"}
+
+    return tool(runner, response_format="content_and_artifact")
+
+
+def as_langchain_tools() -> list[Any]:
+    return [_with_artifact(func) for func in ALL_TOOLS]

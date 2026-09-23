@@ -208,14 +208,24 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             flags.append("忽略大小写")
         if num("context", 0):
             flags.append(f"±{num('context', 0)}")
+        if name == "search_logs" and (arg("since") or arg("until")):
+            flags.append(f"{arg('since') or '…'}~{arg('until') or '…'}")
         if arg("path_glob"):
             flags.append(_clip(arg("path_glob"), 16))
         return " ".join(flags)
+
+    def window() -> str:
+        since, until = arg("since"), arg("until")
+        if not since and not until:
+            return ""
+        return f"{since or '…'}~{until or '…'}"
 
     parts: list[tuple[str, str]] = []
     if name == "log_overview":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
+        if window():
+            parts.append((window(), "accent"))
     elif name == "read_log_chunk":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
@@ -257,62 +267,65 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
     return parts
 
 
-def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
-    """把工具的原始输出压缩成一句结果摘要，返回 (摘要, 是否出错)。"""
-    raw = getattr(output, "content", output)
-    text = content_to_text(raw).strip()
-    if getattr(output, "status", "success") == "error":
-        return (text.splitlines()[0] if text else "执行失败"), True
-    if text.startswith("[错误]"):
-        return text.removeprefix("[错误]").strip().splitlines()[0], True
-    if text.startswith("[提示]"):
-        hints = {
-            "search_logs": "无命中",
-            "grep_code": "无命中",
-            "read_log_chunk": "已到文件末尾",
-            "list_code_files": "目录为空",
-        }
-        return hints.get(name, text.removeprefix("[提示]").strip()), False
+_HINT_SUMMARIES = {
+    "no_match": "无命中",
+    "eof": "已到文件末尾",
+    "empty": "内容为空",
+    "empty_window": "时间窗口内无日志",
+}
 
-    lines = text.splitlines()
+
+def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
+    sep = f" {glyphs.sep} "
     if name == "log_overview":
-        parts = []
-        total = re.search(r"共 ([\d,]+) 行", text)
-        if total:
-            parts.append(f"{total.group(1)} 行")
-        errors = re.search(r"\b(?:FATAL|ERROR) ([\d,]+)", text)
-        parts.append(f"ERROR {errors.group(1)}" if errors else "无 ERROR")
-        return f" {glyphs.sep} ".join(parts), False
+        parts = [f"{meta.get('total_lines', 0):,} 行"]
+        if meta.get("window"):
+            parts.append(f"窗口内 {meta.get('window_lines', 0):,} 行")
+        errors = meta.get("errors", 0)
+        parts.append(f"ERROR {errors:,}" if errors else "无 ERROR")
+        return sep.join(parts)
     if name == "read_log_chunk":
-        match = re.search(r"第 (\d+)-(\d+) 行", lines[0] if lines else "")
-        if match:
-            return f"{int(match.group(2)) - int(match.group(1)) + 1} 行", False
-    elif name == "search_logs":
-        hits = sum(1 for line in lines if re.match(r"\d+: ", line))
-        more = "+" if "命中超过" in text else ""
-        return f"命中 {hits}{more} 行", False
-    elif name == "list_code_files":
-        files = sum(1 for line in lines if line and not line.startswith("..."))
-        total = re.search(r"共 (\d+) 个文件", text)
-        return (f"{files}/{total.group(1)} 个文件" if total else f"{files} 个文件"), False
-    elif name == "read_code_file":
-        match = re.search(r"第 (\d+)-(\d+) 行，共 (\d+) 行", lines[0] if lines else "")
-        if match:
-            start, end, total = (int(g) for g in match.groups())
-            if start == 1 and end == total:
-                return f"{total} 行", False
-            return f"L{start}-{end} / {total} 行", False
-    elif name == "grep_code":
-        hit_files = set()
-        hits = 0
-        for line in lines:
-            match = re.match(r"(.+?):(\d+): ", line)
-            if match:
-                hits += 1
-                hit_files.add(match.group(1))
-        more = "+" if "命中超过" in text else ""
-        return f"命中 {hits}{more} 处 {glyphs.sep} {len(hit_files)} 个文件", False
-    return "", False
+        return f"{meta['end'] - meta['start'] + 1} 行"
+    if name == "search_logs":
+        return f"命中 {meta.get('hits', 0)}{'+' if meta.get('truncated') else ''} 行"
+    if name == "list_code_files":
+        shown, total = meta.get("shown", 0), meta.get("total", 0)
+        return f"{shown}/{total} 个文件" if total > shown else f"{shown} 个文件"
+    if name == "read_code_file":
+        start, end, total = meta["start"], meta["end"], meta["total_lines"]
+        return f"{total} 行" if start == 1 and end == total else f"L{start}-{end} / {total} 行"
+    if name == "grep_code":
+        more = "+" if meta.get("truncated") else ""
+        return f"命中 {meta.get('hits', 0)}{more} 处{sep}{meta.get('files', 0)} 个文件"
+    return ""
+
+
+def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
+    """把工具输出压缩成一句结果摘要，返回 (摘要, 是否出错)。
+
+    优先读取工具附带的结构化 artifact（见 tools.ToolOutput），不解析给模型看的正文。
+    """
+    text = content_to_text(getattr(output, "content", output)).strip()
+    first_line = text.splitlines()[0] if text else ""
+    if getattr(output, "status", "success") == "error":
+        return first_line or "执行失败", True
+
+    artifact = getattr(output, "artifact", None)
+    if not isinstance(artifact, dict):
+        # 第三方工具或旧版消息没有 artifact，只按前缀判断状态
+        if first_line.startswith("[错误]"):
+            return first_line.removeprefix("[错误]").strip(), True
+        return "", False
+
+    status = artifact.get("status")
+    if status == "error":
+        return str(artifact.get("message") or first_line or "执行失败"), True
+    if status == "hint":
+        return _HINT_SUMMARIES.get(str(artifact.get("kind")), str(artifact.get("message") or "")), False
+    try:
+        return _summarize_meta(name, artifact), False
+    except (KeyError, TypeError):
+        return "", False
 
 
 @dataclass

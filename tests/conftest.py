@@ -10,7 +10,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from log_agent import logfile, redact, tools
+from log_agent import logfile, redact, timefilter, tools
 
 
 @pytest.fixture(autouse=True)
@@ -20,11 +20,12 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)
+    timefilter.reset_default_window()
     tools._file_list_cache.clear()
     yield
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)
-
+    timefilter.reset_default_window()
 
 @pytest.fixture
 def sample_log(tmp_path: Path) -> Path:
