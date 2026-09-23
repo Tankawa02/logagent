@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.live import Live
 from rich.markdown import Markdown
@@ -119,6 +122,33 @@ def shimmer(label: str, now: float) -> Text:
 # ---------------------------------------------------------------------------
 
 
+def display_path(path: str, max_width: int) -> str:
+    """面板里展示的路径：家目录缩成 ~；仍然太长时从中间省略目录，始终保留完整的文件名。
+
+    直接交给 Rich 折行会把文件名拆成 `app.l` / `og` 两行，恰好把最关键的部分弄得最难认。
+    """
+    home = str(Path.home())
+    if home not in ("", "/") and (path == home or path.startswith(home + os.sep)):
+        path = "~" + path[len(home):]
+    if cell_len(path) <= max_width:
+        return path
+    sep = "\\" if "\\" in path and "/" not in path else "/"
+    head, _, name = path.rpartition(sep)
+    if not head:
+        return path
+    parts = head.split(sep)
+    anchor = sep.join(parts[:1]) + sep
+    kept: list[str] = []
+    budget = max_width - cell_len(anchor) - cell_len(glyphs.ellipsis) - cell_len(name) - 2
+    for part in reversed(parts[1:]):
+        if cell_len(part) + 1 > budget:
+            break
+        kept.insert(0, part)
+        budget -= cell_len(part) + 1
+    middle = sep.join([glyphs.ellipsis, *kept])
+    return f"{anchor}{middle}{sep}{name}"
+
+
 def info_panel(rows: list[tuple[str, Text | str]], title: str, subtitle: str = "", footer: list[Text] | None = None) -> Panel:
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="right", style="accent.strong", no_wrap=True)
@@ -159,17 +189,25 @@ def collect_usage(messages: list[Any]) -> dict[str, int]:
 
 
 def collect_ai_texts(messages: list[Any]) -> str:
-    """收集本轮所有 AI 文本消息（按时间顺序）拼成完整报告。"""
+    """收集本轮所有 AI 文本消息（按时间顺序）拼成完整报告。
+
+    跟着工具调用的短文本是过程旁白，不算报告正文；只有旁白、没有别的文本时才退而用它们。
+    """
     collected: list[str] = []
+    narration: list[str] = []
     for msg in reversed(messages):
         msg_type = getattr(msg, "type", "")
         if msg_type == "human":
             break
         if msg_type == "ai":
             text = content_to_text(getattr(msg, "content", "")).strip()
-            if text:
+            if not text:
+                continue
+            if getattr(msg, "tool_calls", None) and not looks_like_report(text):
+                narration.append(text)
+            else:
                 collected.append(text)
-    return "\n\n".join(reversed(collected))
+    return "\n\n".join(reversed(collected or narration))
 
 
 _TRAIL_MAX_STEPS = 8
@@ -425,6 +463,7 @@ class ToolRun:
     args: dict[str, Any]
     handle: Any
     started: float = field(default_factory=time.perf_counter)
+    note: str = ""
 
     @property
     def kind(self) -> str:
@@ -502,6 +541,38 @@ def settled_tool_line(run: ToolRun, nested: bool = False) -> ToolLine:
     icon.append(" ")
     icon.append_text(_tool_icon(run.kind))
     return ToolLine(run, icon, meta, nested=nested)
+
+
+# 超过这么长、或出现标题 / 一句话结论，就当作正式报告边写边输出；更短的先憋住，等消息结束再判断是不是旁白
+_NARRATION_MAX_CHARS = 300
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s", re.MULTILINE)
+_MD_NOISE = re.compile(r"^[\s>#*\-+]+|[*`_]+")
+
+
+def looks_like_report(text: str) -> bool:
+    if len(text) > _NARRATION_MAX_CHARS or _HEADING.search(text):
+        return True
+    return any(parse_summary_line(line) for line in text.split("\n"))
+
+
+def condense_note(text: str) -> str:
+    """把工具调用前的旁白压成一行：取第一句非空内容，去掉 Markdown 记号。"""
+    for line in text.splitlines():
+        line = _MD_NOISE.sub("", line).strip()
+        if line:
+            return line
+    return ""
+
+
+def note_line(note: str, nested: bool = False) -> Text:
+    line = Text("  ")
+    if nested:
+        line.append(f"  {glyphs.branch} ", style="muted")
+    line.append(f"{glyphs.notice} ", style="accent")
+    line.append(note, style="muted")
+    line.no_wrap = True
+    line.overflow = "ellipsis"
+    return line
 
 
 def _sub_run(call: SubCall) -> ToolRun:
@@ -601,6 +672,7 @@ class ToolRecord:
     failed: bool
     seconds: float
     subagent: str = ""
+    note: str = ""
 
 
 @dataclass
@@ -656,6 +728,7 @@ class StreamRenderer:
         self.interrupted = False
         self.answer_parts: list[str] = []
         self.records: list[ToolRecord] = []
+        self.pending_note = ""
         self.tracker = SubagentTracker()
 
     # ---- 统计（主代理 + 子代理）--------------------------------------------
@@ -720,6 +793,8 @@ class StreamRenderer:
 
         tool_lines: list[RenderableType] = []
         for run in running:
+            if run.note:
+                tool_lines.append(note_line(run.note))
             if run.completed:
                 tool_lines.append(settled_tool_line(run))
                 continue
@@ -802,12 +877,16 @@ class StreamRenderer:
             summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
         ended = getattr(run.handle, "ended", None) or time.perf_counter()
         self.records.append(
-            ToolRecord(run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent)
+            ToolRecord(
+                run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
+            )
         )
 
     def _settle(self, run: ToolRun) -> None:
         self._record(run)
         if self.verbose:
+            if run.note:
+                console.print(note_line(run.note))
             console.print(settled_tool_line(run))
         if run.name != "task":
             return
@@ -831,8 +910,12 @@ class StreamRenderer:
 
     def _on_message(self, message_stream: Any) -> None:
         self._settle_tools()
+        self.pending_note = ""
         buffer = ""
         streamed = False
+        # 工具调用前模型常先说一句"先看看整体分布"：流式阶段还不知道后面有没有工具调用，
+        # 所以短文本先只放在 Live 预览里，消息结束后再决定是旁白还是报告正文。
+        holding = True
         self.writing = False
         for delta in message_stream.text:
             if not delta:
@@ -844,6 +927,11 @@ class StreamRenderer:
             self.rendered_any = True
             buffer += delta
             self.pending_chunks += 1
+            if holding and looks_like_report(buffer):
+                holding = False
+            if holding:
+                self.tail.text = buffer
+                continue
             flushable, remainder = split_complete_blocks(buffer)
             if flushable.strip():
                 self.tail.text = remainder
@@ -860,7 +948,11 @@ class StreamRenderer:
         if output is not None:
             for key, value in usage_from_message(output).items():
                 self.usage[key] += value
-        self._flush_answer(final_text.strip())
+        final_text = final_text.strip()
+        if holding and getattr(output, "tool_calls", None) and not looks_like_report(final_text):
+            self.pending_note = condense_note(final_text)
+            return
+        self._flush_answer(final_text)
 
     def _on_tool(self, tool_stream: Any) -> None:
         name = getattr(tool_stream, "tool_name", "") or ""
@@ -873,7 +965,9 @@ class StreamRenderer:
         self.seen_calls.add(call_id)
 
         self.tool_count += 1
-        self.running.append(ToolRun(call_id=call_id, name=name, args=args, handle=tool_stream))
+        # 旁白只挂在这一批的第一个工具上，并行的其它工具不重复显示
+        self.running.append(ToolRun(call_id=call_id, name=name, args=args, handle=tool_stream, note=self.pending_note))
+        self.pending_note = ""
         self.rendered_any = True
 
     # ---- 入口 ---------------------------------------------------------------

@@ -81,7 +81,8 @@ def test_linker_off_and_duplicate_names(tmp_path: Path) -> None:
 def test_linked_markdown_renders_osc8(sample_log: Path, mode: str) -> None:
     linker = CitationLinker([str(sample_log)], [], mode=mode)
     buffer = StringIO()
-    console = Console(file=buffer, force_terminal=True, width=100)
+    # Windows CI 没有真实控制台，Rich 会自动判成 legacy_windows 并按设计不输出 OSC 8；这里模拟的是现代终端
+    console = Console(file=buffer, force_terminal=True, legacy_windows=False, width=100)
     console.print(LinkedMarkdown(linker.apply(f"见 `{sample_log.name}:3`，[恶意](javascript:alert(1))")))
     targets = {t for t in re.findall(r"\x1b\]8;[^;]*;([^\x1b\a]*)", buffer.getvalue()) if t}
     expected = sample_log.as_uri() if mode == "file" else f"vscode://file/{sample_log.as_posix()}:3"
