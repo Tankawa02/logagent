@@ -41,6 +41,12 @@ LOG_HELP = "日志文件路径，可重复传多个；支持通配符（如 'log
 CODE_HELP = "源码目录路径（可选，可重复传多个以同时分析多个代码库）"
 
 _opt_code = typer.Option(None, "--code", "-c", help=CODE_HELP, exists=True, file_okay=False)
+_opt_skills = typer.Option(
+    None, "--skills",
+    help="额外的 skill 目录（每个子目录一份 SKILL.md 排查手册），可重复传；"
+    "~/.log-agent/skills 与项目内 .log-agent/skills 会自动加载",
+    exists=True, file_okay=False,
+)
 _opt_model = typer.Option(None, "--model", "-m", help=f"模型，provider:model 格式；默认读 LOG_AGENT_MODEL，否则 {DEFAULT_MODEL}")
 _opt_base_url = typer.Option(None, "--base-url", help="自定义 OpenAI 兼容接口地址；默认读环境变量 OPENAI_BASE_URL")
 _opt_encoding = typer.Option(None, "--encoding", help="强制指定日志编码（如 gbk、utf-16）；默认自动探测")
@@ -169,7 +175,25 @@ def _build_context_message(log_paths: list[str], code_paths: list[str], question
     return "\n".join(lines)
 
 
-def _base_rows(log_paths: list[str], code_paths: list[str], model: str, base_url: str | None) -> list[tuple[str, Text | str]]:
+def _skill_sources(skills: list[Path] | None):
+    from .skills import resolve_skill_sources
+
+    return resolve_skill_sources(skills or [])
+
+
+def _skills_value(sources) -> Text:
+    value = Text()
+    for i, source in enumerate(sources):
+        if i:
+            value.append("\n")
+        value.append(f"{source.skill_count()} 个", style="accent")
+        value.append(f"  {source.directory}", style="muted")
+    return value
+
+
+def _base_rows(
+    log_paths: list[str], code_paths: list[str], model: str, base_url: str | None, skill_sources=(),
+) -> list[tuple[str, Text | str]]:
     from . import redact
     from .logfile import open_log
 
@@ -193,6 +217,8 @@ def _base_rows(log_paths: list[str], code_paths: list[str], model: str, base_url
     ]
     if base_url:
         rows.append(("接口", base_url))
+    if skill_sources:
+        rows.append(("Skills", _skills_value(skill_sources)))
 
     from .timefilter import default_window
 
@@ -238,19 +264,22 @@ def analyze(
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
     verbose: bool = _opt_verbose,
+    skills: list[Path] = _opt_skills,
 ) -> None:
     """单次分析日志，结合源码定位根因（一问一答）。"""
     _check_api_key()
     log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    skill_sources = _skill_sources(skills)
 
     from .agent import build_agent
 
     reset_cursor_line()
-    console.print(info_panel(_base_rows(log_paths, code_paths, model, base_url), "log-agent", f"v{__version__}"))
+    rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+    console.print(info_panel(rows, "log-agent", f"v{__version__}"))
     with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
-        agent = build_agent(model=model, base_url=base_url)
+        agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [])
 
     payload = {"messages": [{"role": "user", "content": _build_context_message(log_paths, code_paths, question)}]}
     result = StreamRenderer(verbose=verbose).run(agent, payload, config=_run_config(max_steps))
@@ -328,6 +357,7 @@ def chat(
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
     verbose: bool = _opt_verbose,
+    skills: list[Path] = _opt_skills,
 ) -> None:
     """多轮对话模式：连续追问，会话持久化到本地 SQLite，关掉终端后还能续上。"""
     if "-" in log:
@@ -336,6 +366,7 @@ def chat(
     log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    skill_sources = _skill_sources(skills)
 
     import sqlite3
 
@@ -374,14 +405,14 @@ def chat(
                 ("Ctrl+C", "accent"), (" 中断当前回答", "muted"),
             )
         )
-        rows = _base_rows(log_paths, code_paths, model, base_url)
+        rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         rows.append(("会话", session_value))
         reset_cursor_line()
         console.print(info_panel(rows, "log-agent", f"多轮对话 {glyphs.sep} v{__version__}", footer))
 
         checkpointer = SqliteSaver(conn)
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
-            agent = build_agent(model=model, checkpointer=checkpointer, base_url=base_url)
+            agent = build_agent(model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=skills or [])
 
         def has_history(name: str) -> bool:
             try:
@@ -425,7 +456,8 @@ def chat(
                 if command == "/help":
                     _print_help()
                 elif command == "/sources":
-                    console.print(info_panel(_base_rows(log_paths, code_paths, model, base_url), "当前会话", session))
+                    rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+                    console.print(info_panel(rows, "当前会话", session))
                 elif command == "/stats":
                     console.print(totals.line())
                 elif command == "/new":
@@ -490,6 +522,7 @@ _CONFIG_TEMPLATE = """\
 # model = "openai:gpt-4.1"
 # base_url = "https://your-gateway.example.com/v1"   # API key 仍放在环境变量 OPENAI_API_KEY
 # code = ["./"]
+# skills = ["./ops/skills"]   # 额外的 skill 目录；.log-agent/skills 与 ~/.log-agent/skills 会自动加载
 # max_steps = 120
 # timeout = 120        # 单次模型请求超时（秒）
 # max_retries = 3      # 模型请求失败自动重试次数

@@ -228,6 +228,7 @@ log-agent sessions rm payment-bug
 |------|------|------|
 | `--log` | `-l` | 日志文件（必填，可重复、支持通配符 / `.gz` / `-`） |
 | `--code` | `-c` | 源码目录（可选，可重复） |
+| `--skills` | | 额外的 skill 目录（可重复），见下方「Skills（排查手册）」 |
 | `--question` | `-q` | 想让 agent 回答的具体问题（analyze） |
 | `--output` / `--format` | `-o` / `-f` | 导出报告到文件，`markdown` 或 `json`（analyze） |
 | `--since` / `--until` | | 只分析该时间窗口内的日志，支持 `2026-06-09 14:00`、`2026-06-09T14:00:30`、`2026-06-09`、`14:00`；agent 需要对比时仍可显式查窗口外 |
@@ -240,6 +241,35 @@ log-agent sessions rm payment-bug
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：
 `LOG_AGENT_TIMEOUT=300`、`LOG_AGENT_MAX_RETRIES=5`。重试时状态栏会提示"接口波动，自动重试第 N 次"；
 重试用尽仍失败时给出中文原因（401 / 404 / 超时等），已经输出的部分报告照常保存到 `-o`。
+
+## Skills（排查手册）
+
+把团队的排查经验写成 skill，agent 遇到对应问题时会先读手册再按步骤查（例如某个服务的关键日志字段、
+常见根因、要重点看的代码位置）。每个 skill 是一个目录，里面放一份带 frontmatter 的 `SKILL.md`：
+
+```
+.log-agent/skills/
+└── sms-routing/
+    ├── SKILL.md
+    └── vendor-codes.md        # 可选的参考资料，SKILL.md 里提到即可
+```
+
+```markdown
+---
+name: sms-routing
+description: 短信供应商路由、降级、切换问题的排查手册
+---
+# 短信路由排查
+1. 先用 trace_request 按手机号拉出整条链路，关注 vendor= 与 fallback= 字段
+2. 路由决策在 router/VendorSelector.java 的 select()，权重来自配置 sms.vendor.weights
+...
+```
+
+加载位置（后者同名覆盖前者）：`~/.log-agent/skills/`（个人）→ 项目内最近的 `.log-agent/skills/`（随仓库共享）
+→ `--skills DIR` 或配置文件里的 `skills = ["..."]`。启动面板的 "Skills" 一行会显示加载了几个。
+
+系统提示词里只放每个 skill 的名字和描述，agent 判断用得上时才读全文，装再多也不会拖慢普通问题。
+手册只作经验参考，结论仍以日志和源码证据为准；手册里执行脚本、改文件之类的步骤会被忽略（所有工具都是只读的）。
 
 ## 终端显示
 

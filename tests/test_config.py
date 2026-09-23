@@ -76,7 +76,7 @@ def test_analyze_reads_config_defaults(sample_log: Path, code_repo: Path, tmp_pa
     )
     result, seen = _run_analyze(monkeypatch, project, sample_log)
     assert result.exit_code == 0, result.output
-    assert seen == {"model": "openai:cfg-model", "base_url": "https://gw.example/v1"}
+    assert seen == {"model": "openai:cfg-model", "base_url": "https://gw.example/v1", "skill_dirs": []}
     assert context["code"] == [str(code_repo)]
     assert "配置" in result.output
     assert os.environ["LOG_AGENT_TIMEOUT"] == "222"
@@ -87,7 +87,7 @@ def test_cli_and_env_beat_config(sample_log: Path, tmp_path: Path, monkeypatch: 
     monkeypatch.setenv("OPENAI_BASE_URL", "https://env/v1")
     result, seen = _run_analyze(monkeypatch, tmp_path, sample_log, "-m", "openai:cli-model")
     assert result.exit_code == 0, result.output
-    assert seen == {"model": "openai:cli-model", "base_url": "https://env/v1"}
+    assert seen == {"model": "openai:cli-model", "base_url": "https://env/v1", "skill_dirs": []}
 
 
 def test_config_command_init_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -31,6 +31,7 @@ _TOOL_META: dict[str, tuple[str, str]] = {
     "list_code_files": ("code", "浏览源码"),
     "read_code_file": ("code", "读取源码"),
     "grep_code": ("code", "检索源码"),
+    "read_file": ("other", "读取文件"),
     "task": ("other", "委派子任务"),
 }
 
@@ -278,6 +279,19 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((search_flags(), "muted"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
+    elif name == "read_file":
+        path = arg("file_path")
+        segments = [p for p in path.split("/") if p]
+        if len(segments) >= 3 and segments[0] == "skills":
+            parts.append((f"skill {segments[2]}", "accent"))
+            if segments[3:] != ["SKILL.md"]:
+                parts.append((_clip("/".join(segments[3:]), 32), "muted"))
+        elif segments[:1] == ["large_tool_results"]:
+            parts.append(("转存的工具结果", "accent"))
+        elif path:
+            parts.append((_clip(path), "muted"))
+        if num("offset", 0):
+            parts.append((f"offset {num('offset', 0)}", "muted"))
     elif name == "task":
         if arg("subagent_type"):
             parts.append((arg("subagent_type"), "accent"))
@@ -810,7 +824,7 @@ class StreamRenderer:
                 console.print()
                 console.print(
                     Text(
-                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以换个更具体的问题，"
+                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以���个更具体的问题，"
                         "或用 --max-steps 调大上限。",
                         style="warn",
                     )

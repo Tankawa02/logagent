@@ -56,7 +56,8 @@ def test_main_agent_can_delegate_but_never_sees_builtin_fs_tools() -> None:
 
     main = model.calls[0]
     assert "task" in main["tools"]
-    assert "read_file" not in main["tools"] and "execute" not in main["tools"]
+    assert "execute" not in main["tools"] and "grep" not in main["tools"]
+    assert "不能**读取磁盘上的日志或源码" in main["tools"]["read_file"]
     assert {"log_overview", "search_logs", "grep_code", "read_code_file"} <= set(main["tools"])
 
     task_description = main["tools"]["task"]
@@ -103,7 +104,7 @@ def test_subagent_evidence_feeds_report_written_by_main_agent(
     assert subagent_calls, "子代理应当被调用"
     sub_tools = set(subagent_calls[0]["tools"])
     assert {"grep_code", "read_code_file"} <= sub_tools
-    assert not sub_tools & {"read_file", "grep", "execute", "search_logs"}
+    assert not sub_tools & {"grep", "execute", "search_logs"}
 
 
 def test_subagent_steps_are_visible_and_counted(
