@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
+from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_log
 from .timefilter import TimeWindow, WindowTracker, default_window, find_timestamp, parse_window
 
@@ -246,6 +247,19 @@ def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
     if error:
         return error
 
+    # 输出里的错误样例经过脱敏，所以脱敏开关也是缓存键的一部分
+    key = ("overview", window, redact_enabled())
+    with log.scan_lock:
+        cached = log.scan_cache.get(key)
+        if cached is not None:
+            return ToolOutput(str(cached), cached.status, **{**cached.meta, "cached": True})
+        result = _build_overview(log, path, window)
+        if result.status != "error":
+            log.scan_cache[key] = result
+        return result
+
+
+def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
     note = ""
     try:
         stats = _scan_overview(log, window)
@@ -587,7 +601,7 @@ def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: boo
         args += ["--iglob", name]
     for skip in sorted(SKIP_DIRS):
         args += ["--glob", f"!{skip}/"]
-    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的扩展名白名单，改为下面逐行过滤
+    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的���展名白名单，改为下面逐行过滤
     # 必须显式给出搜索路径：stdin 不是终端时 rg 会改为搜索 stdin
     args += ["-e", compiled_src, "--", "."]
 

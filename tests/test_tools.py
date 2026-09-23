@@ -19,6 +19,37 @@ def test_log_overview(sample_log: Path) -> None:
     assert "KeyError  x1  首次 L7" in out
 
 
+def test_log_overview_is_cached_until_file_changes(sample_log: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    import threading
+
+    scans = []
+    real_scan = tools._scan_overview
+    monkeypatch.setattr(tools, "_scan_overview", lambda log, window: scans.append(1) or real_scan(log, window))
+
+    # 模拟两个子代理同时要同一份概览：只应扫描一次
+    results: list[str] = []
+    threads = [threading.Thread(target=lambda: results.append(tools.log_overview(str(sample_log)))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(scans) == 1 and results[0] == results[1]
+    assert any(r.meta.get("cached") for r in results)
+
+    # 不同时间窗口是不同的缓存项
+    tools.log_overview(str(sample_log), since="10:00:03")
+    assert len(scans) == 2
+
+    # 文件被追加后缓存失效
+    with sample_log.open("a", encoding="utf-8") as f:
+        f.write("2026-06-09 10:00:07 ERROR [order] payment failed order=1003\n")
+    stat = sample_log.stat()
+    os.utime(sample_log, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    out = tools.log_overview(str(sample_log))
+    assert len(scans) == 3 and "共 11 行" in out and not out.meta.get("cached")
+
+
 def test_log_overview_missing_file(tmp_path: Path) -> None:
     assert tools.log_overview(str(tmp_path / "nope.log")).startswith("[错误]")
 

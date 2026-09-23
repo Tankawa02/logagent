@@ -18,6 +18,8 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from .netguard import describe_api_error, retry_watch
+from .subtrace import SubagentTracker, SubCall
 from .term import REFRESH_PER_SECOND, console, glyphs
 
 # 工具名 -> (类别, 友好中文名)。类别决定图标与颜色：日志 / 源码 / 其它
@@ -34,6 +36,9 @@ _TOOL_META: dict[str, tuple[str, str]] = {
 _PHASE_BY_KIND = {"log": "正在查看日志", "code": "正在阅读源码", "other": "正在执行工具"}
 
 _MAX_VALUE_CELLS = 48
+
+# 底部 Live 区里每个运行中的子代理最多展示最近几步，避免并行委派时把状态栏挤出屏幕。
+_LIVE_SUBCALLS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +293,8 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
             parts.append(f"窗口内 {meta.get('window_lines', 0):,} 行")
         errors = meta.get("errors", 0)
         parts.append(f"ERROR {errors:,}" if errors else "无 ERROR")
+        if meta.get("cached"):
+            parts.append("缓存")
         return sep.join(parts)
     if name == "read_log_chunk":
         return f"{meta['end'] - meta['start'] + 1} 行"
@@ -362,15 +369,18 @@ class ToolLine:
     宽度不够时只截断参数部分，结果与耗时永远完整可见；绝不折行，Live 高度才稳定。
     """
 
-    def __init__(self, run: ToolRun, icon: Text, meta: Text) -> None:
+    def __init__(self, run: ToolRun, icon: Text, meta: Text, nested: bool = False) -> None:
         self.run = run
         self.icon = icon
         self.meta = meta
+        self.nested = nested
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         # 留 1 列余量：经典 conhost 写满最后一列会触发自动换行
         width = max(options.max_width - 1, 20)
         left = Text("  ")
+        if self.nested:
+            left.append(f"  {glyphs.branch} ", style="muted")
         left.append_text(self.icon)
         left.append(" ")
         left.append(self.run.label, style="bold")
@@ -397,8 +407,9 @@ def _tool_icon(kind: str) -> Text:
     return Text(icon, style=f"tool.{kind}")
 
 
-def settled_tool_line(run: ToolRun) -> ToolLine:
-    duration = format_duration(time.perf_counter() - run.started)
+def settled_tool_line(run: ToolRun, nested: bool = False) -> ToolLine:
+    ended = getattr(run.handle, "ended", None)
+    duration = format_duration((ended or time.perf_counter()) - run.started)
     error = getattr(run.handle, "error", None)
     if error:
         summary, failed = str(error).splitlines()[0], True
@@ -414,7 +425,11 @@ def settled_tool_line(run: ToolRun) -> ToolLine:
     icon = Text(glyphs.fail, style="err") if failed else Text(glyphs.ok, style="ok")
     icon.append(" ")
     icon.append_text(_tool_icon(run.kind))
-    return ToolLine(run, icon, meta)
+    return ToolLine(run, icon, meta, nested=nested)
+
+
+def _sub_run(call: SubCall) -> ToolRun:
+    return ToolRun(call_id="", name=call.name, args=call.args, handle=call, started=call.started)
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +588,7 @@ class ToolRecord:
     summary: str
     failed: bool
     seconds: float
+    subagent: str = ""
 
 
 @dataclass
@@ -616,14 +632,29 @@ class StreamRenderer:
         self.interrupted = False
         self.answer_parts: list[str] = []
         self.records: list[ToolRecord] = []
+        self.tracker = SubagentTracker()
+
+    # ---- 统计（主代理 + 子代理）--------------------------------------------
+
+    def _total_usage(self) -> dict[str, int]:
+        sub = self.tracker.usage
+        return {key: self.usage[key] + sub[key] for key in self.usage}
+
+    def _total_tools(self) -> int:
+        return self.tool_count + self.tracker.tool_count
 
     # ---- Live 视图 ---------------------------------------------------------
 
     def _phase(self) -> str:
         active = [run for run in self.running if not run.completed]
         if active:
+            tasks = [run for run in active if run.name == "task"]
             if len(active) > 1:
+                if len(tasks) == len(active):
+                    return f"{len(tasks)} 个子代理并行取证"
                 return f"并行执行 {len(active)} 个工具"
+            if tasks:
+                return "子代理取证中"
             return _PHASE_BY_KIND.get(active[0].kind, "正在执行工具")
         if self.writing:
             return "正在撰写"
@@ -639,13 +670,18 @@ class StreamRenderer:
         line.append_text(shimmer(self._phase() + glyphs.ellipsis, now))
 
         sep = f"  {glyphs.sep}  "
+        retry_note = retry_watch.active_note()
+        if retry_note:
+            line.append(sep)
+            line.append(retry_note, style="warn")
         meta = Text(sep + format_duration(now - self.start), style="muted")
-        approx = self.usage["total"] + self.pending_chunks
+        approx = self._total_usage()["total"] + self.pending_chunks
         if approx:
             prefix = "~" if self.pending_chunks else ""
             meta.append(f"{sep}{prefix}{approx:,} tokens")
-        if self.tool_count:
-            meta.append(f"{sep}工具 {self.tool_count}")
+        tools = self._total_tools()
+        if tools:
+            meta.append(f"{sep}工具 {tools}")
         meta.append(f"{sep}Ctrl+C 中断")
         line.append_text(meta)
         line.no_wrap = True
@@ -659,20 +695,21 @@ class StreamRenderer:
         running = list(self.running)
         todo_now = self.todos.current
 
+        tool_lines: list[RenderableType] = []
+        for run in running:
+            if run.completed:
+                tool_lines.append(settled_tool_line(run))
+                continue
+            tool_lines.append(self._running_line(run, now))
+            if run.name == "task":
+                tool_lines.extend(self._live_subcalls(run, now))
+
         if self.tail.text.strip():
-            reserved = 4 + len(running) + (1 if todo_now else 0)
+            reserved = 4 + len(tool_lines) + (1 if todo_now else 0)
             self.tail.max_lines = max(1, min(12, console.size.height - reserved))
             parts.extend([self.tail, Text("")])
 
-        for run in running:
-            if run.completed:
-                parts.append(settled_tool_line(run))
-                continue
-            icon = self.spinner.render(now)
-            icon = icon.copy() if isinstance(icon, Text) else Text(str(icon))
-            icon.stylize(f"tool.{run.kind}")
-            meta = Text(format_duration(now - run.started), style="muted")
-            parts.append(ToolLine(run, icon, meta))
+        parts.extend(tool_lines)
 
         if todo_now:
             todo = Text(f"  {glyphs.todo_active} ", style="warn")
@@ -686,6 +723,27 @@ class StreamRenderer:
             parts.append(Text(""))
         parts.append(self._status_line(now))
         return Group(*parts)
+
+    def _running_line(self, run: ToolRun, now: float, nested: bool = False) -> ToolLine:
+        icon = self.spinner.render(now)
+        icon = icon.copy() if isinstance(icon, Text) else Text(str(icon))
+        icon.stylize(f"tool.{run.kind}")
+        meta = Text(format_duration(now - run.started), style="muted")
+        return ToolLine(run, icon, meta, nested=nested)
+
+    def _live_subcalls(self, task: ToolRun, now: float) -> list[RenderableType]:
+        calls = self.tracker.children(task.call_id)
+        hidden = max(0, len(calls) - _LIVE_SUBCALLS)
+        lines: list[RenderableType] = []
+        if hidden:
+            more = Text(f"    {glyphs.branch} ", style="muted")
+            more.append(f"{glyphs.ellipsis} 已执行 {hidden} 步", style="muted")
+            more.no_wrap = True
+            lines.append(more)
+        for call in calls[hidden:]:
+            run = _sub_run(call)
+            lines.append(settled_tool_line(run, nested=True) if call.completed else self._running_line(run, now, nested=True))
+        return lines
 
     # ---- 永久输出 -----------------------------------------------------------
 
@@ -701,23 +759,35 @@ class StreamRenderer:
         self.answer_parts.append(text)
         self.rendered_any = True
 
-    def _record(self, run: ToolRun) -> None:
+    def _record(self, run: ToolRun, subagent: str = "") -> None:
         error = getattr(run.handle, "error", None)
         if error:
             summary, failed = str(error).splitlines()[0], True
         else:
             summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
+        ended = getattr(run.handle, "ended", None) or time.perf_counter()
         self.records.append(
-            ToolRecord(run.name, dict(run.args), summary, failed, round(time.perf_counter() - run.started, 3))
+            ToolRecord(run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent)
         )
+
+    def _settle(self, run: ToolRun) -> None:
+        self._record(run)
+        if self.verbose:
+            console.print(settled_tool_line(run))
+        if run.name != "task":
+            return
+        subagent = str(run.args.get("subagent_type") or "general-purpose")
+        for call in self.tracker.children(run.call_id):
+            sub = _sub_run(call)
+            self._record(sub, subagent)
+            if self.verbose:
+                console.print(settled_tool_line(sub, nested=True))
 
     def _settle_tools(self) -> None:
         still_running = []
         for run in self.running:
             if run.completed:
-                self._record(run)
-                if self.verbose:
-                    console.print(settled_tool_line(run))
+                self._settle(run)
             else:
                 still_running.append(run)
         self.running = still_running
@@ -780,12 +850,27 @@ class StreamRenderer:
 
     # ---- 入口 ---------------------------------------------------------------
 
+    def _with_tracker(self, config: dict[str, Any] | None) -> dict[str, Any]:
+        merged = dict(config or {})
+        callbacks = merged.get("callbacks")
+        if callbacks is None:
+            merged["callbacks"] = [self.tracker]
+        elif isinstance(callbacks, list):
+            merged["callbacks"] = [*callbacks, self.tracker]
+        else:
+            callbacks = callbacks.copy()
+            callbacks.add_handler(self.tracker, inherit=True)
+            merged["callbacks"] = callbacks
+        return merged
+
     def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> TurnResult:
         """执行一轮并渲染，返回本轮结果（报告正文、耗时、用量、工具记录、是否中断）。"""
         from langgraph.errors import GraphRecursionError
 
         final_state: Any = None
         error = ""
+        config = self._with_tracker(config)
+        retry_watch.reset()
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
             live = Live(
@@ -822,6 +907,17 @@ class StreamRenderer:
                         style="warn",
                     )
                 )
+            except Exception as exc:
+                message = describe_api_error(exc)
+                if message is None:
+                    raise
+                self._flush_answer(self.tail.text)
+                self.tail.text = ""
+                error = message
+                console.print()
+                console.print(Text(f"{glyphs.fail} {message}", style="err"))
+                if self.answer_parts:
+                    console.print(Text("已输出的部分内容会照常保存。", style="muted"))
 
         if not self.interrupted and not error:
             if not self.printed_answer_rule and isinstance(final_state, dict):
@@ -835,13 +931,14 @@ class StreamRenderer:
 
         for run in self.running:
             if run.completed:
-                self._record(run)
+                self._settle(run)
         elapsed = time.perf_counter() - self.start
-        print_stats(elapsed, self.usage, self.tool_count, self.interrupted or bool(error))
+        usage = self._total_usage()
+        print_stats(elapsed, usage, self._total_tools(), self.interrupted or bool(error))
         return TurnResult(
             report="\n\n".join(self.answer_parts),
             elapsed=round(elapsed, 3),
-            usage=dict(self.usage),
+            usage=usage,
             tools=list(self.records),
             interrupted=self.interrupted,
             error=error,

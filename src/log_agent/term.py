@@ -59,6 +59,7 @@ class Glyphs:
     ellipsis: str
     cursor: str
     rule: str
+    branch: str
     box: box.Box
 
 
@@ -83,6 +84,7 @@ UNICODE_GLYPHS = Glyphs(
     ellipsis="…",
     cursor="▍",
     rule="─",
+    branch="└",
     box=box.ROUNDED,
 )
 
@@ -106,6 +108,7 @@ ASCII_GLYPHS = Glyphs(
     ellipsis="...",
     cursor="_",
     rule="-",
+    branch="`-",
     box=box.ASCII,
 )
 
