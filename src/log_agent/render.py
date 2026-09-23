@@ -171,6 +171,35 @@ def collect_ai_texts(messages: list[Any]) -> str:
     return "\n\n".join(reversed(collected))
 
 
+_TRAIL_MAX_STEPS = 8
+
+
+def tool_trail(records: list[ToolRecord]) -> Text | None:
+    """非 verbose 模式下，把主代理的工具过程折叠成一行，例如：查了 6 步：日志概览 → 搜索日志 ×3 → 委派子任务。
+
+    连续的同名工具合并计数；子代理内部的步骤计入总步数，但不单独列出。
+    """
+    main = [r for r in records if not r.subagent]
+    if not main:
+        return None
+    steps: list[list] = []
+    for record in main:
+        label = _TOOL_META.get(record.name, ("other", record.name))[1]
+        if steps and steps[-1][0] == label:
+            steps[-1][1] += 1
+        else:
+            steps.append([label, 1])
+    shown = [f"{label} ×{count}" if count > 1 else label for label, count in steps[:_TRAIL_MAX_STEPS]]
+    if len(steps) > _TRAIL_MAX_STEPS:
+        shown.append(glyphs.ellipsis)
+    trail = Text(f"查了 {len(records)} 步：", style="muted")
+    trail.append(" → ".join(shown), style="muted")
+    trail.append("   加 -v 查看每一步", style="muted")
+    trail.no_wrap = True
+    trail.overflow = "ellipsis"
+    return trail
+
+
 def print_stats(elapsed: float, usage: dict[str, int], tool_count: int, interrupted: bool = False) -> None:
     sep = f" {glyphs.sep} "
     title = Text()
@@ -912,6 +941,10 @@ class StreamRenderer:
                 self._settle(run)
         elapsed = time.perf_counter() - self.start
         usage = self._total_usage()
+        trail = None if self.verbose else tool_trail(self.records)
+        if trail is not None:
+            console.print()
+            console.print(trail)
         print_stats(elapsed, usage, self._total_tools(), self.interrupted or bool(error))
         return TurnResult(
             report="\n\n".join(self.answer_parts),

@@ -190,6 +190,9 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 ❯ 退出
 ```
 
+新会话开场时会先在本地扫一遍日志（不调用模型、不耗 tokens），列出出现次数最多的几类错误作为候选问题，
+输入编号即可直接提问，也可以忽略它们自己输入问题。日志里没有 ERROR / FATAL 时不显示。
+
 输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。回答过程中按 `Ctrl+C` 只中断当前这一轮，
 已经输出的内容会保留，可以接着追问；在输入提示符处按 `Ctrl+C` 才会退出。
 
@@ -211,8 +214,9 @@ log-agent chat -l app-new.log --session payment-bug
 # 自定义数据库文件位置
 log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 
-# 查看 / 删除会话
+# 查看 / 筛选 / 删除会话
 log-agent sessions list
+log-agent sessions list --search gateway   # 按会话名、首个问题或日志路径筛选
 log-agent sessions rm payment-bug
 ```
 
@@ -224,6 +228,9 @@ log-agent sessions rm payment-bug
 |------|------|
 | `/save [路径]` | 保存上一条回答为 Markdown（`.json` 结尾则存 JSON） |
 | `/copy` | 把上一条回答（Markdown 原文）复制到剪贴板，方便贴进工单或群聊 |
+| `/retry [补充]` | 重新回答上一个问题，比如回答被中断或答偏了；可以附一句补充，如 `/retry 重点看 14:02 之后` |
+| `/add-log <路径>` | 排查中途给当前会话追加日志（支持通配符），不用退出重开，前面的对话都保留 |
+| `/add-code <目录>` | 追加源码目录，比如问题牵涉到另一个服务 |
 | `/new` | 开一个新会话 |
 | `/sources` | 查看当前日志与源码 |
 | `/stats` | 查看本次运行累计的轮次、耗时、工具次数与 tokens |
@@ -317,6 +324,8 @@ description: 短信供应商路由、降级、切换问题的排查手册
 - 不加 `-v` 时过程信息只在底部状态栏滚动、结束即消失，屏幕上只留报告；加 `-v` 会把每步都保留下来。
 - 子代理的每一步缩进显示在对应的"委派子任务"下面（运行中只滚动显示最近 3 步），
   并行的多个子代理各自计时；token 与工具次数统计包含子代理，JSON 报告里子代理的调用带 `subagent` 字段。
+- 默认模式下工具过程只在运行时显示，结束后折叠成一行，例如 `查了 6 步：日志概览 → 搜索日志 ×3 → 委派子任务`；
+  加 `-v` 会保留每一步的完整记录。
 - 完整报告的第一行是**一句话结论 + 可信度**（高 / 中 / 低），终端里显示成高亮摘要；
   导出的 JSON 里对应 `summary` 与 `confidence` 字段（模型没写这一行时为 `null`）。
 - 报告里的 `app.log:42`、`app/order.py:88` 这类引用可以直接点击（终端超链接 OSC 8）：

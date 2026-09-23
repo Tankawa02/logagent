@@ -390,6 +390,49 @@ def _stored_session(db_path: Path, name: str | None, latest: bool):
     return info
 
 
+def _show_suggestions(log_paths: list[str]) -> list[str]:
+    """新会话开场时列出候选问题（本地统计，不耗 tokens）；扫描出错或没有错误日志时静默跳过。"""
+    from .suggest import suggest_questions
+
+    try:
+        with console.status(Text("正在扫描日志里的高频错误…", style="muted"), spinner=glyphs.spinner):
+            questions = suggest_questions(log_paths)
+    except Exception:
+        return []
+    if not questions:
+        return []
+    console.print(Text("日志里的高频错误，输入编号直接提问，也可以自己输入问题：", style="muted"))
+    for i, question in enumerate(questions, start=1):
+        console.print(Text.assemble((f"  {i}  ", "accent"), (question, "")))
+    return questions
+
+
+def _add_sources(command: str, arg: str, log_paths: list[str], code_paths: list[str]) -> list[str] | None:
+    """解析 /add-log、/add-code 的参数，返回新增的绝对路径；参数有误时打印原因并返回 None。"""
+    from .inputs import LogInputError, resolve_log_inputs
+
+    target = arg.strip().strip('"').strip("'")
+    usage = "/add-log <日志路径或通配符>" if command == "/add-log" else "/add-code <源码目录>"
+    if not target:
+        console.print(Text(f"用法：{usage}", style="warn"))
+        return None
+    if command == "/add-log":
+        if target == "-":
+            console.print(Text("chat 模式不能从管道追加日志，请先把日志保存成文件。", style="warn"))
+            return None
+        try:
+            resolved = resolve_log_inputs([target])
+        except LogInputError as exc:
+            console.print(Text(f"{glyphs.fail} {exc}", style="err"))
+            return None
+        return [p for p in dict.fromkeys(resolved) if p not in log_paths]
+    path = Path(target).expanduser().resolve()
+    if not path.is_dir():
+        console.print(Text(f"{glyphs.fail} 源码目录不存在：{path}", style="err"))
+        return None
+    return [] if str(path) in code_paths else [str(path)]
+
+
 def _print_help() -> None:
     from .chat_input import SLASH_COMMANDS
 
@@ -521,9 +564,14 @@ def chat(
                 console.print(Text(f"{glyphs.notice} 日志/源码与上次不同，会在下一条消息里告知 agent。", style="warn"))
         store.touch(session, log_paths, code_paths, model)
 
+        suggestions: list[str] = []
+        if first_turn:
+            suggestions = _show_suggestions(log_paths)
+
         chat_input = ChatInput(db_path.parent / "history")
         totals = _ChatTotals()
         last: tuple[str, TurnResult] | None = None
+        last_question: str | None = None
         first_prompt = True
 
         while True:
@@ -542,6 +590,21 @@ def chat(
             lowered = user_input.lower()
             if lowered in _EXIT_WORDS:
                 break
+
+            retry_prefix = ""
+            if suggestions and user_input.isdigit() and 1 <= int(user_input) <= len(suggestions):
+                user_input = suggestions[int(user_input) - 1]
+                console.print(Text.assemble((f"{glyphs.notice} ", "accent"), (user_input, "muted")))
+            elif lowered == "/retry" or lowered.startswith("/retry "):
+                if last_question is None:
+                    console.print(Text("还没有可以重答的问题。", style="muted"))
+                    first_prompt = True
+                    continue
+                extra = user_input[len("/retry"):].strip()
+                user_input = last_question
+                retry_prefix = "请重新回答我上一个问题，重新核实证据，不要直接沿用上一次的结论。"
+                if extra:
+                    retry_prefix += f"\n补充要求：{extra}"
 
             if user_input.startswith("/"):
                 command, _, arg = user_input.partition(" ")
@@ -567,8 +630,30 @@ def chat(
                         continue
                     note = "（通过终端 OSC 52 写入，需终端支持）" if method == "OSC 52" else ""
                     console.print(Text(f"{glyphs.ok} 已复制上一条回答{note}", style="ok"))
+                elif command in ("/add-log", "/add-code"):
+                    added = _add_sources(command, arg, log_paths, code_paths)
+                    if added is None:
+                        continue
+                    kind = "日志文件" if command == "/add-log" else "源码目录"
+                    if not added:
+                        console.print(Text(f"这个{kind}已经在当前会话里了。", style="muted"))
+                        continue
+                    if command == "/add-log":
+                        log_paths = log_paths + added
+                    else:
+                        code_paths = code_paths + added
+                    linker = CitationLinker(log_paths, code_paths)
+                    store.touch(session, log_paths, code_paths, model)
+                    if not first_turn:
+                        note = f"补充：我新增了{kind}，之后排查可以一并使用：\n" + "\n".join(f"  - {p}" for p in added)
+                        source_note = f"{source_note}\n\n{note}" if source_note else note
+                    for path in added:
+                        console.print(Text.assemble((f"{glyphs.ok} 已追加{kind} ", "ok"), (path, "accent")))
+                    if not first_turn:
+                        console.print(Text("会在下一条消息里告知 agent。", style="muted"))
                 elif command == "/new":
                     end_session(mem)
+                    last_question = None
                     session = _new_session_name()
                     if mem is not None:
                         mem.session = session
@@ -602,7 +687,11 @@ def chat(
                 message = f"{source_note}\n\n{user_input}"
             else:
                 message = user_input
+            if retry_prefix:
+                message = f"{retry_prefix}\n\n{message}"
             source_note = ""
+            suggestions = []
+            last_question = user_input
 
             payload = {"messages": [{"role": "user", "content": message}]}
             result = StreamRenderer(verbose=verbose, linker=linker).run(
@@ -724,13 +813,25 @@ def _open_store(db: Path | None):
 
 
 @sessions_app.command("list")
-def sessions_list(db: Path = typer.Option(None, "--db", help="会话数据库文件路径")) -> None:
+def sessions_list(
+    db: Path = typer.Option(None, "--db", help="会话数据库文件路径"),
+    search: str = typer.Option(None, "--search", "-S", help="按会话名、首个问题或日志路径筛选（不区分大小写）"),
+) -> None:
     """列出所有会话（按最近使用排序）。"""
     conn, store = _open_store(db)
     try:
         items = store.list()
     finally:
         conn.close()
+    if search:
+        keyword = search.casefold()
+        items = [
+            item for item in items
+            if keyword in " ".join([item.name, item.title or "", *item.logs]).casefold()
+        ]
+        if not items:
+            console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
+            return
     if not items:
         console.print(Text("还没有任何会话。", style="muted"))
         return

@@ -318,6 +318,10 @@ def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
         warnings=levels["WARN"],
         window=window.describe() if window else None,
         window_lines=stats.window_lines if window else None,
+        top_errors=[
+            {"signature": redact_log(clip_line(sig, 200)), "count": count, "first_line": first_seen[sig]}
+            for sig, count in signatures.most_common(5)
+        ],
     )
 
 
