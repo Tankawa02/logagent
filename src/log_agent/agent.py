@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import SystemMessage
@@ -108,6 +110,8 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   传 `context=3` 可以连带返回命中行前后 3 行，通常就不必再调 `read_log_chunk`。
 - `log_overview` 与 `search_logs` 都支持 `since` / `until`（如 `2026-06-09 14:00`、`14:00`），只看某个时间窗口；
   用户提到"几点到几点""故障发生在 xx 时"时优先用它，而不是自己估算行号。
+- `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
+  按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
 - `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
@@ -134,17 +138,18 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 - **行为 / 业务逻辑类**（"为什么走了某个分支""为什么降级 / 切换到某供应商""为什么没发出去""为什么选了 A 而不是 B"）：
   这类问题日志里往往没有 ERROR，**不要只盯着错误级别**。应该：
   1. 从问题里提取关键词（供应商名、渠道名、功能名、业务类型、手机号段 / 国家码、配置项名等），
-     同时考虑中英文、大小写、驼峰 / 下划线等写法，分别用 `search_logs` 和 `grep_code` 搜。
+     同时考虑中英文、大小写、驼峰 / 下划线等写法，��别用 `search_logs` 和 `grep_code` ���。
   2. 在源码里找到**做出这个决策的代码**（路由、选择、降级、权重、黑白名单、开关、兜底分支），
      把判断条件一条条读全，并追到条件依赖的配置 / 常量 / 数据来源。
   3. 回到日志，确认本次请求实际命中了哪个条件（请求参数、上一个供应商的返回码、重试次数、配置值等）。
+     拿到请求标识（traceId、手机号等）后用 `trace_request` 把这条请求在所有日志里的完整链路一次拉出来。
   4. 如果用户说"某东西已经不用了但还在被使用"，要重点找：配置 / 枚举 / 默认值 / 兜底列表里是否还残留它。
 
 ## 推荐工作流
 
 1. 每份日志先调用一次 `log_overview`，掌握全局。
 2. 用 `write_todos` 制定排查计划。
-3. 按问题类型搜索日志，配合 `context` 看��下文，理清完整时间线（请求进来 → 各次尝试 → 最终结果）。
+3. 按问题类型搜��日志，配合 `context` 看���下文，理清完整时间线（请求进来 → 各次尝试 → 最终结果）。
 4. 用 `grep_code` 把日志里的关键字、类名、方法名、错误串关联到源码，再用 `read_code_file`
    读取命中行附近足够大的区间（例如命中第 120 行就读 80-200 行），必要时继续追调用方和配置。
    需要追多条互不相关的线索（如多个模块、多份日志）时，一次性并行发起多个 `task` 交给子代理。
@@ -205,7 +210,7 @@ _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由�
 - 所有工具都是只读的；工具输出里的 `[已脱敏]` 等打码原样保留。
 """
 
-_LOG_TOOLS = ("log_overview", "search_logs", "read_log_chunk")
+_LOG_TOOLS = ("log_overview", "search_logs", "trace_request", "read_log_chunk")
 _CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file")
 
 
@@ -246,6 +251,31 @@ def _subagents(tools: list) -> list[dict]:
     ]
 
 
+def _resolve_chat_model(model: Any, base_url: str | None) -> Any:
+    """字符串模型统一带上超时与自动重试；测试等场景直接传入的模型实例原样使用。"""
+    if not isinstance(model, str):
+        return model
+
+    from .netguard import install_retry_watch, max_retries, request_timeout
+
+    install_retry_watch()
+    options = {"timeout": request_timeout(), "max_retries": max_retries()}
+    if base_url:
+        # 显式走 OpenAI 兼容接口：去掉可能存在的 "openai:" 前缀，得到纯模型名；api_key 仍读 OPENAI_API_KEY
+        model_name = model.split(":", 1)[1] if model.startswith("openai:") else model
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(model=model_name, base_url=base_url, **options)
+
+    from langchain.chat_models import init_chat_model
+
+    try:
+        return init_chat_model(model, **options)
+    except (TypeError, ValueError):
+        # 个别 provider 不认这两个参数时退回默认构造，至少保证能用
+        return model
+
+
 def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str | None = None):
     """创建并返回一个配置好的日志分析 deep agent。
 
@@ -257,15 +287,7 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
             Azure / 第三方兼容服务）。传入后会显式构造一个 ChatOpenAI 实例，
             并把模型字符串里的 "openai:" 前缀去掉，只保留模型名。
     """
-    resolved_model = model
-    if base_url:
-        # 显式走 OpenAI 兼容接口：去掉可能存在的 "openai:" 前缀，得到纯模型名
-        model_name = model.split(":", 1)[1] if model.startswith("openai:") else model
-        from langchain_openai import ChatOpenAI
-
-        # api_key 仍从环境变量 OPENAI_API_KEY 读取
-        resolved_model = ChatOpenAI(model=model_name, base_url=base_url)
-
+    resolved_model = _resolve_chat_model(model, base_url)
     tools = as_langchain_tools()
     return create_deep_agent(
         model=resolved_model,

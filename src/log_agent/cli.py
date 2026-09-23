@@ -51,6 +51,30 @@ _opt_since = typer.Option(None, "--since", help="只分析该时间之后的日�
 _opt_until = typer.Option(None, "--until", help="只分析到该时间为止（按给出的精度包含整段，'14:05' 含 14:05:59）")
 
 
+@app.callback()
+def _load_config(ctx: typer.Context) -> None:
+    """读取配置文件，作为 analyze / chat 各参数的默认值（命令行显式传入的仍然优先）。"""
+    from .config import COMMANDS, ConfigError, apply_to_environment, cli_defaults, load_config, set_loaded
+
+    command = ctx.invoked_subcommand
+    if command not in COMMANDS:
+        return
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        _fail(str(exc))
+    set_loaded(config)
+    for warning in config.warnings:
+        console.print(Text(f"{glyphs.fail} {warning}", style="warn"))
+    if not config.files:
+        return
+    values = config.for_command(command)
+    apply_to_environment(values)
+    existing = dict(ctx.default_map or {})
+    existing[command] = {**cli_defaults(values), **existing.get(command, {})}
+    ctx.default_map = existing
+
+
 def _check_api_key() -> None:
     if os.environ.get("OPENAI_API_KEY"):
         return
@@ -114,7 +138,10 @@ def _build_context_message(log_paths: list[str], code_paths: list[str], question
     if len(log_paths) == 1:
         lines.append(f"日志文件路径：{log_paths[0]}")
     else:
-        lines.append(f"共提供了 {len(log_paths)} 份日志，请先分别调用 log_overview，必要时交叉比对时间线：")
+        lines.append(
+            f"共提供了 {len(log_paths)} 份日志，请先分别调用 log_overview；"
+            "追同一个请求时可用 trace_request 一次传入全部路径，按时间合并各日志：",
+        )
         lines.extend(f"  {i}. {p}" for i, p in enumerate(log_paths, start=1))
 
     if code_paths:
@@ -172,6 +199,11 @@ def _base_rows(log_paths: list[str], code_paths: list[str], model: str, base_url
     if default_window():
         rows.append(("时间", Text(default_window().describe(), style="accent")))
     rows.append(("脱敏", Text("开启", style="ok") if redact.is_enabled() else Text("已关闭", style="warn")))
+
+    from .config import loaded
+
+    if loaded().files:
+        rows.append(("配置", Text("\n".join(str(p) for p in loaded().files), style="muted")))
     return rows
 
 
@@ -445,6 +477,82 @@ def chat(
     if totals.turns:
         console.print(totals.line())
     console.print(Text.assemble(("已退出，会话已保存。下次用 ", "muted"), (f"-s {session}", "accent"), (" 续上。", "muted")))
+
+
+# ---------------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------------
+
+_CONFIG_TEMPLATE = """\
+# log-agent 项目配置：命令行没写的参数从这里取默认值（命令行 > 环境变量 > 本文件）。
+# 相对路径以本文件所在目录为准。
+
+# model = "openai:gpt-4.1"
+# base_url = "https://your-gateway.example.com/v1"   # API key 仍放在环境变量 OPENAI_API_KEY
+# code = ["./"]
+# max_steps = 120
+# timeout = 120        # 单次模型请求超时（秒）
+# max_retries = 3      # 模型请求失败自动重试次数
+# encoding = "gbk"
+# no_redact = false
+
+# [analyze]            # 只对 analyze 生效
+# verbose = true
+
+# [chat]               # 只对 chat 生效
+# db = "~/.log-agent/sessions.db"
+"""
+
+
+@app.command("config")
+def show_config(
+    init: bool = typer.Option(False, "--init", help=f"在当前目录生成一份带注释的 {'.log-agent.toml'} 模板"),
+) -> None:
+    """查看当前生效的配置文件与配置项。"""
+    from .config import PROJECT_FILE, ConfigError, find_project_config, load_config, user_config_path
+
+    if init:
+        target = Path.cwd() / PROJECT_FILE
+        if target.exists():
+            _fail(f"{target} 已存在，不会覆盖。")
+        target.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
+        console.print(Text.assemble((f"{glyphs.ok} 已生成 ", "ok"), (str(target), "accent")))
+        return
+
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        _fail(str(exc))
+    for warning in config.warnings:
+        console.print(Text(f"{glyphs.fail} {warning}", style="warn"))
+
+    searched = [user_config_path(), find_project_config() or Path.cwd() / PROJECT_FILE]
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="accent.strong", no_wrap=True)
+    grid.add_column(overflow="fold")
+    for path in searched:
+        state = Text("已加载", style="ok") if path in config.files else Text("未找到", style="muted")
+        grid.add_row(state, str(path))
+    for path in config.files:
+        if path not in searched:
+            grid.add_row(Text("已加载", style="ok"), f"{path}  (LOG_AGENT_CONFIG)")
+    console.print(grid)
+    if not config.files:
+        console.print(Text.assemble(("用 ", "muted"), ("log-agent config --init", "accent"), (" 生成项目配置模板", "muted")))
+        return
+
+    analyze_values, chat_values = config.for_command("analyze"), config.for_command("chat")
+    console.print()
+    if not analyze_values and not chat_values:
+        console.print(Text("配置文件里还没有生效的配置项（模板中的项默认都是注释，去掉行首的 # 即可启用）。", style="muted"))
+        return
+    values = Table(box=glyphs.box, border_style="muted", header_style="accent.strong", show_edge=False, pad_edge=False)
+    values.add_column("配置项", no_wrap=True)
+    values.add_column("analyze", overflow="fold")
+    values.add_column("chat", overflow="fold")
+    for key in sorted(set(analyze_values) | set(chat_values)):
+        values.add_row(key, str(analyze_values.get(key, "-")), str(chat_values.get(key, "-")))
+    console.print(values)
 
 
 # ---------------------------------------------------------------------------

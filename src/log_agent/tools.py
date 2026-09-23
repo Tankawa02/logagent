@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
+from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_log
 from .timefilter import TimeWindow, WindowTracker, default_window, find_timestamp, parse_window
 
@@ -246,6 +247,19 @@ def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
     if error:
         return error
 
+    # 输出里的错误样例经过脱敏，所以脱敏开关也是缓存键的一部分
+    key = ("overview", window, redact_enabled())
+    with log.scan_lock:
+        cached = log.scan_cache.get(key)
+        if cached is not None:
+            return ToolOutput(str(cached), cached.status, **{**cached.meta, "cached": True})
+        result = _build_overview(log, path, window)
+        if result.status != "error":
+            log.scan_cache[key] = result
+        return result
+
+
+def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
     note = ""
     try:
         stats = _scan_overview(log, window)
@@ -462,6 +476,173 @@ def search_logs(
     )
 
 
+# 命中行之后紧跟的无时间戳行（Java 堆栈、多行 SQL）视为同一条日志，一并带出
+_TRACE_CONTINUATION = 30
+MAX_TRACE_LINES = 500
+
+
+class _TraceEntry:
+    __slots__ = ("stamp", "file_index", "lineno", "lines")
+
+    def __init__(self, stamp: Any, file_index: int, lineno: int, line: str) -> None:
+        self.stamp = stamp
+        self.file_index = file_index
+        self.lineno = lineno
+        self.lines = [line]
+
+
+def _scan_trace(
+    log, file_index: int, label: str, compiled: re.Pattern[str], window: TimeWindow, limit: int
+) -> tuple[list[_TraceEntry], bool, bool]:
+    """返回 (命中条目, 是否截断, 是否见到过时间戳)。"""
+    tracker = WindowTracker(window)
+    entries: list[_TraceEntry] = []
+    stamp: Any = None
+    saw_timestamp = False
+    follow = 0
+    for lineno, text in log.iter_lines(1):
+        if window and not tracker.accept(text):
+            follow = 0
+            if tracker.done:
+                break
+            continue
+        found = find_timestamp(text)
+        if found:
+            stamp = found[1]
+            saw_timestamp = True
+        match = compiled.search(text)
+        if match:
+            if len(entries) >= limit:
+                return entries, True, saw_timestamp or tracker.saw_timestamp
+            entries.append(
+                _TraceEntry(stamp, file_index, lineno, f"{label}:{lineno}  {clip_line(text, HIT_LINE_CHARS, focus=match.start())}")
+            )
+            # 整份日志都没有时间戳时不做"续行"判断，否则每个命中都会拖出后面 30 行
+            follow = _TRACE_CONTINUATION if found else 0
+        elif follow and not found:
+            entries[-1].lines.append(f"{label}:{lineno}- {clip_line(text)}")
+            follow -= 1
+        else:
+            follow = 0
+    return entries, False, saw_timestamp or tracker.saw_timestamp
+
+
+def _trace_sort_key(entries: list[_TraceEntry]) -> Callable[[_TraceEntry], tuple]:
+    from datetime import datetime
+
+    # 有的日志只有时刻（syslog 的 `Jun 9 14:02:03` 之类），和带日期的混在一起时统一按一天中的时刻排
+    time_only = any(e.stamp is not None and not isinstance(e.stamp, datetime) for e in entries)
+
+    def key(entry: _TraceEntry) -> tuple:
+        stamp = entry.stamp
+        if stamp is None:
+            return (0, 0, entry.file_index, entry.lineno)
+        value = stamp.time() if time_only and isinstance(stamp, datetime) else stamp
+        return (1, value, entry.file_index, entry.lineno)
+
+    return key
+
+
+def _trace_labels(paths: list[str]) -> list[str]:
+    names = [Path(p).name or p for p in paths]
+    # 不同目录下的同名日志（如两台机器的 app.log）用完整路径区分，否则引用行号会串
+    return [p if names.count(n) > 1 else n for p, n in zip(paths, names, strict=True)]
+
+
+def trace_request(
+    paths: list[str],
+    key: str,
+    regex: bool = False,
+    ignore_case: bool = False,
+    since: str = "",
+    until: str = "",
+    max_lines: int = 200,
+) -> ToolOutput:
+    """跨一份或多份日志追踪同一个请求：找出所有包含该标识的行，按时间合并排序，得到完整链路。
+
+    适合"这个请求为什么降级 / 失败 / 走了某个分支"这类问题：传入 traceId、requestId、订单号、
+    手机号等标识，一次拿到请求进来 → 各次尝试 → 最终结果的时间线，不必多次 search_logs 自己拼。
+    命中行后面紧跟的堆栈等无时间戳行会一并带出（`文件:行号-`）。
+
+    Args:
+        paths: 日志文件路径列表；只有一份日志时也传列表。
+        key: 请求标识。默认按普通文本匹配；要同时追多个标识（如 traceId 和它派生的子请求 id）
+            时传 `regex=True` 并写成 `id1|id2`。
+        regex: 为 True 时把 key 当正则。
+        ignore_case: 是否忽略大小写。
+        since: 可选，只看该时间及之后的日志。
+        until: 可选，只看到该时间为止。
+        max_lines: 最多返回的命中行数（按时间先后截取，不含带出的堆栈行）。
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+    paths = [str(p) for p in paths if str(p).strip()]
+    if not paths:
+        return _err("至少需要传入一份日志路径。")
+    if not str(key).strip():
+        return _err("key 不能为空。")
+    window, error = _resolve_window(since, until)
+    if error:
+        return error
+    compiled, note = _compile(key, regex, ignore_case)
+    max_lines = max(1, min(int(max_lines), MAX_TRACE_LINES))
+
+    logs = []
+    for path in paths:
+        log, error = _open_log_or_error(path)
+        if error:
+            return error
+        logs.append(log)
+
+    labels = _trace_labels(paths)
+    entries: list[_TraceEntry] = []
+    per_file: list[int] = []
+    truncated = False
+    any_timestamp = False
+    try:
+        for index, (log, label) in enumerate(zip(logs, labels, strict=True)):
+            found, cut, saw = _scan_trace(log, index, label, compiled, window, max_lines)
+            if window and not saw:
+                # 这份日志没有时间戳：时间窗口对它无意义，按全文追踪
+                found, cut, saw = _scan_trace(log, index, label, compiled, TimeWindow(), max_lines)
+                note += f"（{label} 中没有识别到时间戳，已忽略时间窗口）"
+            entries.extend(found)
+            per_file.append(len(found))
+            truncated = truncated or cut
+            any_timestamp = any_timestamp or saw
+    except OSError as exc:
+        return _err(f"追踪失败: {exc}")
+
+    window_note = f"（时间窗口 {window.describe()}）" if window else ""
+    if not entries:
+        return _hint(f"{len(paths)} 份日志中都没有 '{key}'{window_note}{note}。", "no_match", hits=0, files=0)
+
+    entries.sort(key=_trace_sort_key(entries))
+    if len(entries) > max_lines:
+        entries = entries[:max_lines]
+        truncated = True
+
+    matched_files = sum(1 for count in per_file if count)
+    header = [f"追踪 '{key}'：{len(paths)} 份日志中 {matched_files} 份命中，共 {sum(per_file)} 行{window_note}{note}"]
+    if len(paths) > 1:
+        header.append("各日志命中：" + "，".join(f"{label} {count} 行" for label, count in zip(labels, per_file, strict=True)))
+    if not any_timestamp:
+        header.append("（日志中没有识别到时间戳，以下按文件顺序排列）")
+    header.append("--- 按时间排序 ---")
+    body = "\n".join(line for entry in entries for line in entry.lines)
+    tail = (
+        f"\n... 命中较多，仅显示最早的 {len(entries)} 行（可缩小时间窗口，或换更精确的标识）。" if truncated else ""
+    )
+    return _ok(
+        "\n".join(header) + "\n" + redact_log(body) + tail,
+        hits=len(entries),
+        files=matched_files,
+        total_files=len(paths),
+        truncated=truncated,
+        window=window.describe() if window else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 源码工具
 # ---------------------------------------------------------------------------
@@ -587,7 +768,7 @@ def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: boo
         args += ["--iglob", name]
     for skip in sorted(SKIP_DIRS):
         args += ["--glob", f"!{skip}/"]
-    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的扩展名白名单，改为下面逐行过滤
+    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的���展名白名单，改为下面逐行过滤
     # 必须显式给出搜索路径：stdin 不是终端时 rg 会改为搜索 stdin
     args += ["-e", compiled_src, "--", "."]
 
@@ -688,6 +869,7 @@ ALL_TOOLS: list[Callable[..., ToolOutput]] = [
     log_overview,
     read_log_chunk,
     search_logs,
+    trace_request,
     list_code_files,
     read_code_file,
     grep_code,

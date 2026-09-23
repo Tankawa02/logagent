@@ -19,6 +19,92 @@ def test_log_overview(sample_log: Path) -> None:
     assert "KeyError  x1  首次 L7" in out
 
 
+def test_trace_request_merges_logs_by_time(tmp_path: Path) -> None:
+    gateway = tmp_path / "gateway.log"
+    gateway.write_text(
+        "2026-06-09 14:00:01.100 INFO recv sms trace=T42 phone=86138\n"
+        "2026-06-09 14:00:01.900 INFO unrelated trace=T99\n"
+        "2026-06-09 14:00:03.000 INFO reply trace=T42 channel=nexmo\n",
+        encoding="utf-8",
+    )
+    router = tmp_path / "router.log"
+    router.write_text(
+        "2026-06-09 14:00:01.500 WARN twilio failed trace=T42 code=30008\n"
+        "java.lang.IllegalStateException: quota\n"
+        "\tat com.acme.sms.TwilioSender.send(TwilioSender.java:88)\n"
+        "2026-06-09 14:00:02.000 INFO fallback trace=T42 -> nexmo\n",
+        encoding="utf-8",
+    )
+
+    out = tools.trace_request([str(gateway), str(router)], "T42")
+    body = str(out).split("--- 按时间排序 ---\n", 1)[1].splitlines()
+    assert [line.split("  ", 1)[0] for line in body if "  " in line and "-" not in line.split(" ", 1)[0]] == [
+        "gateway.log:1", "router.log:1", "router.log:4", "gateway.log:3",
+    ]
+    # 堆栈续行跟在对应命中后面
+    assert body[2].startswith("router.log:2- java.lang.IllegalStateException")
+    assert body[3].startswith("router.log:3- ")
+    assert "T99" not in str(out)
+    assert out.meta["hits"] == 4 and out.meta["files"] == 2 and out.meta["total_files"] == 2
+
+
+def test_trace_request_window_and_misses(tmp_path: Path) -> None:
+    log = tmp_path / "a.log"
+    log.write_text(
+        "2026-06-09 13:59:00 INFO trace=T1 early\n2026-06-09 14:00:10 INFO trace=T1 late\n",
+        encoding="utf-8",
+    )
+    out = tools.trace_request(str(log), "t1", ignore_case=True, since="14:00")
+    assert "early" not in out and "late" in out and out.meta["hits"] == 1
+
+    missing = tools.trace_request([str(log)], "NOPE")
+    assert missing.status == "hint" and missing.meta["hits"] == 0
+
+    assert tools.trace_request([], "T1").status == "error"
+
+
+def test_trace_request_disambiguates_same_named_logs(tmp_path: Path) -> None:
+    paths = []
+    for host in ("host-a", "host-b"):
+        (tmp_path / host).mkdir()
+        p = tmp_path / host / "app.log"
+        p.write_text(f"2026-06-09 14:00:0{len(paths)} INFO trace=T7 on {host}\n", encoding="utf-8")
+        paths.append(str(p))
+    out = tools.trace_request(paths, "T7")
+    assert f"{paths[0]}:1" in out and f"{paths[1]}:1" in out
+
+
+def test_log_overview_is_cached_until_file_changes(sample_log: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    import threading
+
+    scans = []
+    real_scan = tools._scan_overview
+    monkeypatch.setattr(tools, "_scan_overview", lambda log, window: scans.append(1) or real_scan(log, window))
+
+    # 模拟两个子代理同时要同一份概览：只应扫描一次
+    results: list[str] = []
+    threads = [threading.Thread(target=lambda: results.append(tools.log_overview(str(sample_log)))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(scans) == 1 and results[0] == results[1]
+    assert any(r.meta.get("cached") for r in results)
+
+    # 不同时间窗口是不同的缓存项
+    tools.log_overview(str(sample_log), since="10:00:03")
+    assert len(scans) == 2
+
+    # 文件被追加后缓存失效
+    with sample_log.open("a", encoding="utf-8") as f:
+        f.write("2026-06-09 10:00:07 ERROR [order] payment failed order=1003\n")
+    stat = sample_log.stat()
+    os.utime(sample_log, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    out = tools.log_overview(str(sample_log))
+    assert len(scans) == 3 and "共 11 行" in out and not out.meta.get("cached")
+
+
 def test_log_overview_missing_file(tmp_path: Path) -> None:
     assert tools.log_overview(str(tmp_path / "nope.log")).startswith("[错误]")
 

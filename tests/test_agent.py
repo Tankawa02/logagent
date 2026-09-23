@@ -106,6 +106,43 @@ def test_subagent_evidence_feeds_report_written_by_main_agent(
     assert not sub_tools & {"read_file", "grep", "execute", "search_logs"}
 
 
+def test_subagent_steps_are_visible_and_counted(
+    sample_log: Path, code_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from log_agent import agent as agent_module
+
+    script = [
+        tool_call("task", "t1", subagent_type="code-investigator", description="找 order_id 的读取位置"),
+        tool_call("grep_code", "g1", code_dir=str(code_repo), pattern="order_id", regex=False),
+        AIMessage(content="子代理取证完成"),
+        AIMessage(content="### 结论\n\n主代理报告"),
+    ]
+    model = ScriptedChatModel(script=script)
+    real_build = agent_module.build_agent
+    monkeypatch.setattr(agent_module, "build_agent", lambda **kw: real_build(model=model))
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    out_file = tmp_path / "report.json"
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["analyze", "-l", str(sample_log), "-c", str(code_repo), "-v", "-o", str(out_file), "--max-steps", "20"],
+    )
+    assert result.exit_code == 0, result.output
+
+    lines = result.output.splitlines()
+    task_line = next(i for i, line in enumerate(lines) if "委派子任务" in line)
+    assert "检索源码" in lines[task_line + 1] and "└" in lines[task_line + 1]
+    assert "工具 2 次" in result.output
+
+    data = json.loads(out_file.read_text(encoding="utf-8"))
+    # 主代理 2 次模型调用 + 子代理 2 次，每次 120 tokens
+    assert data["usage"]["total"] == 480
+    sub = [t for t in data["tool_calls"] if t["subagent"]]
+    assert [t["name"] for t in sub] == ["grep_code"] and sub[0]["subagent"] == "code-investigator"
+
+
 def test_clip_line_centers_on_match() -> None:
     text = "a" * 3000 + "provider=nexmo" + "b" * 3000
     clipped = clip_line(text, 500, focus=3000)

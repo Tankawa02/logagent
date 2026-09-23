@@ -14,6 +14,7 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 # 每隔多少行记录一次字节偏移。1 万行一个点：GB 级日志索引也只有几百个整数。
 INDEX_STEP = 10_000
@@ -99,6 +100,10 @@ class LogFile:
     checkpoints: list[int] = field(default_factory=lambda: [0])
     total_lines: int | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # 全文扫描类结果（如日志概览）的缓存。文件一变 open_log 就会换新对象，缓存随之失效。
+    scan_cache: dict[Any, Any] = field(default_factory=dict, repr=False)
+    # 串行化同一文件的全文扫描：并行子代理同时要概览时，后到的等前一个算完直接命中缓存。
+    scan_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def byte_oriented(self) -> bool:
@@ -182,6 +187,10 @@ def open_log(path: str | os.PathLike[str]) -> LogFile:
 
     log = LogFile(path=p, gz=gz, encoding=encoding, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
     with _CACHE_LOCK:
+        # 并行子代理可能同时打开同一文件：谁先登记就用谁的，索引和扫描缓存才能共享
+        cached = _CACHE.get(key)
+        if cached and cached.size == stat.st_size and cached.mtime_ns == stat.st_mtime_ns:
+            return cached
         _CACHE[key] = log
     return log
 
