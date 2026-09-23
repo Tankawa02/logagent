@@ -17,6 +17,9 @@ SLASH_COMMANDS: dict[str, str] = {
     "/new": "开一个新会话（当前会话已保存，可用 -s 续上）",
     "/sources": "查看当前会话使用的日志与源码",
     "/stats": "查看本次运行的累计用量",
+    "/remember": "记住一条偏好或项目知识，/remember [-g] <内容>，-g 表示全局",
+    "/memory": "查看记忆；/memory review 处理待确认的建议，/memory edit <编号> <新内容> 修改",
+    "/forget": "删除记忆，/forget <编号…>",
     "/exit": "退出",
 }
 

@@ -9,6 +9,7 @@ from typing import Any
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 
+from .memory import MemoryPromptMiddleware, MemorySession, build_suggest_tool
 from .skills import build_skills, resolve_skill_sources
 from .tools import as_langchain_tools
 
@@ -109,7 +110,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   用户提到"几点到几点""故障发生在 xx 时"时优先用它，而不是自己估算行号。
 - `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
   按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
-- `read_log_chunk`：���行区间读取日志（日志可能很大，不要试图一次读完）。
+- `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
@@ -137,7 +138,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 ## 先判断问题类型
 
 - **报错 / 异常类**（"为什么报错""接口 500""任务失败"）：从 `log_overview` 的高频错误和异常入手。
-- **行为 / 业务��辑类**（"为什么走了某个分支""为什么降级 / 切换到某供应商""为什么没发出去""为什么选了 A 而不是 B"）：
+- **行为 / 业务逻辑类**（"为什么走了某个分支""为什么降级 / 切换到某供应商""为什么没发出去""为什么选了 A 而不是 B"）：
   这类问题日志里往往没有 ERROR，**不要只盯着错误级别**。应该：
   1. 从问题里提取关键词（供应商名、渠道名、功能名、业务类型、手机号段 / 国家码、配置项名等），
      同时考虑中英文、大小写、驼峰 / 下划线等写法，分别用 `search_logs` 和 `grep_code` 搜。
@@ -167,6 +168,9 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 
 报告是给没有看过日志的同事读的，必须**自成一体、详细具体**，读完就能明白问题并动手修。
 本节对详尽程度的要求优先于任何其他"保持简洁"类的通用指令。
+
+下面的结构是**默认格式**：用户本人（包括"用户记忆"里的表达偏好）对顺序、篇幅、语言、详略有明确要求时，
+按用户的要求调整。无论怎么调整，上面的引用规范和"结论要有证据"的要求都不变。
 
 ### 结论
 先用 2-3 句话直接回答用户的问题（发生了什么、根本原因是什么）。
@@ -289,6 +293,7 @@ def build_agent(
     checkpointer=None,
     base_url: str | None = None,
     skill_dirs: Sequence[str | Path] | None = None,
+    memory: MemorySession | None = None,
 ):
     """创建并返回一个配置好的日志分析 deep agent。
 
@@ -301,6 +306,8 @@ def build_agent(
             并把模型字符串里的 "openai:" 前缀去掉，只保留模型名。
         skill_dirs: 额外的 skill 目录（优先级高于用户级 / 项目级默认目录）。
             传 None 时完全不加载 skill，包括默认目录；CLI 总会传入列表（可以为空）。
+        memory: 本次运行的记忆上下文（见 memory.py）。传入后每轮把记忆追加到系统提示词末尾，
+            suggest 模式下主代理还会多一个 `suggest_memory` 工具。传 None 时提示词与工具都保持原样。
     """
     resolved_model = _resolve_chat_model(model, base_url)
     tools = as_langchain_tools()
@@ -312,9 +319,15 @@ def build_agent(
     backend, skills_middleware = build_skills(resolve_skill_sources(skill_dirs) if skill_dirs is not None else [])
     if skills_middleware is not None:
         middleware.append(skills_middleware)
+    # 记忆同样只给主代理：子代理拿不到 suggest_memory，也看不到记忆段，需要的背景由主代理写进 description。
+    main_tools = list(tools)
+    if memory is not None:
+        middleware.append(MemoryPromptMiddleware(memory))
+        if memory.suggests:
+            main_tools.append(build_suggest_tool(memory))
     return create_deep_agent(
         model=resolved_model,
-        tools=tools,
+        tools=main_tools,
         system_prompt=SYSTEM_PROMPT,
         subagents=subagents,
         middleware=middleware,
