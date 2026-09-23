@@ -42,6 +42,18 @@ class ReportFormat(StrEnum):
     json = "json"
 
 
+class FailOn(StrEnum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+_CONFIDENCE_RANK = {"高": 3, "中": 2, "低": 1}
+_FAIL_ON_RANK = {FailOn.high: 3, FailOn.medium: 2, FailOn.low: 1}
+EXIT_FINDING = 3
+EXIT_UNDECIDED = 4
+
+
 class MemoryMode(StrEnum):
     suggest = "suggest"
     explicit = "explicit"
@@ -67,6 +79,14 @@ _opt_base_url = typer.Option(None, "--base-url", help="自定义 OpenAI 兼容�
 _opt_encoding = typer.Option(None, "--encoding", help="强制指定日志编码（如 gbk、utf-16）；默认自动探测")
 _opt_no_redact = typer.Option(False, "--no-redact", help="关闭敏感信息脱敏（默认会打码 token、手机号、身份证、邮箱、IP 等）")
 _opt_max_steps = typer.Option(120, "--max-steps", min=10, help="单轮最多推理步数，防止 agent 陷入反复搜索")
+_opt_budget = typer.Option(
+    None, "--budget",
+    help="单轮 tokens 上限，如 200k、1.5m；用到 80% 时让 agent 停止取证、基于现有证据收尾出报告",
+)
+_opt_baseline = typer.Option(
+    None, "--baseline",
+    help="正常时段，如 '13:00~13:30'；agent 会先把它和问题时段（--since/--until，没有则为全文）做对比",
+)
 _opt_verbose = typer.Option(False, "--verbose", "-v", help="保留每一步工具调用（含结果摘要、耗时）的完整记录")
 _opt_since = typer.Option(None, "--since", help="只分析该时间之后的日志，如 '2026-06-09 14:00' 或 '14:00'")
 _opt_until = typer.Option(None, "--until", help="只分析到该时间为止（按给出的精度包含整段，'14:05' 含 14:05:59）")
@@ -157,8 +177,8 @@ def _resolve_model(model: str | None) -> str:
     return model or os.environ.get("LOG_AGENT_MODEL") or DEFAULT_MODEL
 
 
-def _build_context_message(log_paths: list[str], code_paths: list[str], question: str) -> str:
-    """把日志/源码路径和问题拼成给 agent 的首条消息。"""
+def _build_context_message(log_paths: list[str], code_paths: list[str], question: str, baseline=None) -> str:
+    """把日志/源码路径和问题拼成给 agent 的首条消息。baseline 是 --baseline 解析出的 TimeWindow。"""
     lines: list[str] = []
     if len(log_paths) == 1:
         lines.append(f"日志文件路径：{log_paths[0]}")
@@ -189,6 +209,13 @@ def _build_context_message(log_paths: list[str], code_paths: list[str], question
         lines.append(
             f"时间窗口：{window.describe()}。log_overview / search_logs 不传 since/until 时会自动只看这个窗口；"
             "需要对比窗口之前的情况时可以显式传入其它时间。read_log_chunk 按行号读取，不受窗口限制。"
+        )
+    if baseline:
+        target = "上面的时间窗口" if window else "全文"
+        lines.append(
+            f"对比基线：用户给出的正常时段是 {baseline.describe()}。请先对每份日志调用 compare_windows"
+            f"（baseline_since=\"{baseline.since.raw}\"，baseline_until=\"{baseline.until.raw}\"，"
+            f"目标时段为{target}），再围绕新出现和明显增多的错误深入排查。"
         )
     lines.append(f"\n用户问题：{question}")
     return "\n".join(lines)
@@ -252,6 +279,51 @@ def _base_rows(
     return rows
 
 
+def _make_budget(text: str | None):
+    if not text:
+        return None
+    from .budget import TokenBudget, parse_budget
+
+    try:
+        return TokenBudget(parse_budget(text))
+    except ValueError as exc:
+        _fail(str(exc))
+
+
+def _parse_baseline(text: str | None):
+    if not text:
+        return None
+    from .compare import parse_range
+
+    try:
+        return parse_range(text)
+    except ValueError as exc:
+        _fail(f"--baseline {exc}")
+
+
+def _extra_rows(rows: list, budget, baseline) -> None:
+    if baseline:
+        rows.append(("基线", Text(baseline.describe(), style="accent")))
+    if budget is not None:
+        from .budget import format_tokens
+
+        rows.append(("预算", Text.assemble(
+            (f"{format_tokens(budget.limit)} tokens", "accent"),
+            (f"  单轮，用到 {format_tokens(budget.threshold)} 时收尾", "muted"),
+        )))
+
+
+def _finding_exit_code(result, fail_on: FailOn) -> int:
+    """--fail-on：发现问题且可信度达到门槛时返回 3；报告里没有一句话结论、无法判定时返回 4。"""
+    if result.finding is None:
+        console.print(Text(f"{glyphs.notice} 报告里没有一句话结论，无法判定是否发现问题（退出码 4）。", style="warn"))
+        return EXIT_UNDECIDED
+    if not result.finding:
+        return 0
+    rank = _CONFIDENCE_RANK.get(result.confidence, 1)
+    return EXIT_FINDING if rank >= _FAIL_ON_RANK[fail_on] else 0
+
+
 def _run_config(max_steps: int, thread_id: str | None = None) -> dict:
     # langgraph 的每个节点执行算一步，一次"模型 + 工具"大约 2-3 步
     config: dict = {"recursion_limit": max_steps * 3}
@@ -282,12 +354,20 @@ def analyze(
     encoding: str = _opt_encoding,
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
+    budget: str = _opt_budget,
+    baseline: str = _opt_baseline,
+    fail_on: FailOn = typer.Option(
+        None, "--fail-on", case_sensitive=False,
+        help="发现问题且可信度不低于该级别时以退出码 3 结束（high / medium / low），便于接入 CI 与定时巡检",
+    ),
     verbose: bool = _opt_verbose,
     skills: list[Path] = _opt_skills,
     memory: MemoryMode = _opt_memory,
 ) -> None:
     """单次分析日志，结合源码定位根因（一问一答）。"""
     _check_api_key()
+    token_budget = _make_budget(budget)
+    baseline_window = _parse_baseline(baseline)
     log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
@@ -304,18 +384,24 @@ def analyze(
     try:
         reset_cursor_line()
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+        _extra_rows(rows, token_budget, baseline_window)
         memory_row = status_row(mem, "analyze")
         if memory_row:
             rows.append(memory_row)
         console.print(info_panel(rows, "log-agent", f"v{__version__}"))
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
-            agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [], memory=mem)
+            agent = build_agent(
+                model=model, base_url=base_url, skill_dirs=skills or [], memory=mem, budget=token_budget,
+            )
 
-        payload = {"messages": [{"role": "user", "content": _build_context_message(log_paths, code_paths, question)}]}
+        content = _build_context_message(log_paths, code_paths, question, baseline_window)
+        payload = {"messages": [{"role": "user", "content": content}]}
         from .citations import CitationLinker
 
         linker = CitationLinker(log_paths, code_paths)
-        result = StreamRenderer(verbose=verbose, linker=linker).run(agent, payload, config=_run_config(max_steps))
+        result = StreamRenderer(verbose=verbose, linker=linker, budget=token_budget).run(
+            agent, payload, config=_run_config(max_steps)
+        )
 
         if output:
             from .export import build_payload, infer_format, write_report
@@ -335,6 +421,10 @@ def analyze(
         raise typer.Exit(code=130)
     if result.error:
         raise typer.Exit(code=1)
+    if fail_on is not None:
+        code = _finding_exit_code(result, fail_on)
+        if code:
+            raise typer.Exit(code=code)
 
 
 # ---------------------------------------------------------------------------
@@ -465,11 +555,15 @@ def chat(
     encoding: str = _opt_encoding,
     no_redact: bool = _opt_no_redact,
     max_steps: int = _opt_max_steps,
+    budget: str = _opt_budget,
+    baseline: str = _opt_baseline,
     verbose: bool = _opt_verbose,
     skills: list[Path] = _opt_skills,
     memory: MemoryMode = _opt_memory,
 ) -> None:
     """多轮对话模式：连续追问，会话持久化到本地 SQLite，关掉终端后还能续上。"""
+    token_budget = _make_budget(budget)
+    baseline_window = _parse_baseline(baseline)
     if log and "-" in log:
         _fail("chat 模式需要在终端里输入问题，不能用 -l - 从管道读日志；请先把日志保存成文件，或改用 analyze。")
     from .sessions import default_db_path
@@ -538,6 +632,7 @@ def chat(
             )
         )
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+        _extra_rows(rows, token_budget, baseline_window)
         rows.append(("会话", session_value))
         memory_row = status_row(mem, "chat")
         if memory_row:
@@ -549,6 +644,7 @@ def chat(
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
             agent = build_agent(
                 model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=skills or [], memory=mem,
+                budget=token_budget,
             )
 
         def has_history(name: str) -> bool:
@@ -681,7 +777,7 @@ def chat(
                 continue
 
             if first_turn:
-                message = _build_context_message(log_paths, code_paths, user_input)
+                message = _build_context_message(log_paths, code_paths, user_input, baseline_window)
                 first_turn = False
             elif source_note:
                 message = f"{source_note}\n\n{user_input}"
@@ -694,7 +790,7 @@ def chat(
             last_question = user_input
 
             payload = {"messages": [{"role": "user", "content": message}]}
-            result = StreamRenderer(verbose=verbose, linker=linker).run(
+            result = StreamRenderer(verbose=verbose, linker=linker, budget=token_budget).run(
                 agent, payload, config=_run_config(max_steps, session)
             )
             totals.add(result)
@@ -717,6 +813,115 @@ def chat(
 
 
 # ---------------------------------------------------------------------------
+# watch
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def watch(
+    log: list[str] = typer.Option(..., "--log", "-l", help="要盯着的日志文件，可多次指定（不支持 gzip 和管道）"),
+    code: list[Path] = _opt_code,
+    pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
+    question: str = typer.Option(
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问题",
+    ),
+    debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
+    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
+    once: bool = typer.Option(False, "--once", help="分析一次后退出：适合复现一次问题、看完结果就走"),
+    model: str = _opt_model,
+    base_url: str = _opt_base_url,
+    encoding: str = _opt_encoding,
+    no_redact: bool = _opt_no_redact,
+    max_steps: int = _opt_max_steps,
+    budget: str = _opt_budget,
+    verbose: bool = _opt_verbose,
+    skills: list[Path] = _opt_skills,
+) -> None:
+    """追踪模式：像 tail -F 一样盯着日志，出现新的错误时自动分析这一批。"""
+    if "-" in log:
+        _fail("watch 需要跟随真实文件，不能用 -l - 从管道读取。")
+    _check_api_key()
+    token_budget = _make_budget(budget)
+    log_paths, code_paths = _prepare(log, code, encoding, no_redact)
+    model = _resolve_model(model)
+    base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    skill_sources = _skill_sources(skills)
+
+    import time
+
+    from .watch import POLL_INTERVAL, FollowError, LogFollower, TriggerBatch, batch_question, build_matcher
+
+    try:
+        matcher = build_matcher(pattern)
+        followers = [LogFollower(path) for path in log_paths]
+    except FollowError as exc:
+        _fail(str(exc))
+
+    from .agent import build_agent
+    from .citations import CitationLinker
+
+    rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+    rule = Text(f"正则 {pattern}", style="accent") if pattern else Text("ERROR / FATAL 级别", style="accent")
+    rule.append(f"  攒 {debounce:g} 秒 {glyphs.sep} 间隔至少 {cooldown:g} 秒", style="muted")
+    rows.append(("触发", rule))
+    _extra_rows(rows, token_budget, None)
+    reset_cursor_line()
+    console.print(info_panel(rows, "log-agent", f"追踪模式 {glyphs.sep} v{__version__}"))
+    with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
+        agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [], budget=token_budget)
+    linker = CitationLinker(log_paths, code_paths)
+
+    def waiting() -> None:
+        console.print(Text(
+            f"{glyphs.notice} 正在监控新写入的日志，出现新错误时自动分析 {glyphs.sep} Ctrl+C 退出", style="muted",
+        ))
+
+    batch = TriggerBatch(debounce=debounce, max_wait=max(60.0, debounce * 3))
+    last_run = float("-inf")
+    announced = False
+    analyses = 0
+    waiting()
+    try:
+        while True:
+            now = time.monotonic()
+            for follower in followers:
+                rotations = follower.rotations
+                for lineno, line in follower.poll():
+                    if matcher(line):
+                        batch.add(str(follower.path), lineno, line, now)
+                if follower.rotations != rotations:
+                    console.print(Text(f"{glyphs.notice} {follower.path.name} 被截断或轮转，已从头继续跟随", style="warn"))
+            if batch.count and not announced:
+                announced = True
+                console.print(Text(
+                    f"{glyphs.notice} 发现新错误，再等 {debounce:g} 秒看是否还有后续…", style="warn",
+                ))
+            if batch.ready(now) and now - last_run >= cooldown:
+                hits = batch.drain()
+                announced = False
+                console.print()
+                console.rule(Text(f"{datetime.now():%H:%M:%S}  新增 {hits.count} 条", style="accent"), style="muted")
+                content = _build_context_message(
+                    log_paths, code_paths, batch_question(hits, question, matched_by_pattern=bool(pattern)),
+                )
+                result = StreamRenderer(verbose=verbose, linker=linker, budget=token_budget).run(
+                    agent, {"messages": [{"role": "user", "content": content}]}, config=_run_config(max_steps),
+                )
+                analyses += 1
+                last_run = time.monotonic()
+                if once:
+                    break
+                if result.interrupted:
+                    console.print(Text("本次分析已中断，继续监控；再按 Ctrl+C 退出。", style="muted"))
+                console.print()
+                waiting()
+            time.sleep(POLL_INTERVAL)
+    except KeyboardInterrupt:
+        console.print()
+        console.print(Text(f"已停止监控，共分析 {analyses} 次。", style="muted"))
+
+
+# ---------------------------------------------------------------------------
 # config
 # ---------------------------------------------------------------------------
 
@@ -729,6 +934,7 @@ _CONFIG_TEMPLATE = """\
 # code = ["./"]
 # skills = ["./ops/skills"]   # 额外的 skill 目录；.log-agent/skills 与 ~/.log-agent/skills 会自动加载
 # max_steps = 120
+# budget = "300k"      # 单轮 tokens 上限，用到 80% 时自动收尾出报告
 # timeout = 120        # 单次模型请求超时（秒）
 # max_retries = 3      # 模型请求失败自动重试次数
 # encoding = "gbk"

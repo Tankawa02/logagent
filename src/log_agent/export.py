@@ -25,6 +25,8 @@ def build_payload(result: TurnResult, *, question: str, logs: list[str], code: l
         "error": result.error or None,
         "summary": result.summary or None,
         "confidence": result.confidence or None,
+        "finding": result.finding,
+        "budget_hit": result.budget_hit,
         "elapsed_seconds": result.elapsed,
         "usage": result.usage,
         "tool_calls": [asdict(t) for t in result.tools],

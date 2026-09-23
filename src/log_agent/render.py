@@ -26,6 +26,7 @@ from .term import REFRESH_PER_SECOND, console, glyphs
 # 工具名 -> (类别, 友好中文名)。类别决定图标与颜色：日志 / 源码 / 其它
 _TOOL_META: dict[str, tuple[str, str]] = {
     "log_overview": ("log", "日志概览"),
+    "compare_windows": ("log", "窗口对比"),
     "read_log_chunk": ("log", "读取日志"),
     "search_logs": ("log", "搜索日志"),
     "trace_request": ("log", "追踪请求"),
@@ -264,6 +265,11 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((_path_name(arg("path")), "muted"))
         if window():
             parts.append((window(), "accent"))
+    elif name == "compare_windows":
+        if arg("path"):
+            parts.append((_path_name(arg("path")), "muted"))
+        parts.append((f"{arg('baseline_since')}~{arg('baseline_until')}", "accent"))
+        parts.append(("vs " + (window() or "全文"), "accent"))
     elif name == "read_log_chunk":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
@@ -343,6 +349,7 @@ _HINT_SUMMARIES = {
     "eof": "已到文件末尾",
     "empty": "内容为空",
     "empty_window": "时间窗口内无日志",
+    "no_timestamp": "无时间戳",
 }
 
 
@@ -357,6 +364,10 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
         if meta.get("cached"):
             parts.append("缓存")
         return sep.join(parts)
+    if name == "compare_windows":
+        summary = f"ERROR {meta.get('base_errors', 0):,} → {meta.get('target_errors', 0):,}"
+        new = meta.get("new_signatures", 0)
+        return f"{summary}{sep}新出现 {new} 类" if new else summary
     if name == "read_log_chunk":
         return f"{meta['end'] - meta['start'] + 1} 行"
     if name == "search_logs":
@@ -560,6 +571,7 @@ _SUMMARY_LINE = re.compile(
     r"(?:[（(]\s*可信度\s*[:：]?\s*(?P<level>高|中|低)\s*[)）])?\s*\**\s*$"
 )
 _CONFIDENCE_STYLE = {"高": "ok", "中": "warn", "低": "err"}
+NO_FINDING_PREFIX = "未发现异常"
 
 
 def parse_summary_line(line: str) -> tuple[str, str] | None:
@@ -603,6 +615,14 @@ class TurnResult:
     error: str = ""
     summary: str = ""
     confidence: str = ""
+    budget_hit: bool = False
+
+    @property
+    def finding(self) -> bool | None:
+        """是否发现了问题；没有一句话结论时无法判定，返回 None。"""
+        if not self.summary:
+            return None
+        return not self.summary.startswith(NO_FINDING_PREFIX)
 
     @property
     def ok(self) -> bool:
@@ -617,9 +637,10 @@ class StreamRenderer:
     - 上方永久区：完整 Markdown 块、已完成的工具行（verbose）。
     """
 
-    def __init__(self, verbose: bool, linker: CitationLinker | None = None) -> None:
+    def __init__(self, verbose: bool, linker: CitationLinker | None = None, budget: Any = None) -> None:
         self.verbose = verbose
         self.linker = linker
+        self.budget = budget
         self.summary: tuple[str, str] | None = None
         self.start = time.perf_counter()
         self.spinner = Spinner(glyphs.spinner, style="accent")
@@ -859,14 +880,16 @@ class StreamRenderer:
 
     def _with_tracker(self, config: dict[str, Any] | None) -> dict[str, Any]:
         merged = dict(config or {})
+        handlers = [self.tracker] + ([self.budget] if self.budget is not None else [])
         callbacks = merged.get("callbacks")
         if callbacks is None:
-            merged["callbacks"] = [self.tracker]
+            merged["callbacks"] = handlers
         elif isinstance(callbacks, list):
-            merged["callbacks"] = [*callbacks, self.tracker]
+            merged["callbacks"] = [*callbacks, *handlers]
         else:
             callbacks = callbacks.copy()
-            callbacks.add_handler(self.tracker, inherit=True)
+            for handler in handlers:
+                callbacks.add_handler(handler, inherit=True)
             merged["callbacks"] = callbacks
         return merged
 
@@ -877,6 +900,8 @@ class StreamRenderer:
         final_state: Any = None
         error = ""
         config = self._with_tracker(config)
+        if self.budget is not None:
+            self.budget.reset()
         retry_watch.reset()
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
@@ -945,6 +970,15 @@ class StreamRenderer:
         if trail is not None:
             console.print()
             console.print(trail)
+        budget_hit = self.budget is not None and self.budget.wrapped
+        if budget_hit:
+            from .budget import format_tokens
+
+            console.print(Text(
+                f"{glyphs.notice} 接近 tokens 预算 {format_tokens(self.budget.limit)}，"
+                "已让 agent 停止取证、基于现有证据收尾；需要查得更深可以调大 --budget。",
+                style="warn",
+            ))
         print_stats(elapsed, usage, self._total_tools(), self.interrupted or bool(error))
         return TurnResult(
             report="\n\n".join(self.answer_parts),
@@ -955,4 +989,5 @@ class StreamRenderer:
             error=error,
             summary=self.summary[0] if self.summary else "",
             confidence=self.summary[1] if self.summary else "",
+            budget_hit=budget_hit,
         )

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_FILE = ".log-agent.toml"
-COMMANDS = ("analyze", "chat")
+COMMANDS = ("analyze", "chat", "watch")
 
 # 配置键 -> 对应的 CLI 参数名；值为 None 的键不走命令行参数，改为写入环境变量
 _KEYS: dict[str, str | None] = {
@@ -36,6 +36,7 @@ _KEYS: dict[str, str | None] = {
     "encoding": "encoding",
     "no_redact": "no_redact",
     "max_steps": "max_steps",
+    "budget": "budget",
     "verbose": "verbose",
     "db": "db",
     "memory": "memory",

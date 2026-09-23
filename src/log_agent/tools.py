@@ -325,6 +325,62 @@ def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
     )
 
 
+def compare_windows(
+    path: str, baseline_since: str, baseline_until: str, since: str = "", until: str = ""
+) -> ToolOutput:
+    """对比同一份日志里两个时间段的错误分布：基线（正常时段） vs 目标（出问题的时段）。
+
+    一次返回两段的级别分布（次数和占比）、目标时段新出现的错误、明显增多的错误、减少或消失的错误。
+    回答"为什么突然变多""和平时比有什么不同""发布前后有什么变化"时优先用它，
+    比分别调两次 log_overview 再自己比对更准（已按每行出现率归一化，两段长度 / 流量不同也能比）。
+
+    Args:
+        path: 日志文件路径。
+        baseline_since: 基线时段起点，如 `13:00` 或 `2026-06-09 13:00`。
+        baseline_until: 基线时段终点。
+        since: 目标时段起点；不传时沿用本次运行的时间窗口，没有窗口就是全文。
+        until: 目标时段终点。
+    """
+    from .compare import render_comparison
+
+    log, error = _open_log_or_error(path)
+    if error:
+        return error
+    try:
+        base_window = parse_window(baseline_since, baseline_until)
+    except ValueError as exc:
+        return _err(f"基线时段有误：{exc}")
+    if not base_window.since or not base_window.until:
+        return _err("基线时段需要同时给出 baseline_since 和 baseline_until")
+    target_window, error = _resolve_window(since, until)
+    if error:
+        return error
+    try:
+        base = _scan_overview(log, base_window)
+        target = _scan_overview(log, target_window)
+    except OSError as exc:
+        return _err(f"读取失败: {exc}")
+    if not base.saw_timestamp:
+        return _hint(f"日志里没有识别到时间戳，无法按时间段对比: {path}", "no_timestamp")
+    if base.window_lines == 0:
+        return _hint(
+            f"基线时段 {base_window.describe()} 内没有日志（日志时间范围：{base.first_ts} → {base.last_ts}）。",
+            "empty_window",
+        )
+    if target.window_lines == 0:
+        return _hint(f"目标时段 {target_window.describe()} 内没有日志。", "empty_window")
+
+    target_desc = target_window.describe() if target_window else "全文"
+    text = render_comparison(
+        log.path.name, base_window.describe(), target_desc, base, target,
+        lambda sig: redact_log(clip_line(sig, 200)),
+    )
+    base_errors = base.levels["FATAL"] + base.levels["ERROR"]
+    target_errors = target.levels["FATAL"] + target.levels["ERROR"]
+    new_count = sum(1 for sig in target.signatures if sig not in base.signatures)
+    return _ok(text, base_errors=base_errors, target_errors=target_errors, new_signatures=new_count)
+
+
 def read_log_chunk(path: str, start_line: int = 1, num_lines: int = 200) -> ToolOutput:
     """读取日志文件的指定行区间（带行号）。
 
@@ -871,6 +927,7 @@ def grep_code(
 
 ALL_TOOLS: list[Callable[..., ToolOutput]] = [
     log_overview,
+    compare_windows,
     read_log_chunk,
     search_logs,
     trace_request,

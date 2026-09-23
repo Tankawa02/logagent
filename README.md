@@ -171,9 +171,39 @@ log-agent analyze -l app.log -o result.json
 
 # GBK 等编码自动识别失败时手动指定；必要时关闭脱敏
 log-agent analyze -l app.log --encoding gbk --no-redact
+
+# 和正常时段对比："为什么 14 点后突然变多"——agent 会先拿到两段的级别分布与新出现 / 明显增多的错误
+log-agent analyze -l app.log -c ./repo --since 14:00 --until 14:30 --baseline "13:00~13:30"
+
+# 限制单轮 tokens：用到 80% 时 agent 停止取证、基于已有证据收尾出报告（证据不足处会标"待确认"）
+log-agent analyze -l huge.log -c ./repo --budget 200k
+
+# 接入 CI / 定时巡检：发现问题且可信度不低于 medium 时退出码为 3
+log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json
 ```
 
 退出码：`0` 成功，`1` 失败（如达到 `--max-steps` 上限），`2` 参数错误，`130` 被 Ctrl+C 中断。
+加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 报告缺少一句话结论、无法判定。
+是否发现问题看报告开头的一句话结论——没有异常时 agent 会写成"未发现异常……"；
+JSON 导出里对应 `finding`（`true` / `false` / `null`）、`confidence` 和 `budget_hit` 字段。
+
+### 追踪模式（watch）
+
+像 `tail -F` 一样盯着日志，出现新的 ERROR / FATAL（或 `--pattern` 匹配的行）时，把这一波攒齐后自动分析一次：
+
+```bash
+# 复现问题时开着，看到报告就知道刚才那一下发生了什么
+log-agent watch -l app.log -c ./repo
+
+# 只关心某类报错；分析一次就退出
+log-agent watch -l app.log -c ./repo --pattern "Timeout|Refused" --once
+
+# 错误持续刷屏时拉长攒批和间隔，避免反复消耗 tokens
+log-agent watch -l app.log --debounce 30 --cooldown 600 --budget 150k
+```
+
+只分析启动之后新写入的行；日志被截断或轮转时会自动从头继续跟随。`--debounce`（默认 10 秒）是新错误停止出现多久后开始分析，
+一直在刷的话最多攒 60 秒；`--cooldown`（默认 120 秒）是两次分析的最小间隔。分析中按 `Ctrl+C` 只中断这一次，空闲时按才退出。
 
 ### 多轮对话（chat）
 
@@ -253,6 +283,9 @@ log-agent sessions rm payment-bug
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |
 | `--max-steps` | | 单轮最大推理步数，默认 120 |
+| `--budget` | | 单轮 tokens 上限，如 `200k`、`1.5m`；用到 80% 时自动收尾出报告（也可写进配置文件） |
+| `--baseline` | | 正常时段，如 `13:00~13:30`（带日期时用 `~` 分隔），让 agent 先做前后对比（analyze / chat） |
+| `--fail-on` | | `high` / `medium` / `low`：发现问题且可信度不低于该级别时退出码为 3（analyze） |
 | `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）的完整记录 |
 | `--memory` | | 长期记忆：`suggest`（默认）/ `explicit` / `off`，见下方「长期记忆」 |
 
