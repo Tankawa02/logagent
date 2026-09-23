@@ -47,11 +47,7 @@ class Glyphs:
     other: str
     ok: str
     fail: str
-    todo_done: str
-    todo_active: str
-    todo_pending: str
-    bar_full: str
-    bar_empty: str
+    notice: str
     prompt: str
     sep: str
     up: str
@@ -71,12 +67,8 @@ UNICODE_GLYPHS = Glyphs(
     other="•",
     ok="✓",
     fail="✗",
-    todo_done="✓",
     # 用 ▸ 而不是 ▶：后者带 emoji 变体，部分终端会画成双宽彩色图标
-    todo_active="▸",
-    todo_pending="○",
-    bar_full="━",
-    bar_empty="─",
+    notice="▸",
     prompt="❯",
     sep="·",
     up="↑",
@@ -96,11 +88,7 @@ ASCII_GLYPHS = Glyphs(
     other="-",
     ok="+",
     fail="x",
-    todo_done="[x]",
-    todo_active="[>]",
-    todo_pending="[ ]",
-    bar_full="#",
-    bar_empty=".",
+    notice="[>]",
     prompt=">",
     sep="|",
     up="in ",

@@ -450,98 +450,6 @@ def _sub_run(call: SubCall) -> ToolRun:
 
 
 # ---------------------------------------------------------------------------
-# 任务进度（write_todos）
-# ---------------------------------------------------------------------------
-
-
-def _progress_bar(done: int, total: int, width: int = 16) -> Text:
-    filled = round(done / total * width) if total else 0
-    bar = Text(glyphs.bar_full * filled, style="ok")
-    bar.append(glyphs.bar_empty * (width - filled), style="muted")
-    return bar
-
-
-class TodoTracker:
-    """跟踪计划变化：新计划画完整面板，之后的状态推进只打印一行增量，避免刷屏。"""
-
-    def __init__(self) -> None:
-        self.todos: list[dict[str, Any]] = []
-
-    @property
-    def done(self) -> int:
-        return sum(1 for t in self.todos if t.get("status") == "completed")
-
-    @property
-    def current(self) -> str:
-        for todo in self.todos:
-            if todo.get("status") == "in_progress":
-                return str(todo.get("content", ""))
-        return ""
-
-    def update(self, todos: list[dict[str, Any]]) -> RenderableType | None:
-        previous = {str(t.get("content", "")): t.get("status") for t in self.todos}
-        self.todos = [t for t in todos if isinstance(t, dict)]
-        if not self.todos:
-            return None
-
-        contents = [str(t.get("content", "")) for t in self.todos]
-        if set(contents) != set(previous):
-            return self._panel()
-
-        changes = Text("  ")
-        for todo in self.todos:
-            content = str(todo.get("content", ""))
-            status = todo.get("status")
-            if previous.get(content) == status:
-                continue
-            if status == "completed":
-                changes.append(f"{glyphs.todo_done} ", style="ok")
-                changes.append(_clip(content, 36), style="muted strike")
-                changes.append("   ")
-            elif status == "in_progress":
-                changes.append(f"{glyphs.todo_active} ", style="warn")
-                changes.append(_clip(content, 36), style="bold")
-                changes.append("   ")
-        if not changes.plain.strip():
-            return None
-        changes.append_text(_progress_bar(self.done, len(self.todos), width=10))
-        changes.append(f" {self.done}/{len(self.todos)}", style="muted")
-        changes.no_wrap = True
-        changes.overflow = "ellipsis"
-        return changes
-
-    def _panel(self) -> Panel:
-        total = len(self.todos)
-        header = _progress_bar(self.done, total)
-        header.append(f"  {self.done}/{total} 已完成", style="bold")
-
-        rows: list[Text] = [header, Text("")]
-        for todo in self.todos:
-            status = todo.get("status", "pending")
-            content = str(todo.get("content", ""))
-            row = Text()
-            if status == "completed":
-                row.append(f"{glyphs.todo_done}  ", style="ok")
-                row.append(content, style="muted strike")
-            elif status == "in_progress":
-                row.append(f"{glyphs.todo_active}  ", style="warn")
-                row.append(content, style="bold warn")
-            else:
-                row.append(f"{glyphs.todo_pending}  ", style="muted")
-                row.append(content)
-            rows.append(row)
-
-        return Panel(
-            Group(*rows),
-            title=Text("排查计划", style="bold"),
-            title_align="left",
-            border_style="accent",
-            box=glyphs.box,
-            padding=(0, 2),
-        )
-
-
-# ---------------------------------------------------------------------------
 # 流式正文
 # ---------------------------------------------------------------------------
 
@@ -627,9 +535,9 @@ class TurnResult:
 class StreamRenderer:
     """一轮 agent 执行的完整渲染。
 
-    - 底部常驻 Live：流式正文预览 + 运行中的工具 + 当前任务 + 动态状态栏；
+    - 底部常驻 Live：流式正文预览 + 运行中的工具 + 动态状态栏；
       后台刷新线程让计时与动效在等待模型/工具时也持续跳动。
-    - 上方永久区：完整 Markdown 块、已完成的工具行（verbose）、计划变化。
+    - 上方永久区：完整 Markdown 块、已完成的工具行（verbose）。
     """
 
     def __init__(self, verbose: bool) -> None:
@@ -637,7 +545,6 @@ class StreamRenderer:
         self.start = time.perf_counter()
         self.spinner = Spinner(glyphs.spinner, style="accent")
         self.tail = MarkdownTail()
-        self.todos = TodoTracker()
         self.running: list[ToolRun] = []
         self.seen_calls: set[str] = set()
         self.tool_count = 0
@@ -710,7 +617,6 @@ class StreamRenderer:
         parts: list[RenderableType] = []
 
         running = list(self.running)
-        todo_now = self.todos.current
 
         tool_lines: list[RenderableType] = []
         for run in running:
@@ -722,21 +628,13 @@ class StreamRenderer:
                 tool_lines.extend(self._live_subcalls(run, now))
 
         if self.tail.text.strip():
-            reserved = 4 + len(tool_lines) + (1 if todo_now else 0)
+            reserved = 4 + len(tool_lines)
             self.tail.max_lines = max(1, min(12, console.size.height - reserved))
             parts.extend([self.tail, Text("")])
 
         parts.extend(tool_lines)
 
-        if todo_now:
-            todo = Text(f"  {glyphs.todo_active} ", style="warn")
-            todo.append(todo_now, style="bold")
-            todo.append(f"  {self.todos.done}/{len(self.todos.todos)}", style="muted")
-            todo.no_wrap = True
-            todo.overflow = "ellipsis"
-            parts.append(todo)
-
-        if running or todo_now:
+        if running:
             parts.append(Text(""))
         parts.append(self._status_line(now))
         return Group(*parts)
@@ -853,13 +751,6 @@ class StreamRenderer:
         if call_id in self.seen_calls:
             return
         self.seen_calls.add(call_id)
-
-        if name == "write_todos":
-            update = self.todos.update(args.get("todos") or [])
-            if update is not None and self.verbose:
-                console.print(update)
-            self.rendered_any = True
-            return
 
         self.tool_count += 1
         self.running.append(ToolRun(call_id=call_id, name=name, args=args, handle=tool_stream))
