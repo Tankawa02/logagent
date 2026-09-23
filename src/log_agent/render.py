@@ -260,6 +260,11 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((search_flags(), "muted"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
+    elif name == "task":
+        if arg("subagent_type"):
+            parts.append((arg("subagent_type"), "accent"))
+        if arg("description"):
+            parts.append((_clip(" ".join(arg("description").split()), 40), "muted"))
     else:
         for key, value in list(args.items())[:2]:
             if isinstance(value, (str, int, float)) and str(value):
@@ -309,6 +314,8 @@ def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
     first_line = text.splitlines()[0] if text else ""
     if getattr(output, "status", "success") == "error":
         return first_line or "执行失败", True
+    if name == "task":
+        return (f"返回 {len(text):,} 字取证结果" if text else "子代理无输出"), not text
 
     artifact = getattr(output, "artifact", None)
     if not isinstance(artifact, dict):
