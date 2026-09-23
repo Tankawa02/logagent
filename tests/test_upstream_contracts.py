@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from log_agent import netguard
 from log_agent.agent import (
     _HIDDEN_TOOLS,
+    _READ_FILE_DESCRIPTION,
     _SUBAGENT_PROMPT,
     _TASK_DESCRIPTION,
     SYSTEM_PROMPT,
@@ -79,7 +80,10 @@ def test_model_sees_our_prompt_and_only_our_tools() -> None:
     assert not leaked, f"应被隐藏的内置工具又出现了：{leaked}"
     # 精确比对：上游新增或改名了内置工具（比如 read_file 改叫 read）时，这里会失败，
     # 提醒我们判断新工具是否也要加进 _HIDDEN_TOOLS。0.7 起不再默认挂 TodoListMiddleware，没有 write_todos。
-    assert names - ours == {"task"}, f"出现了未知的内置工具：{names - ours - {'task'}}"
+    # read_file 刻意保留：转存的大结果和 skill 手册只能靠它读（见 test_skills.py）。
+    assert names - ours == {"task", "read_file"}, f"出现了未知的内置工具：{names - ours - {'task', 'read_file'}}"
+    read_file = next(t for t in seen["tools"] if _tool_name(t) == "read_file")
+    assert _tool_description(read_file) == _READ_FILE_DESCRIPTION
 
     task = next(t for t in seen["tools"] if _tool_name(t) == "task")
     description = _tool_description(task)
@@ -98,7 +102,7 @@ def test_subagents_are_patched_too() -> None:
     assert len(model.calls) == 3
     sub = model.calls[1]
     names = {_tool_name(t) for t in sub["tools"]}
-    assert names == {"list_code_files", "grep_code", "read_code_file"}, f"code-investigator 的工具不对：{names}"
+    assert names == {"list_code_files", "grep_code", "read_code_file", "read_file"}, f"code-investigator 的工具不对：{names}"
     assert sub["system"] == _SUBAGENT_PROMPT, "deepagents 又往子代理系统提示词里追加了内容"
 
 

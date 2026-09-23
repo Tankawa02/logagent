@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 
+from .skills import build_skills, resolve_skill_sources
 from .tools import as_langchain_tools
 
 # 从模型请求里剔除的 deepagents 内置工具（0.7 起多了 delete）：
-# - 这些文件工具默认由 StateBackend 支撑，操作的是代理状态里的虚拟文件，不是真实磁盘，
-#   模型用它们"读日志 / 读源码"只会拿到空结果；delete / write / edit 对只读排查也毫无意义。
+# - 这些文件工具操作的是代理状态里的虚拟文件，不是真实磁盘，模型用它们"浏览 / 搜索日志和源码"只会拿到空结果；
+#   delete / write / edit 对只读排查也毫无意义。
 # - 我们自己的工具是纯 Python、跨平台安全的，已完全覆盖读日志/读源码/搜索的需求。
 # 子代理的 spec 里也挂了本中间件，所以子代理同样看不到这些内置工具。
-_HIDDEN_TOOLS = frozenset({"ls", "glob", "grep", "read_file", "edit_file", "write_file", "delete", "execute"})
+_HIDDEN_TOOLS = frozenset({"ls", "glob", "grep", "edit_file", "write_file", "delete", "execute"})
+
+# read_file 保留，但说明换成我们的：它是读取下面几类虚拟文件的唯一入口，隐藏掉会让这些内容永远读不到。
+# - deepagents 会把超过约 8 万字符的工具结果转存到 /large_tool_results/<id>，只给模型留头尾预览，
+#   并提示"用 read_file 分段读取"；
+# - 对话过长被压缩时，被压缩掉的历史同样转存为虚拟文件；
+# - skill 手册挂在 /skills/ 下（见 skills.py）。
+_READ_FILE_DESCRIPTION = """读取智能体内部的虚拟文件（只读），支持 offset / limit 分段读取：
+- `/skills/...`：skill 排查手册（SKILL.md）及其同目录参考文件；
+- `/large_tool_results/...`：因过长被转存的工具结果，按提示分段读取，不要一次读完；
+- 对话过长被压缩后转存的历史记录（压缩摘要里会给出路径）。
+
+它**不能**读取磁盘上的日志或源码：日志请用 `read_log_chunk` / `search_logs`，源码请用 `read_code_file` / `grep_code`。"""
 
 # 上游 `task` 工具说明是一长串"尽量拆成子任务并行"的示例，单仓库、单日志的问题也会被拆给子代理：
 # 子代理要从零重新熟悉源码、交回两万字"证据"，整体比主代理自己查慢好几倍。
@@ -51,9 +66,9 @@ def _with_description(tool, description: str):
 
 
 class _HarnessOverrides(AgentMiddleware):
-    """在每次模型调用前剔除不需要的内置工具，并把主代理的 task 说明换成我们的版本。
+    """在每次模型调用前剔除不需要的内置工具，并把 read_file、主代理 task 的说明换成我们的版本。
 
-    deepagents 0.7 起不再注入自带的基础提示词和委派指南，系统提示词就是我们传入的原文，
+    deepagents 0.7 起不再注入自带的基础提示词和委派指南，系统提示词就是我们传入的原文（加上 skill 清单），
     这里只需要处理工具列表；契约测试会盯住上游是否又往系统提示词里加了东西。
     """
 
@@ -67,7 +82,9 @@ class _HarnessOverrides(AgentMiddleware):
             name = _tool_name(tool)
             if name in _HIDDEN_TOOLS:
                 continue
-            if name == "task" and self.task_description is not None:
+            if name == "read_file":
+                tool = _with_description(tool, _READ_FILE_DESCRIPTION)
+            elif name == "task" and self.task_description is not None:
                 tool = _with_description(tool, self.task_description)
             tools.append(tool)
         return request.override(tools=tools)
@@ -96,6 +113,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
+- `read_file`：只用来读 skill 手册，以及工具结果过长被转存后提示你去读的虚拟文件；不能读日志和源码。
 
 - `task`：把独立的取证子问题委派给子代理（`code-investigator` 只读源码、`log-investigator` 只读日志、
   `general-purpose` 两者都能用）。
@@ -119,7 +137,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 ## 先判断问题类型
 
 - **报错 / 异常类**（"为什么报错""接口 500""任务失败"）：从 `log_overview` 的高频错误和异常入手。
-- **行为 / 业务逻辑类**（"为什么走了某个分支""为什么降级 / 切换到某供应商""为什么没发出去""为什么选了 A 而不是 B"）：
+- **行为 / 业务��辑类**（"为什么走了某个分支""为什么降级 / 切换到某供应商""为什么没发出去""为什么选了 A 而不是 B"）：
   这类问题日志里往往没有 ERROR，**不要只盯着错误级别**。应该：
   1. 从问题里提取关键词（供应商名、渠道名、功能名、业务类型、手机号段 / 国家码、配置项名等），
      同时考虑中英文、大小写、驼峰 / 下划线等写法，分别用 `search_logs` 和 `grep_code` 搜。
@@ -266,7 +284,12 @@ def _resolve_chat_model(model: Any, base_url: str | None) -> Any:
         return model
 
 
-def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str | None = None):
+def build_agent(
+    model: str = "openai:gpt-4.1",
+    checkpointer=None,
+    base_url: str | None = None,
+    skill_dirs: Sequence[str | Path] | None = None,
+):
     """创建并返回一个配置好的日志分析 deep agent。
 
     Args:
@@ -276,15 +299,25 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
         base_url: 可选的自定义 OpenAI 兼容接口地址（如自建网关 / 代理 /
             Azure / 第三方兼容服务）。传入后会显式构造一个 ChatOpenAI 实例，
             并把模型字符串里的 "openai:" 前缀去掉，只保留模型名。
+        skill_dirs: 额外的 skill 目录（优先级高于用户级 / 项目级默认目录）。
+            传 None 时完全不加载 skill，包括默认目录；CLI 总会传入列表（可以为空）。
     """
     resolved_model = _resolve_chat_model(model, base_url)
     tools = as_langchain_tools()
     subagents = _subagents(tools)
+    middleware: list[AgentMiddleware] = [
+        _HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=_subagent_lines(subagents))),
+    ]
+    # skill 只挂在主代理上：子代理只做主代理委派的窄取证任务，需要手册里的要点时由主代理写进 description。
+    backend, skills_middleware = build_skills(resolve_skill_sources(skill_dirs) if skill_dirs is not None else [])
+    if skills_middleware is not None:
+        middleware.append(skills_middleware)
     return create_deep_agent(
         model=resolved_model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         subagents=subagents,
-        middleware=[_HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=_subagent_lines(subagents)))],
+        middleware=middleware,
+        backend=backend,
         checkpointer=checkpointer,
     )

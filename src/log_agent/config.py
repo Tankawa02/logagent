@@ -32,6 +32,7 @@ _KEYS: dict[str, str | None] = {
     "model": "model",
     "base_url": "base_url",
     "code": "code",
+    "skills": "skills",
     "encoding": "encoding",
     "no_redact": "no_redact",
     "max_steps": "max_steps",
@@ -48,7 +49,8 @@ _ENV_OVERRIDES = {
     "max_retries": "LOG_AGENT_MAX_RETRIES",
 }
 _ONLY_FOR = {"db": ("chat",)}
-_PATH_KEYS = {"code", "db"}
+_PATH_KEYS = {"code", "skills", "db"}
+_PATH_LIST_KEYS = {"code", "skills"}
 
 
 class ConfigError(Exception):
@@ -101,7 +103,7 @@ def _resolve_paths(key: str, value: Any, base: Path, where: str) -> Any:
         path = Path(os.path.expandvars(item)).expanduser()
         return str(path if path.is_absolute() else (base / path).resolve())
 
-    if key == "code":
+    if key in _PATH_LIST_KEYS:
         items = value if isinstance(value, list) else [value]
         return [resolve(item) for item in items]
     return resolve(value)
