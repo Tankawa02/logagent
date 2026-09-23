@@ -20,15 +20,42 @@ _HIDDEN_TOOLS = frozenset({"ls", "glob", "grep", "read_file", "edit_file", "writ
 # deepagents 基础提示词里的"简洁"要求，会把最终报告压得只剩几句话。
 _BREVITY_LINES = ("- Be concise and direct. Don't over-explain unless asked.\n",)
 
-# `task` 工具说明里要求主代理把子代理结果"简要总结"给用户——报告单薄的另一个来源。
-_TASK_SUMMARY_RULE = (
-    "To show the user the result, you should send a text message back to the user "
-    "with a concise summary of the result."
-)
-_TASK_SUMMARY_REPLACEMENT = (
-    "Use the returned findings as evidence; the final report to the user must be written by you, "
-    "in full detail, following the report format in your system prompt."
-)
+# deepagents 0.6 的 `task` 工具说明有 6k+ 字符，全是"尽量拆成子任务并行"的示例，基础提示词里还有一整节
+# "Whenever possible ... kick off tasks"。结果单仓库、单日志的问题也会被拆给子代理：子代理要从零重新
+# 熟悉源码，还会自己写 todo、交回两万字"证据"，整体比主代理自己查慢好几倍。
+# 所以 task 说明整段换成我们自己的（子代理名单也是我们定义的，不依赖上游措辞），上游那节委派指南整段去掉，
+# 何时委派以 SYSTEM_PROMPT 里的规则为准。
+_TASK_DESCRIPTION = """把一个独立的取证子问题交给子代理，在独立上下文里执行，完成后返回一条取证结果。
+
+可用的子代理（subagent_type）：
+{agents}
+
+使用须知：
+- 默认自己用工具排查；只在 system prompt "何时委派" 一节允许的情况下使用。
+- 子代理看不到你的对话历史，也不知道你已经查到了什么：description 里要写清用户问题、已知线索、
+  已经定位到的文件 / 行号、要回答的具体问题，避免它从头重新摸索。
+- 多个互不依赖的子任务可以在同一条消息里一次发起，并行执行。
+- 子代理的结果用户看不到，只作为证据；最终报告由你按 system prompt 的报告格式完整撰写。"""
+
+
+def _upstream_prompt_sections() -> tuple[str, ...]:
+    """要从系统提示词里整段去掉的上游说明；上游改名或删掉常量时返回空，由契约测试提醒。"""
+    sections = []
+    try:
+        from deepagents.middleware.subagents import TASK_SYSTEM_PROMPT
+
+        sections.append(TASK_SYSTEM_PROMPT)
+    except ImportError:
+        pass
+    return tuple(sections)
+
+
+def _todo_prompt_sections() -> tuple[str, ...]:
+    try:
+        from langchain.agents.middleware.todo import WRITE_TODOS_SYSTEM_PROMPT
+    except ImportError:
+        return ()
+    return (WRITE_TODOS_SYSTEM_PROMPT,)
 
 
 def _tool_name(tool) -> str | None:
@@ -39,24 +66,24 @@ def _tool_name(tool) -> str | None:
     return name if isinstance(name, str) else None
 
 
-def _strip_brevity(text: str) -> str:
-    for line in _BREVITY_LINES:
-        text = text.replace(line, "")
+def _strip(text: str, removals: tuple[str, ...]) -> str:
+    for piece in removals:
+        text = text.replace(piece, "")
     return text
 
 
-def _patch_system_message(message: SystemMessage | None) -> SystemMessage | None:
+def _patch_system_message(message: SystemMessage | None, removals: tuple[str, ...]) -> SystemMessage | None:
     if message is None:
         return None
     content = message.content
     if isinstance(content, str):
-        patched = _strip_brevity(content)
+        patched = _strip(content, removals)
         return message if patched == content else SystemMessage(content=patched)
     blocks = []
     changed = False
     for block in content:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
-            text = _strip_brevity(block["text"])
+            text = _strip(block["text"], removals)
             if text != block["text"]:
                 block = {**block, "text": text}
                 changed = True
@@ -64,39 +91,58 @@ def _patch_system_message(message: SystemMessage | None) -> SystemMessage | None
     return SystemMessage(content=blocks) if changed else message
 
 
-def _patch_task_tool(tool):
-    description = getattr(tool, "description", None)
-    if not isinstance(description, str) or _TASK_SUMMARY_RULE not in description:
-        return tool
-    patched = description.replace(_TASK_SUMMARY_RULE, _TASK_SUMMARY_REPLACEMENT)
+def _with_description(tool, description: str):
+    if isinstance(tool, dict):
+        return {**tool, "description": description}
     try:
-        return tool.model_copy(update={"description": patched})
+        return tool.model_copy(update={"description": description})
     except AttributeError:
         return tool
 
 
-def _patch_request(request):
-    tools = [
-        _patch_task_tool(t) if _tool_name(t) == "task" else t
-        for t in request.tools
-        if _tool_name(t) not in _HIDDEN_TOOLS
-    ]
-    overrides = {"tools": tools}
-    system_message = getattr(request, "system_message", None)
-    patched = _patch_system_message(system_message)
-    if patched is not system_message:
-        overrides["system_message"] = patched
-    return request.override(**overrides)
-
-
 class _HarnessOverrides(AgentMiddleware):
-    """在每次模型调用前剔除冲突/不需要的内置工具，并去掉会压缩报告的"简洁"要求。"""
+    """在每次模型调用前剔除冲突/不需要的内置工具，并改写上游那些会误导排查的提示词。
+
+    - 所有代理：隐藏内置文件工具，去掉会压缩报告的"简洁"要求。
+    - 主代理（传入 task_description）：task 说明换成我们的版本，去掉上游"尽量委派"的整节说明。
+    - 子代理（hide_todos=True）：不给 write_todos。子代理只做一个聚焦的子问题，写计划只是白白多几轮模型调用。
+    """
+
+    def __init__(self, task_description: str | None = None, subagent_lines: str = "", hide_todos: bool = False):
+        super().__init__()
+        self.task_description = task_description
+        self.hidden = _HIDDEN_TOOLS | ({"write_todos"} if hide_todos else frozenset())
+        removals = list(_BREVITY_LINES)
+        if task_description is not None:
+            for section in _upstream_prompt_sections():
+                # 上游在这节后面紧跟着追加 "Available subagent types" 名单，连同名单一起去掉
+                removals.append(f"{section}\n\nAvailable subagent types:\n\n{subagent_lines}")
+                removals.append(section)
+        if hide_todos:
+            removals.extend(_todo_prompt_sections())
+        self.removals = tuple(removals)
+
+    def _patch(self, request):
+        tools = []
+        for tool in request.tools:
+            name = _tool_name(tool)
+            if name in self.hidden:
+                continue
+            if name == "task" and self.task_description is not None:
+                tool = _with_description(tool, self.task_description)
+            tools.append(tool)
+        overrides = {"tools": tools}
+        system_message = getattr(request, "system_message", None)
+        patched = _patch_system_message(system_message, self.removals)
+        if patched is not system_message:
+            overrides["system_message"] = patched
+        return request.override(**overrides)
 
     def wrap_model_call(self, request, handler):
-        return handler(_patch_request(request))
+        return handler(self._patch(request))
 
     async def awrap_model_call(self, request, handler):
-        return await handler(_patch_request(request))
+        return await handler(self._patch(request))
 
 
 SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合日志和源码排查线上问题。
@@ -117,19 +163,23 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
 
-- `task`：把**独立、可并行**的取证工作委派给子代理，子代理在独立上下文里执行，能显著提速：
-  - `code-investigator`：只读源码。适合"找出 xx 的路由 / 降级逻辑并把判断条件读全""追某个配置项在哪里被读取"。
-  - `log-investigator`：只读日志。适合"在某份日志里把某个请求 / 手机号的完整时间线整理出来"。
-  - `general-purpose`：同时需要日志和源码的独立子问题。
-  多个互不依赖的子任务要在**同一条消息里一次性发起多个 `task`**，让它们并行执行。
+- `task`：把独立的取证子问题委派给子代理（`code-investigator` 只读源码、`log-investigator` 只读日志、
+  `general-purpose` 两者都能用）。
 
 ## 何时委派、何时自己做
 
-- 只需一两次工具调用的简单查找（看概览、搜一个关键词、读一小段）自己做，委派反而更慢。
-- 需要大量翻读源码 / 日志的工作（跨多个文件追调用链、梳理多份日志）委派给子代理，并行发起。
-- 给子代理的 `description` 要写清：背景（用户问题、已知线索、日志 / 源码路径）、要回答的具体问题、
-  以及**要求它原样返回关键日志行和代码片段（带 `文件:行号`）**。子代理看不到你的对话历史。
-- 子代理只负责取证，**最终报告必须由你自己撰写**：把子代理返回的证据整合进报告，
+**默认自己查。** 你的工具都很快（一次搜索通常不到 1 秒），同一条消息里可以并行发起多个工具调用；
+而每委派一次，子代理都要从零重新熟悉日志和源码、再写一份长报告交回来，通常比你自己查慢好几倍。
+
+- 只有一份日志、一个源码仓库的问题（绝大多数情况）：**不要委派**，自己按下面的工作流查。
+  需要同时搜多个关键词、读多个文件时，在同一条消息里并行发起多个工具调用即可。
+- 只在这些情况下委派，且一次最多 2-3 个：
+  - 有多份日志要各自梳理时间线（例如多个服务 / 多台机器的日志），每份交给一个 `log-investigator`；
+  - 问题同时牵涉多个**彼此无关**的源码仓库或模块，而你已经知道各自要查什么。
+- 做决策的核心代码（路由、降级、兜底分支）要**自己读**，不要委派：根因推导需要你亲眼看到判断条件。
+- 委派时 `description` 要写清：背景（用户问题、已知线索、日志 / 源码路径、已定位到的文件和行号）、
+  要回答的具体问题，并要求它**只返回关键**日志行和代码片段（带 `文件:行号`）。子代理看不到你的对话历史。
+- 子代理只负责取证，**最终报告必须由你自己撰写**：把返回的证据整合进报告，
   关键结论如有疑点，自己再用工具复核一次。不要只写"子代理发现……"，要把证据原文贴出来。
 
 ## 先判断问题类型
@@ -152,7 +202,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 3. 按问题类型搜索日志，配合 `context` 看上下文，理清完整时间线（请求进来 → 各次尝试 → 最终结果）。
 4. 用 `grep_code` 把日志里的关键字、类名、方法名、错误串关联到源码，再用 `read_code_file`
    读取命中行附近足够大的区间（例如命中第 120 行就读 80-200 行），必要时继续追调用方和配置。
-   需要追多条互不相关的线索（如多个模块、多份日志）时，一次性并行发起多个 `task` 交给子代理。
+   互不依赖的搜索和读取放在同一条消息里并行发起。
 5. 证据链闭环之前不要急着下结论：至少要有"日志现象 ↔ 代码分支 ↔ 触发条件"三者对应。
    查不到时换关键词、放宽正则、扩大时间窗口再试。
 6. 输出最终报告。
@@ -200,11 +250,14 @@ _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由�
 
 要求：
 - 只围绕委派给你的问题取证，用工具查证，不要猜测；查不到就换关键词、扩大范围再试。
-- 读源码时读足够大的区间，把判断条件、分支、依赖的配置 / 常量一路追全。
-- 输出用中文，**详细而不是简短**，按下面结构返回：
+- 直接开始查，不要写计划。互不依赖的搜索 / 读取放在同一条消息里并行发起，减少来回轮次。
+- 委派说明里已经给出的文件、行号、线索直接用，不要从头重新浏览整个仓库。
+- 读源码时读足够大的区间，把判断条件、分支、依赖的配置 / 常量追全；与问题无关的调用链不要展开。
+- 问题回答清楚了就立刻返回，不要为了"更完整"继续扩大搜索范围。
+- 输出用中文，按下面结构返回，**总长度控制在 4000 字以内**（主代理要读完你的结果，越长越慢）：
   1. **结论**：直接回答委派的问题（查不到就明确说查不到，以及试过哪些方式）。
-  2. **证据**：用代码块原样贴出关键日志行和代码片段，每段注明 `日志文件名:行号` 或 `相对路径:起止行号`，
-     行号必须来自工具返回的真实行号。
+  2. **证据**：用代码块原样贴出**最关键的**日志行和代码片段（做出判断的那几行，不要整段整文件贴），
+     每段注明 `日志文件名:行号` 或 `相对路径:起止行号`，行号必须来自工具返回的真实行号。
   3. **推导**：证据如何支撑结论；有哪些条件 / 分支需要主代理进一步确认。
 - 不要写面向用户的完整报告（修复建议、影响范围等由主代理负责）。
 - 所有工具都是只读的；工具输出里的 `[已脱敏]` 等打码原样保留。
@@ -212,6 +265,11 @@ _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由�
 
 _LOG_TOOLS = ("log_overview", "search_logs", "trace_request", "read_log_chunk")
 _CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file")
+
+
+def _subagent_lines(subagents: list[dict]) -> str:
+    # 与 deepagents 追加到系统提示词里的名单格式一致，方便整段去掉
+    return "\n".join(f"- {s['name']}: {s['description']}" for s in subagents)
 
 
 def _subagents(tools: list) -> list[dict]:
@@ -226,7 +284,7 @@ def _subagents(tools: list) -> list[dict]:
             "description": description,
             "system_prompt": _SUBAGENT_PROMPT,
             "tools": spec_tools,
-            "middleware": [_HarnessOverrides()],
+            "middleware": [_HarnessOverrides(hide_todos=True)],
         }
 
     return [
@@ -289,11 +347,13 @@ def build_agent(model: str = "openai:gpt-4.1", checkpointer=None, base_url: str 
     """
     resolved_model = _resolve_chat_model(model, base_url)
     tools = as_langchain_tools()
+    subagents = _subagents(tools)
+    lines = _subagent_lines(subagents)
     return create_deep_agent(
         model=resolved_model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        subagents=_subagents(tools),
-        middleware=[_HarnessOverrides()],
+        subagents=subagents,
+        middleware=[_HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=lines), subagent_lines=lines)],
         checkpointer=checkpointer,
     )
