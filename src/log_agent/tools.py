@@ -768,7 +768,7 @@ def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: boo
         args += ["--iglob", name]
     for skip in sorted(SKIP_DIRS):
         args += ["--glob", f"!{skip}/"]
-    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的���展名白名单，改为下面逐行过滤
+    # path_glob 不交给 rg：rg 的多个正向 glob 是并集，会绕过上面的扩展名白名单，改为下面逐行过滤
     # 必须显式给出搜索路径：stdin 不是终端时 rg 会改为搜索 stdin
     args += ["-e", compiled_src, "--", "."]
 
@@ -798,7 +798,7 @@ def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: boo
         if proc.poll() is None:
             proc.kill()
         proc.wait()
-    # 退出码 2 = rg 报错（通常是正则语法与 Python 不兼容），回���
+    # 退出码 2 = rg 报错（通常是正则语法与 Python 不兼容），回退
     if proc.returncode == 2 and not matches:
         return None
     return matches
@@ -812,7 +812,7 @@ def grep_code(
     path_glob: str = "",
     max_results: int = 80,
 ) -> ToolOutput:
-    """在源码目录���递归搜索关键字/正则，返回 `文件:行号: 内容`。
+    """在源码目录中递归搜索关键字/正则，返回 `文件:行号: 内容`。
 
     用于把日志里的报错信息（函数名、错误字符串、异常类名）关联回源码位置。
 

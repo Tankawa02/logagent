@@ -193,7 +193,7 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。回答过程中按 `Ctrl+C` 只中断当前这一轮，
 已经输出的内容会保留，可以接着追问；在输入提示符处按 `Ctrl+C` 才会退出。
 
-**会话持久化**：对话历史���存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
+**会话持久化**：对话历史保存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
 
 ```bash
 # 开一个名为 payment-bug 的会话
@@ -234,7 +234,7 @@ log-agent sessions rm payment-bug
 | `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |
-| `--max-steps` | | 单轮����大推理步数，默认 120 |
+| `--max-steps` | | 单轮最大推理步数，默认 120 |
 | `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
 
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：
@@ -245,7 +245,7 @@ log-agent sessions rm payment-bug
 
 - 两种模式都是**流式输出**：报告按 Markdown 块边写边落到屏幕上，底部常驻状态栏实时显示
   当前阶段（思考中 / 正在查看日志 / 正在阅读源码 / 正在撰写）、耗时、token 与工具次数。
-- 运行中的工具带 spinner 和计时，完成��收敛成一行：`✓ ≡ 搜索日志  app.log  "ERROR"  命中 23 行 · 0.3s`。
+- 运行中的工具带 spinner 和计时，完成后收敛成一行：`✓ ≡ 搜索日志  app.log  "ERROR"  命中 23 行 · 0.3s`。
 - 不加 `-v` 时过程信息只在底部状态栏滚动、结束即消失，屏幕上只留报告；加 `-v` 会把每步都保留下来。
 - 子代理的每一步缩进显示在对应的"委派子任务"下面（运行中只滚动显示最近 3 步），
   并行的多个子代理各自计时；token 与工具次数统计包含子代理，JSON 报告里子代理的调用带 `subagent` 字段。
