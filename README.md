@@ -7,8 +7,13 @@
 
 - 输入日志文件路径 + 源码目录路径，自动定位问题根因
 - 两种模式：`analyze` 单次分析，`chat` 多轮对话（连续追问，记住上下文）
-- 内置只读工具：分块读日志、搜索日志、列源码、读源码、grep 源码
-- 利用 deepagents 的 `write_todos` 规划与上下文压缩，能处理大日志
+- 内置只读工具：日志概览（级别分布 / 高频错误 / 异常类型）、分块读日志、带上下文搜索日志、
+  列源码、按行号读源码、grep 源码（装了 `rg` 会自动用 ripgrep 加速）
+- 日志输入：可传多份、支持通配符与 `.gz`、支持管道 `-l -`；自动识别 UTF-8 / GBK / UTF-16 编码
+- 大日志友好：稀疏行索引让跳读 GB 级日志的第 N 行近乎瞬时，超长单行自动截断
+- 默认脱敏：token、密码、手机号、身份证、邮箱、IP 在发给模型前打码
+- 报告可导出为 Markdown / JSON，方便贴进工单或接入自动化
+- 利用 deepagents 的 `write_todos` 规划与上下文压缩
 - 使用 OpenAI 模型（可切换其他 provider）
 - 跨平台：macOS / Linux / Windows 行为一致（搜索为纯 Python 实现，不依赖系统 `grep`）
 
@@ -111,9 +116,25 @@ log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 50
 # 保留每一步工具调用与计划变化的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
 
-# 切换模型
+# 切换模型（也可以设环境变量 LOG_AGENT_MODEL 作为团队默认）
 log-agent analyze -l app.log -m openai:gpt-4.1-mini
+
+# 多份日志 / 通配符 / 压缩日志（通配符请加引号，Windows 下也由程序自己展开）
+log-agent analyze -l gateway.log -l order.log -c ./repo
+log-agent analyze -l "logs/app-*.log.gz"
+
+# 从管道读取
+kubectl logs deploy/order --since=1h | log-agent analyze -l - -c ./repo
+
+# 导出报告（按扩展名推断格式，也可用 -f 指定）
+log-agent analyze -l app.log -c ./repo -o report.md
+log-agent analyze -l app.log -o result.json
+
+# GBK 等编码自动识别失败时手动指定；必要时关闭脱敏
+log-agent analyze -l app.log --encoding gbk --no-redact
 ```
+
+退出码：`0` 成功，`1` 失败（如达到 `--max-steps` 上限），`2` 参数错误，`130` 被 Ctrl+C 中断。
 
 ### 多轮对话（chat）
 
@@ -144,16 +165,36 @@ log-agent chat -l app.log -c ./repo --session payment-bug
 
 # 自定义数据库文件位置
 log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
+
+# 查看 / 删除会话
+log-agent sessions list
+log-agent sessions rm payment-bug
 ```
+
+续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。
+
+输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）：
+
+| 命令 | 说明 |
+|------|------|
+| `/save [路径]` | 保存上一条回答为 Markdown（`.json` 结尾则存 JSON） |
+| `/new` | 开一个新会话 |
+| `/sources` | 查看当前日志与源码 |
+| `/stats` | 查看本次运行累计的轮次、耗时、工具次数与 tokens |
+| `/help` | 显示命令列表 |
 
 ## 参数
 
 | 参数 | 简写 | 说明 |
 |------|------|------|
-| `--log` | `-l` | 日志文件路径（必填） |
-| `--code` | `-c` | 源码目录路径（可选） |
-| `--question` | `-q` | 想让 agent 回答的具体问题 |
-| `--model` | `-m` | 模型，`provider:model` 格式，默认 `openai:gpt-4.1` |
+| `--log` | `-l` | 日志文件（必填，可重复、支持通配符 / `.gz` / `-`） |
+| `--code` | `-c` | 源码目录（可选，可重复） |
+| `--question` | `-q` | 想让 agent 回答的具体问题（analyze） |
+| `--output` / `--format` | `-o` / `-f` | 导出报告到文件，`markdown` 或 `json`（analyze） |
+| `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
+| `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
+| `--no-redact` | | 关闭敏感信息脱敏 |
+| `--max-steps` | | 单轮最大推理步数，默认 120 |
 | `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
 
 ## 终端显示
@@ -180,4 +221,16 @@ log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 ## 安全说明
 
 - 所有工具均为**只读**，agent 不会修改你的日志或源码。
-- 日志/源码内容会发送给 OpenAI，敏感数据请先脱敏，或改用本地模型（如 `ollama:...`）。
+- 日志/源码内容会发送给模型服务。工具输出默认先脱敏：日志中的 token / 密码 / 手机号 / 身份证（带校验位校验，
+  不会误伤订单号）/ 邮箱 / IP（同一 IP 映射为同一代号，仍能区分机器）会被打码；源码只打明确的密钥
+  （`sk-`、AccessKey、JWT、Bearer），不改动代码本身。规则无法覆盖所有业务字段，高敏数据建议改用本地模型。
+
+## 开发
+
+```bash
+uv sync
+uv run pytest          # 单元测试 + 基于剧本模型的端到端测试，不需要 API Key
+uv run ruff check src tests
+```
+
+CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试。

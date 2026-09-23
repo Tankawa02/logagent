@@ -22,6 +22,7 @@ from .term import REFRESH_PER_SECOND, console, glyphs
 
 # 工具名 -> (类别, 友好中文名)。类别决定图标与颜色：日志 / 源码 / 其它
 _TOOL_META: dict[str, tuple[str, str]] = {
+    "log_overview": ("log", "日志概览"),
     "read_log_chunk": ("log", "读取日志"),
     "search_logs": ("log", "搜索日志"),
     "list_code_files": ("code", "浏览源码"),
@@ -193,29 +194,60 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
         value = args.get(key)
         return "" if value in (None, "") else str(value)
 
+    def num(key: str, default: int) -> int:
+        try:
+            return int(args.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+
+    def search_flags() -> str:
+        flags = []
+        if args.get("regex") is False:
+            flags.append("文本")
+        if args.get("ignore_case"):
+            flags.append("忽略大小写")
+        if num("context", 0):
+            flags.append(f"±{num('context', 0)}")
+        if arg("path_glob"):
+            flags.append(_clip(arg("path_glob"), 16))
+        return " ".join(flags)
+
     parts: list[tuple[str, str]] = []
-    if name == "read_log_chunk":
+    if name == "log_overview":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
-        start = int(args.get("start_line") or 1)
-        count = int(args.get("num_lines") or 500)
+    elif name == "read_log_chunk":
+        if arg("path"):
+            parts.append((_path_name(arg("path")), "muted"))
+        start = num("start_line", 1)
+        count = num("num_lines", 200)
         parts.append((f"L{start}-{start + count - 1}", "accent"))
     elif name == "search_logs":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
         if arg("pattern"):
             parts.append((f'"{_clip(arg("pattern"))}"', "accent"))
+        if search_flags():
+            parts.append((search_flags(), "muted"))
     elif name == "list_code_files":
         if arg("code_dir"):
             parts.append((shorten_path(arg("code_dir"), keep=2), "muted"))
+        if arg("path_glob"):
+            parts.append((_clip(arg("path_glob"), 24), "accent"))
     elif name == "read_code_file":
         if arg("rel_path"):
             parts.append((_clip(arg("rel_path")), "accent"))
+        start = num("start_line", 1)
+        end = num("end_line", 0)
+        if start > 1 or end:
+            parts.append((f"L{start}-{end}" if end else f"L{start}-", "accent"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
     elif name == "grep_code":
         if arg("pattern"):
             parts.append((f'"{_clip(arg("pattern"))}"', "accent"))
+        if search_flags():
+            parts.append((search_flags(), "muted"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
     else:
@@ -243,6 +275,14 @@ def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
         return hints.get(name, text.removeprefix("[提示]").strip()), False
 
     lines = text.splitlines()
+    if name == "log_overview":
+        parts = []
+        total = re.search(r"共 ([\d,]+) 行", text)
+        if total:
+            parts.append(f"{total.group(1)} 行")
+        errors = re.search(r"\b(?:FATAL|ERROR) ([\d,]+)", text)
+        parts.append(f"ERROR {errors.group(1)}" if errors else "无 ERROR")
+        return f" {glyphs.sep} ".join(parts), False
     if name == "read_log_chunk":
         match = re.search(r"第 (\d+)-(\d+) 行", lines[0] if lines else "")
         if match:
@@ -252,12 +292,16 @@ def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
         more = "+" if "命中超过" in text else ""
         return f"命中 {hits}{more} 行", False
     elif name == "list_code_files":
-        files = sum(1 for line in lines if not line.startswith("..."))
-        more = "+" if "已达上限" in text else ""
-        return f"{files}{more} 个文件", False
+        files = sum(1 for line in lines if line and not line.startswith("..."))
+        total = re.search(r"共 (\d+) 个文件", text)
+        return (f"{files}/{total.group(1)} 个文件" if total else f"{files} 个文件"), False
     elif name == "read_code_file":
-        count = max(len(lines) - 1, 0)
-        return (f"{count} 行（已截断）" if "[已截断" in text else f"{count} 行"), False
+        match = re.search(r"第 (\d+)-(\d+) 行，共 (\d+) 行", lines[0] if lines else "")
+        if match:
+            start, end, total = (int(g) for g in match.groups())
+            if start == 1 and end == total:
+                return f"{total} 行", False
+            return f"L{start}-{end} / {total} 行", False
     elif name == "grep_code":
         hit_files = set()
         hits = 0
@@ -451,7 +495,7 @@ class TodoTracker:
 
 
 def split_complete_blocks(text: str) -> tuple[str, str]:
-    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式增量固化）。
+    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式���量固化）。
 
     以空行作为块边界，且绝不在未闭合的 ``` / ~~~ 代码围栏内部切分。
     返回 (可固化部分, 剩余未完成部分)。
@@ -502,6 +546,31 @@ class MarkdownTail:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class ToolRecord:
+    name: str
+    args: dict[str, Any]
+    summary: str
+    failed: bool
+    seconds: float
+
+
+@dataclass
+class TurnResult:
+    """一轮执行的结果，供导出报告与会话累计统计使用。"""
+
+    report: str = ""
+    elapsed: float = 0.0
+    usage: dict[str, int] = field(default_factory=lambda: {"input": 0, "output": 0, "total": 0})
+    tools: list[ToolRecord] = field(default_factory=list)
+    interrupted: bool = False
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.interrupted and not self.error
+
+
 class StreamRenderer:
     """一轮 agent 执行的完整渲染。
 
@@ -525,6 +594,8 @@ class StreamRenderer:
         self.rendered_any = False
         self.printed_answer_rule = False
         self.interrupted = False
+        self.answer_parts: list[str] = []
+        self.records: list[ToolRecord] = []
 
     # ---- Live 视图 ---------------------------------------------------------
 
@@ -607,12 +678,24 @@ class StreamRenderer:
             self.printed_answer_rule = True
         console.print()
         console.print(Markdown(text))
+        self.answer_parts.append(text)
         self.rendered_any = True
+
+    def _record(self, run: ToolRun) -> None:
+        error = getattr(run.handle, "error", None)
+        if error:
+            summary, failed = str(error).splitlines()[0], True
+        else:
+            summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
+        self.records.append(
+            ToolRecord(run.name, dict(run.args), summary, failed, round(time.perf_counter() - run.started, 3))
+        )
 
     def _settle_tools(self) -> None:
         still_running = []
         for run in self.running:
             if run.completed:
+                self._record(run)
                 if self.verbose:
                     console.print(settled_tool_line(run))
             else:
@@ -677,9 +760,12 @@ class StreamRenderer:
 
     # ---- 入口 ---------------------------------------------------------------
 
-    def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> bool:
-        """执行一轮并渲染，返回是否被用户中断。"""
+    def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> TurnResult:
+        """执行一轮并渲染，返回本轮结果（报告正文、耗时、用量、工具记录、是否中断）。"""
+        from langgraph.errors import GraphRecursionError
+
         final_state: Any = None
+        error = ""
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
             live = Live(
@@ -704,8 +790,20 @@ class StreamRenderer:
                 # 已经流出来但还没固化的半个块也保留下来，用户能看到中断前的内容
                 self._flush_answer(self.tail.text)
                 self.tail.text = ""
+            except GraphRecursionError:
+                self._flush_answer(self.tail.text)
+                self.tail.text = ""
+                error = "已达到最大推理步数"
+                console.print()
+                console.print(
+                    Text(
+                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以换个更具体的问题，"
+                        "或用 --max-steps 调大上限。",
+                        style="warn",
+                    )
+                )
 
-        if not self.interrupted:
+        if not self.interrupted and not error:
             if not self.printed_answer_rule and isinstance(final_state, dict):
                 text = collect_ai_texts(final_state.get("messages", []))
                 if text:
@@ -715,5 +813,16 @@ class StreamRenderer:
             if self.usage["total"] == 0 and isinstance(final_state, dict):
                 self.usage = collect_usage(final_state.get("messages", []))
 
-        print_stats(time.perf_counter() - self.start, self.usage, self.tool_count, self.interrupted)
-        return self.interrupted
+        for run in self.running:
+            if run.completed:
+                self._record(run)
+        elapsed = time.perf_counter() - self.start
+        print_stats(elapsed, self.usage, self.tool_count, self.interrupted or bool(error))
+        return TurnResult(
+            report="\n\n".join(self.answer_parts),
+            elapsed=round(elapsed, 3),
+            usage=dict(self.usage),
+            tools=list(self.records),
+            interrupted=self.interrupted,
+            error=error,
+        )
