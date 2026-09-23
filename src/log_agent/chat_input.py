@@ -14,6 +14,7 @@ from .term import console, glyphs
 SLASH_COMMANDS: dict[str, str] = {
     "/help": "显示可用命令",
     "/save": "保存上一条回答，/save [路径]，默认 ./log-agent-report-时间.md",
+    "/copy": "把上一条回答复制到剪贴板（Markdown 原文）",
     "/new": "开一个新会话（当前会话已保存，可用 -s 续上）",
     "/sources": "查看当前会话使用的日志与源码",
     "/stats": "查看本次运行的累计用量",

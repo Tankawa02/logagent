@@ -23,6 +23,8 @@ def build_payload(result: TurnResult, *, question: str, logs: list[str], code: l
         "model": model,
         "status": "interrupted" if result.interrupted else ("error" if result.error else "ok"),
         "error": result.error or None,
+        "summary": result.summary or None,
+        "confidence": result.confidence or None,
         "elapsed_seconds": result.elapsed,
         "usage": result.usage,
         "tool_calls": [asdict(t) for t in result.tools],

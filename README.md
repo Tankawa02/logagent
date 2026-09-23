@@ -149,7 +149,7 @@ log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 50
 log-agent analyze -l app.log -c ./repo --since "2026-06-09 14:00" --until "2026-06-09 14:05"
 log-agent analyze -l app.log --since 14:00
 
-# 保留每一步工具调用与计划变化的完整记录
+# 保留每一步工具调用（含结果摘要、耗时）的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
 
 # 切换模型（也可以设环境变量 LOG_AGENT_MODEL 作为团队默认）
@@ -199,8 +199,14 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 # 开一个名为 payment-bug 的会话
 log-agent chat -l app.log -c ./repo --session payment-bug
 
-# 关掉终端后，再次用同名会话继续之前的对话
-log-agent chat -l app.log -c ./repo --session payment-bug
+# 关掉终端后，只写会话名就能续上：自动沿用上次的日志与源码
+log-agent chat --session payment-bug
+
+# 续上最近一次会话
+log-agent chat --resume
+
+# 续会话时换一份日志（传了 -l / -c 就以新传入的为准）
+log-agent chat -l app-new.log --session payment-bug
 
 # 自定义数据库文件位置
 log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
@@ -210,13 +216,14 @@ log-agent sessions list
 log-agent sessions rm payment-bug
 ```
 
-续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。
+续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。上次的日志已被删除或移走时会提示你用 `-l` 重新指定。
 
 输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）：
 
 | 命令 | 说明 |
 |------|------|
 | `/save [路径]` | 保存上一条回答为 Markdown（`.json` 结尾则存 JSON） |
+| `/copy` | 把上一条回答（Markdown 原文）复制到剪贴板，方便贴进工单或群聊 |
 | `/new` | 开一个新会话 |
 | `/sources` | 查看当前日志与源码 |
 | `/stats` | 查看本次运行累计的轮次、耗时、工具次数与 tokens |
@@ -239,7 +246,7 @@ log-agent sessions rm payment-bug
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |
 | `--max-steps` | | 单轮最大推理步数，默认 120 |
-| `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
+| `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）的完整记录 |
 | `--memory` | | 长期记忆：`suggest`（默认）/ `explicit` / `off`，见下方「长期记忆」 |
 
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：
@@ -310,6 +317,12 @@ description: 短信供应商路由、降级、切换问题的排查手册
 - 不加 `-v` 时过程信息只在底部状态栏滚动、结束即消失，屏幕上只留报告；加 `-v` 会把每步都保留下来。
 - 子代理的每一步缩进显示在对应的"委派子任务"下面（运行中只滚动显示最近 3 步），
   并行的多个子代理各自计时；token 与工具次数统计包含子代理，JSON 报告里子代理的调用带 `subagent` 字段。
+- 完整报告的第一行是**一句话结论 + 可信度**（高 / 中 / 低），终端里显示成高亮摘要；
+  导出的 JSON 里对应 `summary` 与 `confidence` 字段（模型没写这一行时为 `null`）。
+- 报告里的 `app.log:42`、`app/order.py:88` 这类引用可以直接点击（终端超链接 OSC 8）：
+  VS Code / Cursor 内置终端里跳到对应行，其它终端（iTerm2、Windows Terminal、GNOME Terminal 等）打开对应文件。
+  用 `LOG_AGENT_LINKS` 调整：`vscode` 总是生成 `vscode://` 链接，`file` 总是生成 `file://`，`off` 关闭。
+  只影响终端显示，导出的报告保持原文，不写入本机绝对路径。
 - 同一次运行里对同一份日志、同一时间窗口重复调用"日志概览"会直接命中缓存（摘要里标"缓存"），
   日志文件被改写后自动失效。
 

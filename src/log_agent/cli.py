@@ -67,7 +67,7 @@ _opt_base_url = typer.Option(None, "--base-url", help="自定义 OpenAI 兼容�
 _opt_encoding = typer.Option(None, "--encoding", help="强制指定日志编码（如 gbk、utf-16）；默认自动探测")
 _opt_no_redact = typer.Option(False, "--no-redact", help="关闭敏感信息脱敏（默认会打码 token、手机号、身份证、邮箱、IP 等）")
 _opt_max_steps = typer.Option(120, "--max-steps", min=10, help="单轮最多推理步数，防止 agent 陷入反复搜索")
-_opt_verbose = typer.Option(False, "--verbose", "-v", help="保留每一步工具调用与计划变化的完整记录")
+_opt_verbose = typer.Option(False, "--verbose", "-v", help="保留每一步工具调用（含结果摘要、耗时）的完整记录")
 _opt_since = typer.Option(None, "--since", help="只分析该时间之后的日志，如 '2026-06-09 14:00' 或 '14:00'")
 _opt_until = typer.Option(None, "--until", help="只分析到该时间为止（按给出的精度包含整段，'14:05' 含 14:05:59）")
 _opt_memory = typer.Option(
@@ -312,7 +312,10 @@ def analyze(
             agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [], memory=mem)
 
         payload = {"messages": [{"role": "user", "content": _build_context_message(log_paths, code_paths, question)}]}
-        result = StreamRenderer(verbose=verbose).run(agent, payload, config=_run_config(max_steps))
+        from .citations import CitationLinker
+
+        linker = CitationLinker(log_paths, code_paths)
+        result = StreamRenderer(verbose=verbose, linker=linker).run(agent, payload, config=_run_config(max_steps))
 
         if output:
             from .export import build_payload, infer_format, write_report
@@ -365,6 +368,28 @@ def _new_session_name() -> str:
     return "chat-" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
+def _stored_session(db_path: Path, name: str | None, latest: bool):
+    """查出要续上的会话；--resume 且没有任何会话时直接报错，-s 指定的会话不存在时返回 None（按新会话处理）。"""
+    import sqlite3
+
+    from .sessions import SessionStore
+
+    if not db_path.is_file():
+        info = None
+    else:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            store = SessionStore(conn)
+            info = store.get(name) if name else store.latest()
+        finally:
+            conn.close()
+    if info is None and latest and not name:
+        _fail("还没有可以续上的会话，请先用 -l 指定日志开始一次对话。")
+    if info is None and name and latest:
+        _fail(f"没有名为 '{name}' 的会话，可以用 log-agent sessions list 查看已有会话。")
+    return info
+
+
 def _print_help() -> None:
     from .chat_input import SLASH_COMMANDS
 
@@ -379,7 +404,10 @@ def _print_help() -> None:
 
 @app.command()
 def chat(
-    log: list[str] = typer.Option(..., "--log", "-l", help=LOG_HELP.replace("，'-' 表示从管道读取", "")),
+    log: list[str] = typer.Option(
+        None, "--log", "-l",
+        help=LOG_HELP.replace("，'-' 表示从管道读取", "") + "；续上已有会话时可省略，沿用上次的日志",
+    ),
     code: list[Path] = _opt_code,
     model: str = _opt_model,
     base_url: str = _opt_base_url,
@@ -387,6 +415,7 @@ def chat(
         None, "--session", "-s",
         help="会话名称；用相同名称可续上之前的对话。不指定时自动生成（形如 chat-20260609-165130）",
     ),
+    resume: bool = typer.Option(False, "--resume", "-r", help="续上最近一次会话，沿用它的日志与源码"),
     db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认 ~/.log-agent/sessions.db）"),
     since: str = _opt_since,
     until: str = _opt_until,
@@ -398,8 +427,24 @@ def chat(
     memory: MemoryMode = _opt_memory,
 ) -> None:
     """多轮对话模式：连续追问，会话持久化到本地 SQLite，关掉终端后还能续上。"""
-    if "-" in log:
+    if log and "-" in log:
         _fail("chat 模式需要在终端里输入问题，不能用 -l - 从管道读日志；请先把日志保存成文件，或改用 analyze。")
+    from .sessions import default_db_path
+
+    db_path = db.expanduser().resolve() if db else default_db_path()
+    reused_sources = False
+    if resume or (session and not log):
+        stored = _stored_session(db_path, session, resume)
+        if stored is not None:
+            session = stored.name
+            if not log:
+                missing = [p for p in stored.logs if not Path(p).is_file()]
+                if missing:
+                    _fail(f"会话 '{stored.name}' 上次使用的日志已不存在：{missing[0]}\n请用 -l 重新指定日志文件。")
+                log, reused_sources = list(stored.logs), True
+                code = code or [Path(p) for p in stored.code]
+    if not log:
+        _fail("请用 -l 指定日志文件；续上已有会话时可以只写 -s <会话名>，或用 --resume 续上最近一次。")
     _check_api_key()
     log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
@@ -412,14 +457,16 @@ def chat(
 
     from .agent import build_agent
     from .chat_input import ChatInput
+    from .citations import CitationLinker
+    from .clipboard import ClipboardError, copy_text
     from .export import build_payload, write_report
     from .memory_cli import after_turn, end_session, handle_slash, open_session, status_row
-    from .sessions import SessionStore, default_db_path, describe_source_change
+    from .sessions import SessionStore, describe_source_change
 
     auto_session = session is None
     session = session or _new_session_name()
-    db_path = db.expanduser().resolve() if db else default_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    linker = CitationLinker(log_paths, code_paths)
 
     mem = open_session(memory.value, code_paths, session)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -433,6 +480,8 @@ def chat(
             session_value.append("  (自动生成)", style="warn")
         elif previous:
             session_value.append(f"  (续上 {previous.turns} 轮)", style="muted")
+            if reused_sources:
+                session_value.append("  沿用上次的日志与源码", style="muted")
         session_value.append(f"\n{db_path}", style="muted")
 
         footer: list[Text] = []
@@ -507,6 +556,17 @@ def chat(
                     console.print(info_panel(rows, "当前会话", session))
                 elif command == "/stats":
                     console.print(totals.line())
+                elif command == "/copy":
+                    if last is None:
+                        console.print(Text("还没有可以复制的回答。", style="muted"))
+                        continue
+                    try:
+                        method = copy_text(last[1].report.strip() + "\n")
+                    except ClipboardError as exc:
+                        console.print(Text(f"{glyphs.fail} 复制失败：{exc}，可以改用 /save 保存成文件。", style="err"))
+                        continue
+                    note = "（通过终端 OSC 52 写入，需终端支持）" if method == "OSC 52" else ""
+                    console.print(Text(f"{glyphs.ok} 已复制上一条回答{note}", style="ok"))
                 elif command == "/new":
                     end_session(mem)
                     session = _new_session_name()
@@ -545,7 +605,9 @@ def chat(
             source_note = ""
 
             payload = {"messages": [{"role": "user", "content": message}]}
-            result = StreamRenderer(verbose=verbose).run(agent, payload, config=_run_config(max_steps, session))
+            result = StreamRenderer(verbose=verbose, linker=linker).run(
+                agent, payload, config=_run_config(max_steps, session)
+            )
             totals.add(result)
             store.record_turn(session, user_input, result.usage.get("total", 0))
             if result.report:
@@ -686,7 +748,8 @@ def sessions_list(db: Path = typer.Option(None, "--db", help="会话数据库文
         logs = "\n".join(shorten_path(p, keep=2) for p in item.logs) or "-"
         table.add_row(item.name, item.updated_at, str(item.turns), f"{item.total_tokens:,}", logs, item.title or "-")
     console.print(table)
-    console.print(Text.assemble(("用 ", "muted"), ("log-agent chat -l <日志> -s <会话>", "accent"), (" 续上对话", "muted")))
+    console.print(Text.assemble(("用 ", "muted"), ("log-agent chat -s <会话>", "accent"), (" 续上对话（沿用上次的日志与源码），", "muted"),
+            ("--resume", "accent"), (" 续上最近一次", "muted")))
 
 
 @sessions_app.command("rm")

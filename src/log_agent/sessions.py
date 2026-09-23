@@ -69,6 +69,10 @@ class SessionStore:
         ).fetchall()
         return [self._row(r) for r in rows]
 
+    def latest(self) -> SessionInfo | None:
+        sessions = self.list()
+        return sessions[0] if sessions else None
+
     def touch(self, name: str, logs: list[str], code: list[str], model: str) -> None:
         """登记会话（首次）或更新它当前使用的日志/源码/模型。"""
         now = _now()

@@ -18,6 +18,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from .citations import CitationLinker, LinkedMarkdown
 from .netguard import describe_api_error, retry_watch
 from .subtrace import SubagentTracker, SubCall
 from .term import REFRESH_PER_SECOND, console, glyphs
@@ -524,6 +525,33 @@ class MarkdownTail:
 # ---------------------------------------------------------------------------
 
 
+# 报告开头的一句话结论，例如 "一句话结论：Router.select 未判空（可信度：高）"；容忍加粗、引用块等包装
+_SUMMARY_LINE = re.compile(
+    r"^\s*(?:>\s*)?\**\s*一句话结论\s*\**\s*[:：]\s*\**\s*(?P<text>.+?)\s*\**\s*"
+    r"(?:[（(]\s*可信度\s*[:：]?\s*(?P<level>高|中|低)\s*[)）])?\s*\**\s*$"
+)
+_CONFIDENCE_STYLE = {"高": "ok", "中": "warn", "低": "err"}
+
+
+def parse_summary_line(line: str) -> tuple[str, str] | None:
+    """识别一句话结论行，返回 (结论, 可信度)；可信度缺失时为空字符串。"""
+    match = _SUMMARY_LINE.match(line)
+    if not match:
+        return None
+    text = match.group("text").strip().strip("*").strip()
+    return (text, match.group("level") or "") if text else None
+
+
+def summary_banner(text: str, level: str) -> Text:
+    banner = Text()
+    banner.append(f"{glyphs.notice} ", style="accent.strong")
+    banner.append(text, style="bold")
+    if level:
+        banner.append(f"  {glyphs.sep}  ", style="muted")
+        banner.append(f"可信度 {level}", style=_CONFIDENCE_STYLE[level])
+    return banner
+
+
 @dataclass
 class ToolRecord:
     name: str
@@ -544,6 +572,8 @@ class TurnResult:
     tools: list[ToolRecord] = field(default_factory=list)
     interrupted: bool = False
     error: str = ""
+    summary: str = ""
+    confidence: str = ""
 
     @property
     def ok(self) -> bool:
@@ -558,8 +588,10 @@ class StreamRenderer:
     - 上方永久区：完整 Markdown 块、已完成的工具行（verbose）。
     """
 
-    def __init__(self, verbose: bool) -> None:
+    def __init__(self, verbose: bool, linker: CitationLinker | None = None) -> None:
         self.verbose = verbose
+        self.linker = linker
+        self.summary: tuple[str, str] | None = None
         self.start = time.perf_counter()
         self.spinner = Spinner(glyphs.spinner, style="accent")
         self.tail = MarkdownTail()
@@ -687,10 +719,30 @@ class StreamRenderer:
             console.print()
             console.print(Rule(Text("分析结果", style="accent.strong"), style="muted", characters=glyphs.rule))
             self.printed_answer_rule = True
-        console.print()
-        console.print(Markdown(text))
+        for part in self._split_summary(text):
+            console.print()
+            console.print(part if isinstance(part, Text) else self._markdown(part))
         self.answer_parts.append(text)
         self.rendered_any = True
+
+    def _markdown(self, text: str) -> Markdown:
+        if self.linker is None or not self.linker.enabled:
+            return Markdown(text)
+        return LinkedMarkdown(self.linker.apply(text))
+
+    def _split_summary(self, text: str) -> list[str | Text]:
+        """把本轮第一处"一句话结论"行换成高亮横幅，其余部分照常按 Markdown 渲染。"""
+        if self.summary is not None:
+            return [text]
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            parsed = parse_summary_line(line)
+            if parsed is None:
+                continue
+            self.summary = parsed
+            before, after = "\n".join(lines[:i]).strip(), "\n".join(lines[i + 1 :]).strip()
+            return [p for p in (before, summary_banner(*parsed), after) if p]
+        return [text]
 
     def _record(self, run: ToolRun, subagent: str = "") -> None:
         error = getattr(run.handle, "error", None)
@@ -868,4 +920,6 @@ class StreamRenderer:
             tools=list(self.records),
             interrupted=self.interrupted,
             error=error,
+            summary=self.summary[0] if self.summary else "",
+            confidence=self.summary[1] if self.summary else "",
         )
