@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 每周一跑一次"上游最新版"检查，依赖在允许范围内发新版时提前发现补丁失效
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -36,5 +40,31 @@ jobs:
       - name: Test
         run: uv run pytest
 
+      # 完整 analyze 流程（脚本化模型，无需 API key）也包含在 pytest 的 tests/test_smoke.py 里；
+      # 这里再在 CI 的真实控制台下直接跑一遍，输出留在日志里方便肉眼检查乱码
       - name: CLI smoke
-        run: uv run log-agent --help
+        shell: bash
+        run: |
+          uv run log-agent --help
+          uv run log-agent config
+          printf '2026-06-09 14:00:01 WARN twilio failed trace=T42\n2026-06-09 14:00:02 INFO fallback trace=T42\n' > "$RUNNER_TEMP/smoke.log"
+          OPENAI_API_KEY=smoke uv run python -m tests.smoke_driver "$RUNNER_TEMP/smoke.log" src "$RUNNER_TEMP/report.json"
+
+  upstream-latest:
+    # 用允许范围内的最新依赖跑契约测试：lock 文件保证用户装到的是测过的版本，
+    # 这个 job 负责提前告诉我们"下次放开 / 升级时哪些补丁会失效"
+    name: upstream latest / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Install newest allowed versions
+        run: uv sync --upgrade
+      - name: Upstream contracts + smoke
+        run: uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py -v

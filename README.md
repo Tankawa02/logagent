@@ -193,7 +193,7 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。回答过程中按 `Ctrl+C` 只中断当前这一轮，
 已经输出的内容会保留，可以接着追问；在输入提示符处按 `Ctrl+C` 才会退出。
 
-**会话持久化**：对话历史保存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
+**会话持久化**：对话历史���存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
 
 ```bash
 # 开一个名为 payment-bug 的会话
@@ -281,4 +281,22 @@ uv run pytest          # 单元测试 + 基于剧本模型的端到端测试，�
 uv run ruff check src tests
 ```
 
-CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试。
+CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试。其中 `tests/test_smoke.py`
+用真实子进程跑完整的 `analyze`（只把模型换成脚本），覆盖 Windows 默认 GBK 控制台、中文 / 带空格路径、
+日志和源码不在同一盘符等场景；也可以手动跑 `uv run python -m tests.smoke_driver <日志> src <输出.json>` 看实际终端效果。
+
+### 升级依赖
+
+deepagents、langchain、langgraph、openai 在 `pyproject.toml` 里带了版本上限，`uv.lock` 锁定了测过的版本，
+因为我们对它们有几处"依赖内部细节"的改写（删掉基础提示词里的"简洁"要求、隐藏内置文件工具、
+监听 SDK 重试日志、靠回调看到子代理的过程）。上游一改写法，这些改写不会报错而是悄悄失效。
+
+`tests/test_upstream_contracts.py` 把这些假设逐条钉住。升级流程：
+
+```bash
+uv lock --upgrade-package deepagents   # 或放宽 pyproject.toml 里的上限后 uv lock --upgrade
+uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py
+```
+
+契约测试失败时，失败信息会说明是哪条假设变了，对应去改 `agent.py` / `netguard.py` 里的常量。
+CI 每周一还会用允许范围内的最新版本自动跑一次这两组测试，提前发现问题。
