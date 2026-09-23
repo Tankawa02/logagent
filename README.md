@@ -108,7 +108,7 @@ log-agent analyze --log /path/to/app.log --code /path/to/your/repo
 # 指定问题
 log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 500？"
 
-# 流式查看 agent 每一步（工具调用过程）
+# 保留每一步工具调用与计划变化的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
 
 # 切换模型
@@ -124,13 +124,14 @@ log-agent chat --log /path/to/app.log --code /path/to/your/repo
 进入交互界面后可以连续追问，例如：
 
 ```
-你> 先分析一下整体有哪些异常
-你> 那 14:02 那个 NullPointer 具体是哪段代码引起的？
-你> 这个问题和前面的超时有关联吗？
-你> 退出
+❯ 先分析一下整体有哪些异常
+❯ 那 14:02 那个 NullPointer 具体是哪段代码引起的？
+❯ 这个问题和前面的超时有关联吗？
+❯ 退出
 ```
 
-输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。
+输入 `exit` / `quit` / `退出` / `结束` 即可结束对话。回答过程中按 `Ctrl+C` 只中断当前这一轮，
+已经输出的内容会保留，可以接着追问；在输入提示符处按 `Ctrl+C` 才会退出。
 
 **会话持久化**：对话历史保存在本地 SQLite（默认 `~/.log-agent/sessions.db`），关掉终端后还能续上。用 `--session` 给会话命名，不同名称互相隔离；用相同名称即可恢复之前的对话：
 
@@ -153,7 +154,28 @@ log-agent chat -l app.log --session payment-bug --db ./my-sessions.db
 | `--code` | `-c` | 源码目录路径（可选） |
 | `--question` | `-q` | 想让 agent 回答的具体问题 |
 | `--model` | `-m` | 模型，`provider:model` 格式，默认 `openai:gpt-4.1` |
-| `--verbose` | `-v` | 流式打印执行过程 |
+| `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
+
+## 终端显示
+
+- 两种模式都是**流式输出**：报告按 Markdown 块边写边落到屏幕上，底部常驻状态栏实时显示
+  当前阶段（思考中 / 正在查看日志 / 正在阅读源码 / 正在撰写）、耗时、token 与工具次数。
+- 运行中的工具带 spinner 和计时，完成后收敛成一行：`✓ ≡ 搜索日志  app.log  "ERROR"  命中 23 行 · 0.3s`。
+- 不加 `-v` 时过程信息只在底部状态栏滚动、结束即消失，屏幕上只留报告；加 `-v` 会把每步都保留下来。
+
+### Windows 兼容
+
+- 自动开启控制台 VT 模式，cmd / PowerShell / Windows Terminal / VS Code 终端 / Git Bash 表现一致，刷新不闪烁。
+- 中文 Windows 的经典控制台（非 UTF-8 代码页）会把 `─ ○ ✓` 等符号画成双宽，导致边框错位、残影叠行，
+  这种环境会**自动切换为纯 ASCII 字形**。也可以手动指定：
+
+  ```powershell
+  $env:LOG_AGENT_GLYPHS="ascii"    # 强制 ASCII
+  $env:LOG_AGENT_GLYPHS="unicode"  # 强制 Unicode（例如已 chcp 65001）
+  ```
+
+- 输出重定向到文件（`log-agent analyze ... > report.txt`）时统一写 UTF-8，不会因编码报错中断。
+- 遵循 `NO_COLOR` 环境变量关闭颜色。
 
 ## 安全说明
 
