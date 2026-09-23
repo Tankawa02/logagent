@@ -9,6 +9,8 @@
 - 两种模式：`analyze` 单次分析，`chat` 多轮对话（连续追问，记住上下文）
 - 内置只读工具：日志概览（级别分布 / 高频错误 / 异常类型）、分块读日志、带上下文搜索日志、
   列源码、按行号读源码、grep 源码（装了 `rg` 会自动用 ripgrep 加速）
+- 按请求追踪：给一个 traceId / requestId / 手机号，跨多份日志把同一请求的所有行按时间合并排好，连带堆栈
+- 配置文件：模型、接口地址、默认源码目录写进 `.log-agent.toml`，命令行只写日志和问题
 - 日志输入：可传多份、支持通配符与 `.gz`、支持管道 `-l -`；自动识别 UTF-8 / GBK / UTF-16 编码
 - 大日志友好：稀疏行索引让跳读 GB 级日志的第 N 行近乎瞬时，超长单行自动截断
 - 默认脱敏：token、密码、手机号、身份证、邮箱、IP 在发给模型前打码
@@ -94,6 +96,36 @@ log-agent analyze -l app.log --base-url https://your-gateway.com/v1
 
 命令行参数 `--base-url` 优先级高于环境变量。`analyze` 和 `chat` 两个命令都支持。
 
+### 配置文件（可选）
+
+不想每次都写 `-m`、`--base-url`、`-c`，可以放进配置文件：
+
+```bash
+log-agent config --init   # 在当前目录生成带注释的 .log-agent.toml 模板
+log-agent config          # 查看加载了哪些配置文件、各项最终取值
+```
+
+```toml
+# .log-agent.toml（放在项目根目录，子目录里运行也能找到）
+model = "openai:qwen-max"
+base_url = "https://your-gateway.com/v1"
+code = ["../sms-service"]   # 相对路径以本文件所在目录为准
+timeout = 180               # 单次模型请求超时（秒）
+max_retries = 5
+
+[analyze]                   # 只对 analyze 生效
+verbose = true
+```
+
+配好以后命令可以缩成 `log-agent analyze -l app.log -q "为什么降级到 nexmo"`。
+
+- 查找顺序：用户级 `~/.log-agent/config.toml` → 项目级 `.log-agent.toml`（从当前目录逐级向上找最近的一个，覆盖用户级）；
+  也可以用环境变量 `LOG_AGENT_CONFIG` 直接指定文件。
+- 优先级：命令行参数 > 环境变量（`LOG_AGENT_MODEL`、`OPENAI_BASE_URL` 等）> 配置文件 > 内置默认值。
+- 支持的键：`model`、`base_url`、`code`、`encoding`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
+  以及 chat 专用的 `db`。写错的键会给出提示并忽略。
+- **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。
+
 ## 使用
 
 工具提供两种模式：
@@ -126,6 +158,9 @@ log-agent analyze -l app.log -m openai:gpt-4.1-mini
 # 多份日志 / 通配符 / 压缩日志（通配符请加引号，Windows 下也由程序自己展开）
 log-agent analyze -l gateway.log -l order.log -c ./repo
 log-agent analyze -l "logs/app-*.log.gz"
+
+# 追一条请求：问题里带上 traceId / 手机号，agent 会用 trace_request 把它在各份日志里的完整链路按时间拉出来
+log-agent analyze -l gateway.log -l router.log -c ./repo -q "traceId=8f3a2c 这条短信为什么降级到 nexmo"
 
 # 从管道读取
 kubectl logs deploy/order --since=1h | log-agent analyze -l - -c ./repo
@@ -199,7 +234,7 @@ log-agent sessions rm payment-bug
 | `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
 | `--no-redact` | | 关闭敏感信息脱敏 |
-| `--max-steps` | | 单轮��大推理步数，默认 120 |
+| `--max-steps` | | 单轮����大推理步数，默认 120 |
 | `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）与计划变化的完整记录 |
 
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：

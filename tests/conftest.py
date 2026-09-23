@@ -10,7 +10,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from log_agent import logfile, redact, timefilter, tools
+from log_agent import config, logfile, redact, timefilter, tools
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +18,9 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     """每个用例都从干净状态开始：脱敏开启、无强制编码、缓存清空、HOME 指向临时目录。"""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    for name in ("LOG_AGENT_CONFIG", "LOG_AGENT_MODEL", "OPENAI_BASE_URL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES"):
+        monkeypatch.delenv(name, raising=False)
+    config.set_loaded(config.LoadedConfig())
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)
     timefilter.reset_default_window()

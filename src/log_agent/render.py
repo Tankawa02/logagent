@@ -27,6 +27,7 @@ _TOOL_META: dict[str, tuple[str, str]] = {
     "log_overview": ("log", "日志概览"),
     "read_log_chunk": ("log", "读取日志"),
     "search_logs": ("log", "搜索日志"),
+    "trace_request": ("log", "追踪请求"),
     "list_code_files": ("code", "浏览源码"),
     "read_code_file": ("code", "读取源码"),
     "grep_code": ("code", "检索源码"),
@@ -244,6 +245,18 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((f'"{_clip(arg("pattern"))}"', "accent"))
         if search_flags():
             parts.append((search_flags(), "muted"))
+    elif name == "trace_request":
+        if arg("key"):
+            parts.append((f'"{_clip(arg("key"))}"', "accent"))
+        paths = args.get("paths") or []
+        if isinstance(paths, str):
+            paths = [paths]
+        if len(paths) == 1:
+            parts.append((_path_name(paths[0]), "muted"))
+        elif paths:
+            parts.append((f"{len(paths)} 份日志", "muted"))
+        if window():
+            parts.append((window(), "muted"))
     elif name == "list_code_files":
         if arg("code_dir"):
             parts.append((shorten_path(arg("code_dir"), keep=2), "muted"))
@@ -300,6 +313,10 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
         return f"{meta['end'] - meta['start'] + 1} 行"
     if name == "search_logs":
         return f"命中 {meta.get('hits', 0)}{'+' if meta.get('truncated') else ''} 行"
+    if name == "trace_request":
+        hits = f"命中 {meta.get('hits', 0)}{'+' if meta.get('truncated') else ''} 行"
+        total = meta.get("total_files", 1)
+        return f"{hits}{sep}{meta.get('files', 0)}/{total} 份日志" if total > 1 else hits
     if name == "list_code_files":
         shown, total = meta.get("shown", 0), meta.get("total", 0)
         return f"{shown}/{total} 个文件" if total > shown else f"{shown} 个文件"
