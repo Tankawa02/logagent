@@ -547,7 +547,7 @@ class TodoTracker:
 
 
 def split_complete_blocks(text: str) -> tuple[str, str]:
-    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式���量固化）。
+    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式增量固化）。
 
     以空行作为块边界，且绝不在未闭合的 ``` / ~~~ 代码围栏内部切分。
     返回 (可固化部分, 剩余未完成部分)。
