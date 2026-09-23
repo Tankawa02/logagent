@@ -24,6 +24,15 @@ app = typer.Typer(
 sessions_app = typer.Typer(help="管理 chat 模式保存的会话。", no_args_is_help=True)
 app.add_typer(sessions_app, name="sessions")
 
+
+def _register_memory_app() -> None:
+    from .memory_cli import memory_app
+
+    app.add_typer(memory_app, name="memory")
+
+
+_register_memory_app()
+
 _EXIT_WORDS = {"exit", "quit", ":q", "退出", "结束", "/exit", "/quit"}
 DEFAULT_MODEL = "openai:gpt-4.1"
 
@@ -31,6 +40,12 @@ DEFAULT_MODEL = "openai:gpt-4.1"
 class ReportFormat(StrEnum):
     markdown = "markdown"
     json = "json"
+
+
+class MemoryMode(StrEnum):
+    suggest = "suggest"
+    explicit = "explicit"
+    off = "off"
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +70,10 @@ _opt_max_steps = typer.Option(120, "--max-steps", min=10, help="单轮最多推�
 _opt_verbose = typer.Option(False, "--verbose", "-v", help="保留每一步工具调用与计划变化的完整记录")
 _opt_since = typer.Option(None, "--since", help="只分析该时间之后的日志，如 '2026-06-09 14:00' 或 '14:00'")
 _opt_until = typer.Option(None, "--until", help="只分析到该时间为止（按给出的精度包含整段，'14:05' 含 14:05:59）")
+_opt_memory = typer.Option(
+    MemoryMode.suggest, "--memory",
+    help="长期记忆：suggest 会从对话里提议值得记住的内容并请你确认；explicit 只记你明确要求的；off 关闭",
+)
 
 
 @app.callback()
@@ -265,6 +284,7 @@ def analyze(
     max_steps: int = _opt_max_steps,
     verbose: bool = _opt_verbose,
     skills: list[Path] = _opt_skills,
+    memory: MemoryMode = _opt_memory,
 ) -> None:
     """单次分析日志，结合源码定位根因（一问一答）。"""
     _check_api_key()
@@ -273,23 +293,40 @@ def analyze(
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     skill_sources = _skill_sources(skills)
 
+    import sys
+
     from .agent import build_agent
+    from .memory_cli import after_turn, end_session, open_session, status_row
 
-    reset_cursor_line()
-    rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
-    console.print(info_panel(rows, "log-agent", f"v{__version__}"))
-    with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
-        agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [])
+    mem = open_session(memory.value, code_paths, "analyze-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    # 管道运行或输出到文件时不弹确认，候选留到下次 chat / log-agent memory review 再处理
+    can_ask = sys.stdin.isatty() and sys.stdout.isatty() and output is None and "-" not in log
+    try:
+        reset_cursor_line()
+        rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
+        memory_row = status_row(mem, "analyze")
+        if memory_row:
+            rows.append(memory_row)
+        console.print(info_panel(rows, "log-agent", f"v{__version__}"))
+        with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
+            agent = build_agent(model=model, base_url=base_url, skill_dirs=skills or [], memory=mem)
 
-    payload = {"messages": [{"role": "user", "content": _build_context_message(log_paths, code_paths, question)}]}
-    result = StreamRenderer(verbose=verbose).run(agent, payload, config=_run_config(max_steps))
+        payload = {"messages": [{"role": "user", "content": _build_context_message(log_paths, code_paths, question)}]}
+        result = StreamRenderer(verbose=verbose).run(agent, payload, config=_run_config(max_steps))
 
-    if output:
-        from .export import build_payload, infer_format, write_report
+        if output:
+            from .export import build_payload, infer_format, write_report
 
-        data = build_payload(result, question=question, logs=log_paths, code=code_paths, model=model)
-        saved = write_report(output, data, infer_format(output, fmt.value if fmt else None))
-        console.print(Text.assemble((f"{glyphs.ok} 报告已保存 ", "ok"), (str(saved), "accent")))
+            data = build_payload(result, question=question, logs=log_paths, code=code_paths, model=model)
+            saved = write_report(output, data, infer_format(output, fmt.value if fmt else None))
+            console.print(Text.assemble((f"{glyphs.ok} 报告已保存 ", "ok"), (str(saved), "accent")))
+
+        after_turn(mem, question, ask=False)
+        if can_ask:
+            end_session(mem)
+    finally:
+        if mem is not None:
+            mem.store.close()
 
     if result.interrupted:
         raise typer.Exit(code=130)
@@ -358,6 +395,7 @@ def chat(
     max_steps: int = _opt_max_steps,
     verbose: bool = _opt_verbose,
     skills: list[Path] = _opt_skills,
+    memory: MemoryMode = _opt_memory,
 ) -> None:
     """多轮对话模式：连续追问，会话持久化到本地 SQLite，关掉终端后还能续上。"""
     if "-" in log:
@@ -375,6 +413,7 @@ def chat(
     from .agent import build_agent
     from .chat_input import ChatInput
     from .export import build_payload, write_report
+    from .memory_cli import after_turn, end_session, handle_slash, open_session, status_row
     from .sessions import SessionStore, default_db_path, describe_source_change
 
     auto_session = session is None
@@ -382,6 +421,7 @@ def chat(
     db_path = db.expanduser().resolve() if db else default_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    mem = open_session(memory.value, code_paths, session)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     try:
         store = SessionStore(conn)
@@ -407,12 +447,17 @@ def chat(
         )
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         rows.append(("会话", session_value))
+        memory_row = status_row(mem, "chat")
+        if memory_row:
+            rows.append(memory_row)
         reset_cursor_line()
         console.print(info_panel(rows, "log-agent", f"多轮对话 {glyphs.sep} v{__version__}", footer))
 
         checkpointer = SqliteSaver(conn)
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
-            agent = build_agent(model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=skills or [])
+            agent = build_agent(
+                model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=skills or [], memory=mem,
+            )
 
         def has_history(name: str) -> bool:
             try:
@@ -453,6 +498,8 @@ def chat(
                 command, _, arg = user_input.partition(" ")
                 command = command.lower()
                 first_prompt = True
+                if handle_slash(mem, command, arg):
+                    continue
                 if command == "/help":
                     _print_help()
                 elif command == "/sources":
@@ -461,7 +508,10 @@ def chat(
                 elif command == "/stats":
                     console.print(totals.line())
                 elif command == "/new":
+                    end_session(mem)
                     session = _new_session_name()
+                    if mem is not None:
+                        mem.session = session
                     first_turn = True
                     source_note = ""
                     store.touch(session, log_paths, code_paths, model)
@@ -502,8 +552,12 @@ def chat(
                 last = (user_input, result)
             if result.interrupted:
                 console.print(Text("本轮回答已中断，可以继续追问或换个问题。", style="muted"))
+            after_turn(mem, user_input)
+        end_session(mem)
     finally:
         conn.close()
+        if mem is not None:
+            mem.store.close()
 
     console.print()
     if totals.turns:
@@ -528,6 +582,7 @@ _CONFIG_TEMPLATE = """\
 # max_retries = 3      # 模型请求失败自动重试次数
 # encoding = "gbk"
 # no_redact = false
+# memory = "suggest"   # 长期记忆：suggest 提议并请你确认 / explicit 只记你明确要求的 / off 关闭
 
 # [analyze]            # 只对 analyze 生效
 # verbose = true

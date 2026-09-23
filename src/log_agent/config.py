@@ -38,6 +38,7 @@ _KEYS: dict[str, str | None] = {
     "max_steps": "max_steps",
     "verbose": "verbose",
     "db": "db",
+    "memory": "memory",
     "timeout": None,
     "max_retries": None,
 }

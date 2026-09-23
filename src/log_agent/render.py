@@ -33,6 +33,7 @@ _TOOL_META: dict[str, tuple[str, str]] = {
     "grep_code": ("code", "检索源码"),
     "read_file": ("other", "读取文件"),
     "task": ("other", "委派子任务"),
+    "suggest_memory": ("other", "建议记忆"),
 }
 
 _PHASE_BY_KIND = {"log": "正在查看日志", "code": "正在阅读源码", "other": "正在执行工具"}
@@ -297,6 +298,9 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((arg("subagent_type"), "accent"))
         if arg("description"):
             parts.append((_clip(" ".join(arg("description").split()), 40), "muted"))
+    elif name == "suggest_memory":
+        if arg("text"):
+            parts.append((_clip(" ".join(arg("text").split()), 40), "muted"))
     else:
         for key, value in list(args.items())[:2]:
             if isinstance(value, (str, int, float)) and str(value):
@@ -824,7 +828,7 @@ class StreamRenderer:
                 console.print()
                 console.print(
                     Text(
-                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以���个更具体的问题，"
+                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以换个更具体的问题，"
                         "或用 --max-steps 调大上限。",
                         style="warn",
                     )
