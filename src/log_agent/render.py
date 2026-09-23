@@ -22,6 +22,7 @@ from .term import REFRESH_PER_SECOND, console, glyphs
 
 # 工具名 -> (类别, 友好中文名)。类别决定图标与颜色：日志 / 源码 / 其它
 _TOOL_META: dict[str, tuple[str, str]] = {
+    "log_overview": ("log", "日志概览"),
     "read_log_chunk": ("log", "读取日志"),
     "search_logs": ("log", "搜索日志"),
     "list_code_files": ("code", "浏览源码"),
@@ -193,29 +194,70 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
         value = args.get(key)
         return "" if value in (None, "") else str(value)
 
+    def num(key: str, default: int) -> int:
+        try:
+            return int(args.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+
+    def search_flags() -> str:
+        flags = []
+        if args.get("regex") is False:
+            flags.append("文本")
+        if args.get("ignore_case"):
+            flags.append("忽略大小写")
+        if num("context", 0):
+            flags.append(f"±{num('context', 0)}")
+        if name == "search_logs" and (arg("since") or arg("until")):
+            flags.append(f"{arg('since') or '…'}~{arg('until') or '…'}")
+        if arg("path_glob"):
+            flags.append(_clip(arg("path_glob"), 16))
+        return " ".join(flags)
+
+    def window() -> str:
+        since, until = arg("since"), arg("until")
+        if not since and not until:
+            return ""
+        return f"{since or '…'}~{until or '…'}"
+
     parts: list[tuple[str, str]] = []
-    if name == "read_log_chunk":
+    if name == "log_overview":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
-        start = int(args.get("start_line") or 1)
-        count = int(args.get("num_lines") or 500)
+        if window():
+            parts.append((window(), "accent"))
+    elif name == "read_log_chunk":
+        if arg("path"):
+            parts.append((_path_name(arg("path")), "muted"))
+        start = num("start_line", 1)
+        count = num("num_lines", 200)
         parts.append((f"L{start}-{start + count - 1}", "accent"))
     elif name == "search_logs":
         if arg("path"):
             parts.append((_path_name(arg("path")), "muted"))
         if arg("pattern"):
             parts.append((f'"{_clip(arg("pattern"))}"', "accent"))
+        if search_flags():
+            parts.append((search_flags(), "muted"))
     elif name == "list_code_files":
         if arg("code_dir"):
             parts.append((shorten_path(arg("code_dir"), keep=2), "muted"))
+        if arg("path_glob"):
+            parts.append((_clip(arg("path_glob"), 24), "accent"))
     elif name == "read_code_file":
         if arg("rel_path"):
             parts.append((_clip(arg("rel_path")), "accent"))
+        start = num("start_line", 1)
+        end = num("end_line", 0)
+        if start > 1 or end:
+            parts.append((f"L{start}-{end}" if end else f"L{start}-", "accent"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
     elif name == "grep_code":
         if arg("pattern"):
             parts.append((f'"{_clip(arg("pattern"))}"', "accent"))
+        if search_flags():
+            parts.append((search_flags(), "muted"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
     else:
@@ -225,50 +267,65 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
     return parts
 
 
-def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
-    """把工具的原始输出压缩成一句结果摘要，返回 (摘要, 是否出错)。"""
-    raw = getattr(output, "content", output)
-    text = content_to_text(raw).strip()
-    if getattr(output, "status", "success") == "error":
-        return (text.splitlines()[0] if text else "执行失败"), True
-    if text.startswith("[错误]"):
-        return text.removeprefix("[错误]").strip().splitlines()[0], True
-    if text.startswith("[提示]"):
-        hints = {
-            "search_logs": "无命中",
-            "grep_code": "无命中",
-            "read_log_chunk": "已到文件末尾",
-            "list_code_files": "目录为空",
-        }
-        return hints.get(name, text.removeprefix("[提示]").strip()), False
+_HINT_SUMMARIES = {
+    "no_match": "无命中",
+    "eof": "已到文件末尾",
+    "empty": "内容为空",
+    "empty_window": "时间窗口内无日志",
+}
 
-    lines = text.splitlines()
+
+def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
+    sep = f" {glyphs.sep} "
+    if name == "log_overview":
+        parts = [f"{meta.get('total_lines', 0):,} 行"]
+        if meta.get("window"):
+            parts.append(f"窗口内 {meta.get('window_lines', 0):,} 行")
+        errors = meta.get("errors", 0)
+        parts.append(f"ERROR {errors:,}" if errors else "无 ERROR")
+        return sep.join(parts)
     if name == "read_log_chunk":
-        match = re.search(r"第 (\d+)-(\d+) 行", lines[0] if lines else "")
-        if match:
-            return f"{int(match.group(2)) - int(match.group(1)) + 1} 行", False
-    elif name == "search_logs":
-        hits = sum(1 for line in lines if re.match(r"\d+: ", line))
-        more = "+" if "命中超过" in text else ""
-        return f"命中 {hits}{more} 行", False
-    elif name == "list_code_files":
-        files = sum(1 for line in lines if not line.startswith("..."))
-        more = "+" if "已达上限" in text else ""
-        return f"{files}{more} 个文件", False
-    elif name == "read_code_file":
-        count = max(len(lines) - 1, 0)
-        return (f"{count} 行（已截断）" if "[已截断" in text else f"{count} 行"), False
-    elif name == "grep_code":
-        hit_files = set()
-        hits = 0
-        for line in lines:
-            match = re.match(r"(.+?):(\d+): ", line)
-            if match:
-                hits += 1
-                hit_files.add(match.group(1))
-        more = "+" if "命中超过" in text else ""
-        return f"命中 {hits}{more} 处 {glyphs.sep} {len(hit_files)} 个文件", False
-    return "", False
+        return f"{meta['end'] - meta['start'] + 1} 行"
+    if name == "search_logs":
+        return f"命中 {meta.get('hits', 0)}{'+' if meta.get('truncated') else ''} 行"
+    if name == "list_code_files":
+        shown, total = meta.get("shown", 0), meta.get("total", 0)
+        return f"{shown}/{total} 个文件" if total > shown else f"{shown} 个文件"
+    if name == "read_code_file":
+        start, end, total = meta["start"], meta["end"], meta["total_lines"]
+        return f"{total} 行" if start == 1 and end == total else f"L{start}-{end} / {total} 行"
+    if name == "grep_code":
+        more = "+" if meta.get("truncated") else ""
+        return f"命中 {meta.get('hits', 0)}{more} 处{sep}{meta.get('files', 0)} 个文件"
+    return ""
+
+
+def summarize_tool_output(name: str, output: Any) -> tuple[str, bool]:
+    """把工具输出压缩成一句结果摘要，返回 (摘要, 是否出错)。
+
+    优先读取工具附带的结构化 artifact（见 tools.ToolOutput），不解析给模型看的正文。
+    """
+    text = content_to_text(getattr(output, "content", output)).strip()
+    first_line = text.splitlines()[0] if text else ""
+    if getattr(output, "status", "success") == "error":
+        return first_line or "执行失败", True
+
+    artifact = getattr(output, "artifact", None)
+    if not isinstance(artifact, dict):
+        # 第三方工具或旧版消息没有 artifact，只按前缀判断状态
+        if first_line.startswith("[错误]"):
+            return first_line.removeprefix("[错误]").strip(), True
+        return "", False
+
+    status = artifact.get("status")
+    if status == "error":
+        return str(artifact.get("message") or first_line or "执行失败"), True
+    if status == "hint":
+        return _HINT_SUMMARIES.get(str(artifact.get("kind")), str(artifact.get("message") or "")), False
+    try:
+        return _summarize_meta(name, artifact), False
+    except (KeyError, TypeError):
+        return "", False
 
 
 @dataclass
@@ -451,7 +508,7 @@ class TodoTracker:
 
 
 def split_complete_blocks(text: str) -> tuple[str, str]:
-    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式增量固化）。
+    """把已完整的 Markdown 块与还在生成中的尾部拆开（Claude Code 式���量固化）。
 
     以空行作为块边界，且绝不在未闭合的 ``` / ~~~ 代码围栏内部切分。
     返回 (可固化部分, 剩余未完成部分)。
@@ -502,6 +559,31 @@ class MarkdownTail:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class ToolRecord:
+    name: str
+    args: dict[str, Any]
+    summary: str
+    failed: bool
+    seconds: float
+
+
+@dataclass
+class TurnResult:
+    """一轮执行的结果，供导出报告与会话累计统计使用。"""
+
+    report: str = ""
+    elapsed: float = 0.0
+    usage: dict[str, int] = field(default_factory=lambda: {"input": 0, "output": 0, "total": 0})
+    tools: list[ToolRecord] = field(default_factory=list)
+    interrupted: bool = False
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.interrupted and not self.error
+
+
 class StreamRenderer:
     """一轮 agent 执行的完整渲染。
 
@@ -525,6 +607,8 @@ class StreamRenderer:
         self.rendered_any = False
         self.printed_answer_rule = False
         self.interrupted = False
+        self.answer_parts: list[str] = []
+        self.records: list[ToolRecord] = []
 
     # ---- Live 视图 ---------------------------------------------------------
 
@@ -607,12 +691,24 @@ class StreamRenderer:
             self.printed_answer_rule = True
         console.print()
         console.print(Markdown(text))
+        self.answer_parts.append(text)
         self.rendered_any = True
+
+    def _record(self, run: ToolRun) -> None:
+        error = getattr(run.handle, "error", None)
+        if error:
+            summary, failed = str(error).splitlines()[0], True
+        else:
+            summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
+        self.records.append(
+            ToolRecord(run.name, dict(run.args), summary, failed, round(time.perf_counter() - run.started, 3))
+        )
 
     def _settle_tools(self) -> None:
         still_running = []
         for run in self.running:
             if run.completed:
+                self._record(run)
                 if self.verbose:
                     console.print(settled_tool_line(run))
             else:
@@ -677,9 +773,12 @@ class StreamRenderer:
 
     # ---- 入口 ---------------------------------------------------------------
 
-    def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> bool:
-        """执行一轮并渲染，返回是否被用户中断。"""
+    def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> TurnResult:
+        """执行一轮并渲染，返回本轮结果（报告正文、耗时、用量、工具记录、是否中断）。"""
+        from langgraph.errors import GraphRecursionError
+
         final_state: Any = None
+        error = ""
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*v3 streaming protocol on Pregel is experimental.*")
             live = Live(
@@ -704,8 +803,20 @@ class StreamRenderer:
                 # 已经流出来但还没固化的半个块也保留下来，用户能看到中断前的内容
                 self._flush_answer(self.tail.text)
                 self.tail.text = ""
+            except GraphRecursionError:
+                self._flush_answer(self.tail.text)
+                self.tail.text = ""
+                error = "已达到最大推理步数"
+                console.print()
+                console.print(
+                    Text(
+                        f"{glyphs.fail} {error}，agent 可能在反复搜索。可以换个更具体的问题，"
+                        "或用 --max-steps 调大上限。",
+                        style="warn",
+                    )
+                )
 
-        if not self.interrupted:
+        if not self.interrupted and not error:
             if not self.printed_answer_rule and isinstance(final_state, dict):
                 text = collect_ai_texts(final_state.get("messages", []))
                 if text:
@@ -715,5 +826,16 @@ class StreamRenderer:
             if self.usage["total"] == 0 and isinstance(final_state, dict):
                 self.usage = collect_usage(final_state.get("messages", []))
 
-        print_stats(time.perf_counter() - self.start, self.usage, self.tool_count, self.interrupted)
-        return self.interrupted
+        for run in self.running:
+            if run.completed:
+                self._record(run)
+        elapsed = time.perf_counter() - self.start
+        print_stats(elapsed, self.usage, self.tool_count, self.interrupted or bool(error))
+        return TurnResult(
+            report="\n\n".join(self.answer_parts),
+            elapsed=round(elapsed, 3),
+            usage=dict(self.usage),
+            tools=list(self.records),
+            interrupted=self.interrupted,
+            error=error,
+        )

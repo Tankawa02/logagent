@@ -10,6 +10,7 @@ dependencies = [
     "typer>=0.12.0",
     "rich>=13.7.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
+    "prompt-toolkit>=3.0.43",
 ]
 
 [project.scripts]
@@ -21,3 +22,24 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/log_agent"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+# B008：typer 的参数声明本来就是在默认值里调用 typer.Option(...)
+# E501：中文提示文案按语义断行，不强求行宽
+ignore = ["B008", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
