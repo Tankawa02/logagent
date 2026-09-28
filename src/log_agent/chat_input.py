@@ -18,6 +18,10 @@ SLASH_COMMANDS: dict[str, str] = {
     "/retry": "重新回答上一个问题，可附补充要求，/retry [补充]",
     "/add-log": "给当前会话追加日志文件，/add-log <路径或通配符>",
     "/add-code": "给当前会话追加源码目录，/add-code <目录>",
+    "/remove-log": "移除会话中的日志，/remove-log <完整路径或唯一文件名>（不删除文件）",
+    "/window": "调整时间窗口，/window 14:00~14:30；/window off 取消",
+    "/baseline": "调整正常时段，/baseline 13:00~13:30；/baseline off 取消",
+    "/settings": "查看有效模型、时区、时间范围、基线和预算",
     "/new": "开一个新会话（当前会话已保存，可用 -s 续上）",
     "/sources": "查看当前会话使用的日志与源码",
     "/stats": "查看本次运行的累计用量",
@@ -28,6 +32,25 @@ SLASH_COMMANDS: dict[str, str] = {
 }
 
 
+def make_completer():
+    from prompt_toolkit.completion import Completer, PathCompleter, WordCompleter
+    from prompt_toolkit.document import Document
+
+    class ChatCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            command, separator, arg = text.partition(" ")
+            if separator and command in {"/add-log", "/add-code", "/remove-log", "/save"}:
+                path = arg.lstrip().lstrip('"\'')
+                completer = PathCompleter(expanduser=True, only_directories=command == "/add-code")
+                yield from completer.get_completions(Document(path, len(path)), complete_event)
+            else:
+                completer = WordCompleter(list(SLASH_COMMANDS), meta_dict=SLASH_COMMANDS, sentence=True)
+                yield from completer.get_completions(document, complete_event)
+
+    return ChatCompleter()
+
+
 class ChatInput:
     def __init__(self, history_file: Path) -> None:
         self._session = None
@@ -35,16 +58,10 @@ class ChatInput:
             return
         try:
             from prompt_toolkit import PromptSession
-            from prompt_toolkit.completion import WordCompleter
             from prompt_toolkit.history import FileHistory
 
             history_file.parent.mkdir(parents=True, exist_ok=True)
-            completer = WordCompleter(
-                list(SLASH_COMMANDS),
-                meta_dict=SLASH_COMMANDS,
-                sentence=True,
-                pattern=None,
-            )
+            completer = make_completer()
             self._session = PromptSession(
                 history=FileHistory(str(history_file)),
                 completer=completer,

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_FILE = ".log-agent.toml"
-COMMANDS = ("analyze", "chat", "watch")
+COMMANDS = ("analyze", "chat", "watch", "inspect")
 
 # 配置键 -> 对应的 CLI 参数名；值为 None 的键不走命令行参数，改为写入环境变量
 _KEYS: dict[str, str | None] = {
@@ -34,6 +34,10 @@ _KEYS: dict[str, str | None] = {
     "code": "code",
     "skills": "skills",
     "encoding": "encoding",
+    "since": "since",
+    "until": "until",
+    "baseline": "baseline",
+    "timezone": "timezone",
     "no_redact": "no_redact",
     "max_steps": "max_steps",
     "budget": "budget",
@@ -46,6 +50,8 @@ _KEYS: dict[str, str | None] = {
 # 这些键有对应的环境变量：环境变量已设置时以环境变量为准
 _ENV_OVERRIDES = {
     "model": "LOG_AGENT_MODEL",
+    "timezone": "LOG_AGENT_TIMEZONE",
+    "encoding": "LOG_AGENT_ENCODING",
     "base_url": "OPENAI_BASE_URL",
     "timeout": "LOG_AGENT_TIMEOUT",
     "max_retries": "LOG_AGENT_MAX_RETRIES",

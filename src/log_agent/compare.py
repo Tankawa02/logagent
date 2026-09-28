@@ -5,6 +5,7 @@ from __future__ import annotations
 from .timefilter import TimeWindow, parse_window
 
 _SURGE_RATIO = 2.0
+_MIN_SURGE_COUNT = 5
 _MAX_ROWS = 8
 
 
@@ -39,20 +40,21 @@ def diff_signatures(
     """返回 (新出现, 明显增多, 减少或消失)，各自按影响排序。
 
     "明显增多"按每行日志的出现率比较：两段时间长度 / 流量不同，直接比次数会误判；
-    也不按占全部错误的比例比，否则一类新错误暴增会把其它错误的占比"稀释"掉。出现率翻倍以上才算。
+    也不按占全部错误的比例比，否则一类新错误暴增会把其它错误的占比"稀释"掉。
+    出现率翻倍且目标至少 5 次才算明显增多；减少也按出现率判断。
     """
     base_lines, target_lines = base_lines or 1, target_lines or 1
     new = sorted(((sig, n) for sig, n in target.items() if sig not in base), key=lambda x: -x[1])
     surged, dropped = [], []
     for sig, n in target.items():
-        if sig in base and n > base[sig] and n / target_lines >= _SURGE_RATIO * base[sig] / base_lines:
+        if sig in base and n >= _MIN_SURGE_COUNT and n / target_lines >= _SURGE_RATIO * base[sig] / base_lines:
             surged.append((sig, base[sig], n))
     for sig, n in base.items():
         after = target.get(sig, 0)
-        if after < n:
+        if after / target_lines < n / base_lines:
             dropped.append((sig, n, after))
-    surged.sort(key=lambda x: -(x[2] - x[1]))
-    dropped.sort(key=lambda x: -(x[1] - x[2]))
+    surged.sort(key=lambda x: -(x[2] / target_lines - x[1] / base_lines))
+    dropped.sort(key=lambda x: -(x[1] / base_lines - x[2] / target_lines))
     return new, surged, dropped
 
 
@@ -83,14 +85,20 @@ def render_comparison(name: str, base_desc: str, target_desc: str, base, target,
             out.append(f"  x{n}  首次 L{target.first_seen[sig]}  {redact(sig)}")
     if surged:
         out.append("")
-        out.append("明显增多的错误（按每行出现率，翻倍以上）：")
+        out.append(f"明显增多的错误（按每行出现率，翻倍以上且目标至少 {_MIN_SURGE_COUNT} 次）：")
         for sig, before, after in surged[:_MAX_ROWS]:
-            out.append(f"  {before} → {after}  首次 L{target.first_seen[sig]}  {redact(sig)}")
+            out.append(
+                f"  {before} ({_rate(before, base.window_lines)}) → {after} ({_rate(after, target.window_lines)})"
+                f"  首次 L{target.first_seen[sig]}  {redact(sig)}"
+            )
     if dropped:
         out.append("")
-        out.append("减少或消失的错误：")
+        out.append("减少或消失的错误（按每行出现率）：")
         for sig, before, after in dropped[:_MAX_ROWS]:
-            out.append(f"  {before} → {after}  {redact(sig)}")
+            out.append(
+                f"  {before} ({_rate(before, base.window_lines)}) → {after} ({_rate(after, target.window_lines)})"
+                f"  {redact(sig)}"
+            )
     new_exc = [exc for exc in target.exceptions if exc not in base.exceptions]
     if new_exc:
         out.append("")

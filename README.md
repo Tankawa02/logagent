@@ -7,9 +7,12 @@
 
 - 输入日志文件路径 + 源码目录路径，自动定位问题根因
 - 两种模式：`analyze` 单次分析，`chat` 多轮对话（连续追问，记住上下文）
+- 本地预检查：`inspect` 查看编码、识别覆盖率和窗口样例；`doctor` 检查有效配置和依赖，不调用模型
 - 内置只读工具：日志概览（级别分布 / 高频错误 / 异常类型）、分块读日志、带上下文搜索日志、
   列源码、按行号读源码、grep 源码（装了 `rg` 会自动用 ripgrep 加速）
 - 按请求追踪：给一个 traceId / requestId / 手机号，跨多份日志把同一请求的所有行按时间合并排好，连带堆栈
+- 日志级别支持大小写与 JSON 字段；错误聚类保留 HTTP 状态码、业务错误码，避免把不同原因合并
+- 跨日志时间比较保留 `Z` / `+08:00` 偏移；无偏移时间可通过 `--timezone` 指定时区
 - 配置文件：模型、接口地址、默认源码目录写进 `.log-agent.toml`，命令行只写日志和问题
 - 日志输入：可传多份、支持通配符与 `.gz`、支持管道 `-l -`；自动识别 UTF-8 / GBK / UTF-16 编码
 - 大日志友好：稀疏行索引让跳读 GB 级日志的第 N 行近乎瞬时，超长单行自动截断
@@ -112,6 +115,7 @@ base_url = "https://your-gateway.com/v1"
 code = ["../sms-service"]   # 相对路径以本文件所在目录为准
 timeout = 180               # 单次模型请求超时（秒）
 max_retries = 5
+timezone = "+08:00"         # 无偏移日志和时间边界使用的时区；默认 UTC
 
 [analyze]                   # 只对 analyze 生效
 verbose = true
@@ -122,11 +126,31 @@ verbose = true
 - 查找顺序：用户级 `~/.log-agent/config.toml` → 项目级 `.log-agent.toml`（从当前目录逐级向上找最近的一个，覆盖用户级）；
   也可以用环境变量 `LOG_AGENT_CONFIG` 直接指定文件。
 - 优先级：命令行参数 > 环境变量（`LOG_AGENT_MODEL`、`OPENAI_BASE_URL` 等）> 配置文件 > 内置默认值。
-- 支持的键：`model`、`base_url`、`code`、`encoding`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
+- 支持的键：`model`、`base_url`、`code`、`encoding`、`timezone`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
   以及 chat 专用的 `db`。写错的键会给出提示并忽略。
 - **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。
 
 ## 使用
+
+### 分析前的本地检查
+
+```bash
+# 无需 API Key，不调用模型；支持多文件、通配符、gzip 和管道
+log-agent inspect -l app.log --timezone +08:00 --since 14:00 --until 14:30
+
+# 查看实际配置及来源、检查依赖版本和 API Key 是否已设置
+log-agent doctor
+log-agent doctor --command chat
+log-agent doctor --command inspect
+```
+
+`inspect` 会完整扫描日志，展示文件大小、编码、首末时间、时间戳和级别的识别比例、窗口覆盖行数、
+高频错误和最多 3 条样例。样例默认脱敏；堆栈续行没有独立时间戳或级别属于常见情况，识别比例不等于解析准确率。
+空文件、无法识别时间、窗口没有数据都会给出提示。成功读取退出码为 0，读取失败为 1，参数错误为 2。
+
+`doctor` 展示命令的有效配置，区分内置默认、配置文件和环境变量；网关 URL 仅显示协议和主机，API Key 不显示原文。
+它不连接模型服务，所以“Key 已设置”不表示 Key 有效或网关可访问。检查发现问题退出码为 1，参数或配置解析错误为 2。
+依赖缺失或版本不匹配时，可运行 `uv sync` 按项目锁文件同步。
 
 工具提供两种模式：
 
@@ -148,6 +172,9 @@ log-agent analyze -l app.log -c ./repo -q "为什么 14:00 之后接口大量 50
 # 只看某个时间窗口（堆栈等无时间戳的行跟随上一条日志；'14:05' 包含到 14:05:59）
 log-agent analyze -l app.log -c ./repo --since "2026-06-09 14:00" --until "2026-06-09 14:05"
 log-agent analyze -l app.log --since 14:00
+
+# 日志混用 UTC 和北京时间时：无偏移时间按 +08:00 解释，已有偏移保留
+log-agent analyze -l gateway.log -l order.log --timezone +08:00 --since "2026-09-28T16:00:00+08:00"
 
 # 保留每一步工具调用（含结果摘要、耗时）的完整记录
 log-agent analyze -l app.log -c ./repo --verbose
@@ -186,6 +213,15 @@ log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json
 加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 报告缺少一句话结论、无法判定。
 是否发现问题看报告开头的一句话结论——没有异常时 agent 会写成"未发现异常……"；
 JSON 导出里对应 `finding`（`true` / `false` / `null`）、`confidence` 和 `budget_hit` 字段。
+
+基线对比按错误次数占窗口日志行数的比例判断升降，并同时展示次数与比例；
+“明显增多”要求出现率至少翻倍、目标窗口至少出现 5 次，避免将极少量样本直接判成激增。
+这里的比例是**日志行出现率**，并非请求失败率（堆栈行、日志级别配置也会影响分母）。
+
+JSON 日志优先读取 `level` / `severity` / `levelname` / `severityText` 级别、`message` / `msg` 消息，
+以及 `timestamp` / `@timestamp` / `time` / `ts` 字符串时间戳，字段顺序不影响识别。
+聚类时保留 `status`、`status_code`、`statusCode`、`http_status`、`code`、`error_code`、`errorCode` 字段。
+当前支持单行 JSON 对象（不超过 65,536 个字符）；没有级别字段的 JSON 不从消息正文猜测级别。
 
 ### 追踪模式（watch）
 
@@ -252,7 +288,17 @@ log-agent sessions rm payment-bug
 
 续会话时如果换了日志或源码，agent 会在下一条消息里被告知新路径，不会继续引用旧文件。上次的日志已被删除或移走时会提示你用 `-l` 重新指定。
 
-输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）：
+会话同时保存模型、时间窗口、时区、基线、编码、预算和最大推理步数。恢复时这些设置的优先级是：
+**显式命令行参数 / 环境变量 > 会话中保存的设置 > 配置文件 > 内置默认值**。
+连接地址、凭据和脱敏开关仍使用当前运行配置，不从历史会话恢复。
+启动时展示上次的问题与结果摘要，可立即 `/save`、`/copy` 或 `/retry`。
+
+每轮报告都保存当时的日志/源码列表、分析设置、生成时间和用量。追加或移除日志、调整范围后再 `/save`，
+导出的仍是该回答生成时的快照。`/new` 会清空可复制、保存和重试的上一轮结果，并沿用当前来源与分析设置。
+旧版数据库自动兼容：若没有逐轮快照，会尝试从历史恢复回答，并标注“来源未知”，不补造当时的来源和设置。
+
+输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）；
+`/add-log`、`/add-code`、`/remove-log` 和 `/save` 的路径参数支持 Tab 补全。
 
 | 命令 | 说明 |
 |------|------|
@@ -261,6 +307,10 @@ log-agent sessions rm payment-bug
 | `/retry [补充]` | 重新回答上一个问题，比如回答被中断或答偏了；可以附一句补充，如 `/retry 重点看 14:02 之后` |
 | `/add-log <路径>` | 排查中途给当前会话追加日志（支持通配符），不用退出重开，前面的对话都保留 |
 | `/add-code <目录>` | 追加源码目录，比如问题牵涉到另一个服务 |
+| `/remove-log <路径或唯一文件名>` | 从会话移除日志，不删除文件；至少保留一份日志，同名文件可用完整路径区分 |
+| `/window <起点~终点>` | 调整时间窗口，如 `/window 14:00~14:30`；`/window off` 取消限制 |
+| `/baseline <起点~终点>` | 设置正常时段，如 `/baseline 13:00~13:30`；`/baseline off` 取消 |
+| `/settings` | 查看有效模型、范围、时区、基线、编码、预算、最大步数及脱敏状态 |
 | `/new` | 开一个新会话 |
 | `/sources` | 查看当前日志与源码 |
 | `/stats` | 查看本次运行累计的轮次、耗时、工具次数与 tokens |
@@ -268,6 +318,8 @@ log-agent sessions rm payment-bug
 | `/memory` | 查看记忆；`/memory review` 处理待确认的建议，`/memory edit <编号> <新内容>` 修改 |
 | `/forget <编号…>` | 删除记忆 |
 | `/help` | 显示命令列表 |
+
+范围或来源变更立即保存，并在下一次提问时同步给 agent；不会自动发起新的分析。
 
 ## 参数
 
@@ -281,6 +333,7 @@ log-agent sessions rm payment-bug
 | `--since` / `--until` | | 只分析该时间窗口内的日志，支持 `2026-06-09 14:00`、`2026-06-09T14:00:30`、`2026-06-09`、`14:00`；agent 需要对比时仍可显式查窗口外 |
 | `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
 | `--encoding` | | 强制日志编码，默认自动探测（也可设 `LOG_AGENT_ENCODING`） |
+| `--timezone` | | 无偏移日志及时间边界的时区，默认 `UTC`；支持 `+08:00` 等固定偏移及系统提供的 IANA 名称，也可设 `LOG_AGENT_TIMEZONE` 或配置文件的 `timezone` |
 | `--no-redact` | | 关闭敏感信息脱敏 |
 | `--max-steps` | | 单轮最大推理步数，默认 120 |
 | `--budget` | | 单轮 tokens 上限，如 `200k`、`1.5m`；用到 80% 时自动收尾出报告（也可写进配置文件） |
@@ -292,6 +345,11 @@ log-agent sessions rm payment-bug
 模型接口默认单次请求超时 120 秒、失败自动重试 3 次（连接失败、超时、429、5xx），可用环境变量调整：
 `LOG_AGENT_TIMEOUT=300`、`LOG_AGENT_MAX_RETRIES=5`。重试时状态栏会提示"接口波动，自动重试第 N 次"；
 重试用尽仍失败时给出中文原因（401 / 404 / 超时等），已经输出的部分报告照常保存到 `-o`。
+
+`--timezone` 对 `analyze`、`chat`、`watch` 都生效，优先级为命令行 > 环境变量 > 配置文件 > UTC。
+带完整日期和偏移的时间按实际时刻比较，纯时刻边界（如 `16:00`）按配置时区比较。
+只有时刻、没有日期的日志仍按一天中的时刻排序，不能据此还原跨天先后关系。
+Windows 等环境若没有 IANA 时区数据，可使用 `+08:00` 这样的固定偏移；固定偏移不包含夏令时规则。
 
 ## 长期记忆
 

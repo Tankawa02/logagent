@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -12,14 +13,17 @@ from . import __version__
 from .render import TurnResult
 
 
-def build_payload(result: TurnResult, *, question: str, logs: list[str], code: list[str], model: str) -> dict[str, Any]:
+def build_payload(
+    result: TurnResult, *, question: str, logs: list[str], code: list[str], model: str, settings: dict | None = None,
+) -> dict[str, Any]:
     return {
         "tool": "log-agent",
         "version": __version__,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "question": question,
-        "logs": logs,
-        "code": code,
+        "logs": list(logs),
+        "code": list(code),
+        "settings": deepcopy(settings or {}),
         "model": model,
         "status": "interrupted" if result.interrupted else ("error" if result.error else "ok"),
         "error": result.error or None,
@@ -28,7 +32,7 @@ def build_payload(result: TurnResult, *, question: str, logs: list[str], code: l
         "finding": result.finding,
         "budget_hit": result.budget_hit,
         "elapsed_seconds": result.elapsed,
-        "usage": result.usage,
+        "usage": dict(result.usage),
         "tool_calls": [asdict(t) for t in result.tools],
         "report": result.report,
     }
@@ -40,10 +44,20 @@ def to_markdown(payload: dict[str, Any]) -> str:
         *[f"- 日志：`{p}`" for p in payload["logs"]],
         *[f"- 源码：`{p}`" for p in payload["code"]],
         f"- 模型：`{payload['model']}`",
-        f"- 生成时间：{payload['generated_at']}",
-        f"- 用时 {payload['elapsed_seconds']}s · 工具调用 {len(payload['tool_calls'])} 次"
-        f" · tokens {payload['usage'].get('total', 0):,}",
+        f"- 生成时间：{payload['generated_at'] or '未知'}",
+        ("- 用量：旧版会话未保存逐轮统计" if payload.get("provenance") == "legacy_unknown" else
+         f"- 用时 {payload['elapsed_seconds']}s · 工具调用 {len(payload['tool_calls'])} 次"
+         f" · tokens {payload['usage'].get('total', 0):,}"),
     ]
+    settings = payload.get("settings", {})
+    if settings:
+        meta.extend([
+            f"- 时间范围：{settings.get('since') or '开头'} → {settings.get('until') or '结尾'}",
+            f"- 时区：{settings.get('timezone', 'UTC')}",
+            f"- 基线：{settings.get('baseline') or '未设置'}",
+        ])
+    if payload.get("provenance") == "legacy_unknown":
+        meta.append("- 来源说明：旧版会话未保存逐轮来源和设置，本报告仅恢复原回答，来源无法核实。")
     if payload["status"] != "ok":
         meta.append(f"- 状态：{'已中断' if payload['status'] == 'interrupted' else payload['error']}（报告可能不完整）")
     report = payload["report"].strip() or "_（没有生成报告内容）_"

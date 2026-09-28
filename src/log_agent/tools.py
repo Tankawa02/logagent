@@ -20,9 +20,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
+from .logformat import level_and_body
 from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_log
-from .timefilter import TimeWindow, WindowTracker, default_window, find_timestamp, parse_window
+from .timefilter import (
+    TimeWindow,
+    WindowTracker,
+    default_timezone,
+    default_window,
+    find_timestamp,
+    parse_window,
+    utc_stamp,
+)
 
 Status = Literal["ok", "hint", "error"]
 
@@ -159,8 +168,6 @@ def _human_size(size: int) -> str:
 # 日志工具
 # ---------------------------------------------------------------------------
 
-_LEVEL_RE = re.compile(r"\b(FATAL|CRITICAL|SEVERE|ERROR|ERR|WARNING|WARN|INFO|DEBUG|TRACE)\b")
-_LEVEL_ALIAS = {"CRITICAL": "FATAL", "SEVERE": "FATAL", "ERR": "ERROR", "WARNING": "WARN"}
 _LEVEL_ORDER = ("FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE")
 _EXC_RE = re.compile(r"\b((?:[a-z_][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error))\b")
 _NORMALIZE = [
@@ -170,12 +177,29 @@ _NORMALIZE = [
 ]
 
 
-def _error_signature(line: str, level_end: int) -> str:
+_SEMANTIC_CODE = re.compile(
+    r"\b(?:status(?:_?code)?|http_status|(?:error_?|err_?)?code)\s*[=:]\s*[\w.-]+"
+    r"|\bHTTP(?:/\d(?:\.\d)?)?\s+[1-5]\d{2}\b",
+    re.IGNORECASE,
+)
+
+
+def _error_signature(line: str, level_end: int = 0) -> str:
     """把一条错误日志归一化成"签名"：去掉时间戳、数字、id，同类错误才能聚到一起。"""
     body = line[level_end:].lstrip(" ]:|-\t")
-    for pattern, repl in _NORMALIZE:
-        body = pattern.sub(repl, body)
-    return body[:160].strip()
+
+    def normalize(text: str) -> str:
+        for pattern, repl in _NORMALIZE:
+            text = pattern.sub(repl, text)
+        return text
+
+    parts = []
+    end = 0
+    for match in _SEMANTIC_CODE.finditer(body):
+        parts.extend((normalize(body[end:match.start()]), match.group()))
+        end = match.end()
+    parts.append(normalize(body[end:]))
+    return "".join(parts)[:160].strip()
 
 
 class _OverviewStats:
@@ -192,6 +216,9 @@ class _OverviewStats:
         self.window_last = 0
         self.window_lines = 0
         self.saw_timestamp = False
+        self.timestamp_lines = 0
+        self.level_lines = 0
+        self.samples: list[tuple[int, str]] = []
 
 
 def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
@@ -200,30 +227,34 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
     tracker = WindowTracker(window)
     for lineno, line in log.iter_lines(1):
         stats.total = lineno
-        if len(line) > 4000:
-            line = line[:4000]
+        parsed = level_and_body(line)
+        # 字段读取在截断前完成，JSON 的字段顺序不应影响级别和时间识别。
         found = find_timestamp(line)
         if found:
             stats.saw_timestamp = True
+            stats.timestamp_lines += 1
             if not stats.first_ts:
                 stats.first_ts = found[0]
             stats.last_ts = found[0]
+        if parsed:
+            stats.level_lines += 1
         # 概览要报告全文行数与时间范围，所以越过窗口后也不提前结束
         if window and not tracker.accept(line):
             continue
         stats.window_lines += 1
         stats.window_first = stats.window_first or lineno
         stats.window_last = lineno
-        level_match = _LEVEL_RE.search(line[:200])
-        if level_match:
-            level = _LEVEL_ALIAS.get(level_match.group(1), level_match.group(1))
+        if len(stats.samples) < 3:
+            stats.samples.append((lineno, clip_line(line, 300)))
+        if parsed:
+            level, body = parsed
             stats.levels[level] += 1
             if level in ("FATAL", "ERROR"):
-                sig = _error_signature(line, level_match.end())
+                sig = _error_signature(body[:4000])
                 if sig:
                     stats.signatures[sig] += 1
                     stats.first_seen.setdefault(sig, lineno)
-        for exc in set(_EXC_RE.findall(line)):
+        for exc in set(_EXC_RE.findall(line[:4000])):
             stats.exceptions[exc] += 1
             stats.exc_first.setdefault(exc, lineno)
     return stats
@@ -248,7 +279,7 @@ def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
         return error
 
     # 输出里的错误样例经过脱敏，所以脱敏开关也是缓存键的一部分
-    key = ("overview", window, redact_enabled())
+    key = ("overview", window, default_timezone(), redact_enabled())
     with log.scan_lock:
         cached = log.scan_cache.get(key)
         if cached is not None:
@@ -597,7 +628,10 @@ def _trace_sort_key(entries: list[_TraceEntry]) -> Callable[[_TraceEntry], tuple
         stamp = entry.stamp
         if stamp is None:
             return (0, 0, entry.file_index, entry.lineno)
-        value = stamp.time() if time_only and isinstance(stamp, datetime) else stamp
+        if isinstance(stamp, datetime):
+            value = utc_stamp(stamp).astimezone(default_timezone()).time() if time_only else utc_stamp(stamp)
+        else:
+            value = stamp
         return (1, value, entry.file_index, entry.lineno)
 
     return key

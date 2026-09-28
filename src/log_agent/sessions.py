@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS log_agent_sessions (
@@ -42,6 +43,7 @@ class SessionInfo:
     total_tokens: int
     created_at: str
     updated_at: str
+    settings: dict[str, Any] = field(default_factory=dict)
 
 
 def _now() -> str:
@@ -53,6 +55,15 @@ class SessionStore:
         self.conn = conn
         with self.conn:
             self.conn.execute(_SCHEMA)
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS log_agent_session_settings "
+                "(name TEXT PRIMARY KEY, settings TEXT NOT NULL)"
+            )
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS log_agent_turns "
+                "(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL)"
+            )
+            self.conn.execute("CREATE INDEX IF NOT EXISTS log_agent_turns_name ON log_agent_turns(name, id)")
 
     def get(self, name: str) -> SessionInfo | None:
         row = self.conn.execute(
@@ -60,20 +71,26 @@ class SessionStore:
             "FROM log_agent_sessions WHERE name = ?",
             (name,),
         ).fetchone()
-        return self._row(row) if row else None
+        return self._with_settings(self._row(row)) if row else None
 
     def list(self) -> list[SessionInfo]:
         rows = self.conn.execute(
             "SELECT name, logs, code, model, title, turns, total_tokens, created_at, updated_at "
             "FROM log_agent_sessions ORDER BY updated_at DESC"
         ).fetchall()
-        return [self._row(r) for r in rows]
+        return [self._with_settings(self._row(r)) for r in rows]
+
+    def _with_settings(self, info: SessionInfo) -> SessionInfo:
+        row = self.conn.execute("SELECT settings FROM log_agent_session_settings WHERE name = ?", (info.name,)).fetchone()
+        if row:
+            info.settings = json.loads(row[0])
+        return info
 
     def latest(self) -> SessionInfo | None:
         sessions = self.list()
         return sessions[0] if sessions else None
 
-    def touch(self, name: str, logs: list[str], code: list[str], model: str) -> None:
+    def touch(self, name: str, logs: list[str], code: list[str], model: str, settings: dict | None = None) -> None:
         """登记会话（首次）或更新它当前使用的日志/源码/模型。"""
         now = _now()
         with self.conn:
@@ -84,19 +101,38 @@ class SessionStore:
                 "model = excluded.model, updated_at = excluded.updated_at",
                 (name, json.dumps(logs, ensure_ascii=False), json.dumps(code, ensure_ascii=False), model, now, now),
             )
+            if settings is not None:
+                self.conn.execute(
+                    "INSERT INTO log_agent_session_settings (name, settings) VALUES (?, ?) "
+                    "ON CONFLICT(name) DO UPDATE SET settings = excluded.settings",
+                    (name, json.dumps(settings, ensure_ascii=False)),
+                )
 
-    def record_turn(self, name: str, question: str, tokens: int) -> None:
+    def record_turn(self, name: str, question: str, tokens: int, payload: dict | None = None) -> None:
         with self.conn:
             self.conn.execute(
                 "UPDATE log_agent_sessions SET turns = turns + 1, total_tokens = total_tokens + ?, "
                 "title = CASE WHEN title = '' THEN ? ELSE title END, updated_at = ? WHERE name = ?",
                 (tokens, question[:80], _now(), name),
             )
+            if payload is not None:
+                self.conn.execute(
+                    "INSERT INTO log_agent_turns (name, payload) VALUES (?, ?)",
+                    (name, json.dumps(payload, ensure_ascii=False)),
+                )
+
+    def last_turn(self, name: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT payload FROM log_agent_turns WHERE name = ? ORDER BY id DESC LIMIT 1", (name,),
+        ).fetchone()
+        return json.loads(row[0]) if row else None
 
     def delete(self, name: str) -> bool:
         with self.conn:
             cur = self.conn.execute("DELETE FROM log_agent_sessions WHERE name = ?", (name,))
             deleted = cur.rowcount > 0
+            for table in ("log_agent_session_settings", "log_agent_turns"):
+                self.conn.execute(f"DELETE FROM {table} WHERE name = ?", (name,))
             # 同时清掉 langgraph 存的对话内容；表不存在（从未对话过）时忽略
             for table in ("checkpoints", "writes"):
                 try:

@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .logfile import clip_line, open_log
+from .logformat import level_and_body
 from .redact import redact_log
-from .tools import _LEVEL_ALIAS, _LEVEL_RE
 
 POLL_INTERVAL = 1.0
 _MAX_READ = 8 * 1024 * 1024
@@ -94,8 +94,8 @@ def build_matcher(pattern: str | None) -> Callable[[str], bool]:
         return lambda line: compiled.search(line) is not None
 
     def is_error(line: str) -> bool:
-        match = _LEVEL_RE.search(line[:200])
-        return bool(match) and _LEVEL_ALIAS.get(match.group(1), match.group(1)) in ("ERROR", "FATAL")
+        parsed = level_and_body(line)
+        return parsed is not None and parsed[0] in ("ERROR", "FATAL")
 
     return is_error
 

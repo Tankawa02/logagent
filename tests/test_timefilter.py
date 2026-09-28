@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,7 @@ from log_agent.timefilter import (
     ("line", "expected"),
     [
         ("2026-06-09 14:02:03,123 ERROR x", datetime(2026, 6, 9, 14, 2, 3, 123000)),
-        ("2026-06-09T14:02:03.5Z INFO", datetime(2026, 6, 9, 14, 2, 3, 500000)),
+        ("2026-06-09T14:02:03.5Z INFO", datetime(2026, 6, 9, 14, 2, 3, 500000, tzinfo=UTC)),
         ("[2026/06/09 14:02:03] WARN", datetime(2026, 6, 9, 14, 2, 3)),
         ("Jun  9 14:02:03 host sshd[1]: ok", time(14, 2, 3)),
         ("  at com.foo.Bar.run(Bar.java:10)", None),

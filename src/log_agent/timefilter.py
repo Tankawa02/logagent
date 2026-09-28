@@ -4,19 +4,24 @@
 - 完整日期时间：`2026-06-09 14:02:03,123`、`2026-06-09T14:02:03.123Z`、`2026/06/09 14:02:03`
 - 只有时间：syslog 的 `Jun  9 14:02:03`、部分 logging 格式的 `14:02:03.123`
 
-用户给的边界也可能只有时间（`14:00`）。任一侧只有时间时，按"一天中的时刻"比较。
+用户给的边界也可能只有时间（`14:00`）。任一侧只有时间时，按配置时区的"一天中的时刻"比较。
+完整日期保留时区偏移，无偏移时间按配置时区解释，比较时统一转成 UTC。
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from .logformat import json_record
 
 Stamp = datetime | time
 
 TS_RE = re.compile(
     r"(?P<date>\d{4}[-/]\d{2}[-/]\d{2})[ T](?P<time>\d{2}:\d{2}:\d{2})(?:[.,](?P<frac>\d{1,9}))?"
+    r"(?P<zone>Z|[+-]\d{2}:?\d{2})?"
     r"|\b(?P<tonly>\d{2}:\d{2}:\d{2})(?:[.,](?P<tfrac>\d{1,9}))?\b"
 )
 
@@ -40,6 +45,39 @@ _TIME_FORMATS: list[tuple[str, timedelta]] = [
 
 BOUND_EXAMPLES = "2026-06-09 14:00、2026-06-09T14:00:30、2026-06-09 或 14:00"
 
+_default_timezone: tzinfo = UTC
+
+
+def parse_timezone(value: str) -> tzinfo:
+    if value.upper() in {"UTC", "Z"}:
+        return UTC
+    match = re.fullmatch(r"([+-])(\d{2}):?(\d{2})", value)
+    if match:
+        hours, minutes = int(match[2]), int(match[3])
+        if hours < 24 and minutes < 60:
+            offset = timedelta(hours=hours, minutes=minutes)
+            return timezone(offset if match[1] == "+" else -offset)
+    else:
+        try:
+            return ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    raise ValueError(f"无法识别的时区 '{value}'，请使用 UTC、+08:00 或系统支持的 IANA 时区名称")
+
+
+def set_default_timezone(value: str = "UTC") -> None:
+    global _default_timezone
+    _default_timezone = parse_timezone(value)
+
+
+def default_timezone() -> tzinfo:
+    return _default_timezone
+
+
+def utc_stamp(value: datetime) -> datetime:
+    """无偏移时间按配置解释；比较和排序始终使用 UTC。"""
+    return (value if value.tzinfo is not None else value.replace(tzinfo=_default_timezone)).astimezone(UTC)
+
 
 def _micro(frac: str | None) -> int:
     return int((frac or "0")[:6].ljust(6, "0"))
@@ -47,14 +85,20 @@ def _micro(frac: str | None) -> int:
 
 def find_timestamp(line: str) -> tuple[str, Stamp] | None:
     """在行首附近找时间戳，返回 (原文, 解析值)；找不到或数值非法返回 None。"""
-    match = TS_RE.search(line[:_SCAN_CHARS])
+    record = json_record(line)
+    if record is not None:
+        source = next((record[k] for k in ("timestamp", "@timestamp", "time", "ts") if isinstance(record.get(k), str)), "")
+    else:
+        source = line[:_SCAN_CHARS]
+    match = TS_RE.search(source)
     if not match:
         return None
     try:
         if match.group("date"):
             day = date.fromisoformat(match.group("date").replace("/", "-"))
             clock = time.fromisoformat(match.group("time")).replace(microsecond=_micro(match.group("frac")))
-            return match.group(0), datetime.combine(day, clock)
+            zone = parse_timezone(match.group("zone")) if match.group("zone") else None
+            return match.group(0), datetime.combine(day, clock, tzinfo=zone)
         clock = time.fromisoformat(match.group("tonly")).replace(microsecond=_micro(match.group("tfrac")))
         return match.group(0), clock
     except ValueError:
@@ -78,13 +122,21 @@ def parse_bound(text: str, *, upper: bool) -> Bound:
         ValueError: 无法识别的格式。
     """
     raw = text.strip()
-    normalized = raw.replace("/", "-").replace("T", " ").rstrip("Z")
+    normalized = raw.replace("/", "-").replace("T", " ")
+    zone = None
+    suffix = re.search(r"(Z|[+-]\d{2}:?\d{2})$", normalized)
+    if suffix:
+        zone = parse_timezone(suffix[1])
+        normalized = normalized[:suffix.start()]
     for fmt, precision in _DATETIME_FORMATS:
         try:
             value = datetime.strptime(normalized, fmt)
         except ValueError:
             continue
+        value = value.replace(tzinfo=zone)
         return Bound(raw, value + precision - timedelta(microseconds=1) if upper else value)
+    if zone is not None:
+        raise ValueError(f"带时区的时间边界需要完整日期：{raw}")
     for fmt, precision in _TIME_FORMATS:
         try:
             clock = datetime.strptime(normalized, fmt).time()
@@ -99,7 +151,9 @@ def parse_bound(text: str, *, upper: bool) -> Bound:
 
 
 def _as_time(value: Stamp) -> time:
-    return value.time() if isinstance(value, datetime) else value
+    if isinstance(value, datetime):
+        return value.astimezone(_default_timezone).time() if value.tzinfo is not None else value.time()
+    return value
 
 
 @dataclass(frozen=True)
@@ -118,7 +172,7 @@ class TimeWindow:
         if bound.time_only or isinstance(stamp, time):
             left, right = _as_time(stamp), _as_time(bound.value)
         else:
-            left, right = stamp, bound.value  # type: ignore[assignment]
+            left, right = utc_stamp(stamp), utc_stamp(bound.value)  # type: ignore[arg-type,assignment]
         return (left > right) - (left < right)
 
     def contains(self, stamp: Stamp) -> bool:
@@ -130,7 +184,7 @@ class TimeWindow:
         """是否已明显越过上界，可以提前结束扫描（只在双方都有完整日期时判断）。"""
         if not self.until or self.until.time_only or not isinstance(stamp, datetime):
             return False
-        return stamp > self.until.value + _OUT_OF_ORDER_TOLERANCE  # type: ignore[operator]
+        return utc_stamp(stamp) > utc_stamp(self.until.value) + _OUT_OF_ORDER_TOLERANCE  # type: ignore[arg-type]
 
 
 def parse_window(since: str | None, until: str | None) -> TimeWindow:
@@ -141,7 +195,7 @@ def parse_window(since: str | None, until: str | None) -> TimeWindow:
     """
     lower = parse_bound(since, upper=False) if since and since.strip() else None
     upper = parse_bound(until, upper=True) if until and until.strip() else None
-    if lower and upper and lower.time_only == upper.time_only and lower.value > upper.value:  # type: ignore[operator]
+    if lower and upper and lower.time_only == upper.time_only and TimeWindow._compare(lower.value, upper) > 0:
         raise ValueError(f"起始时间 {lower.raw} 晚于结束时间 {upper.raw}")
     return TimeWindow(lower, upper)
 

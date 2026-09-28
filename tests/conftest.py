@@ -20,12 +20,15 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     for name in ("LOG_AGENT_CONFIG", "LOG_AGENT_MODEL", "OPENAI_BASE_URL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("LOG_AGENT_TIMEZONE", raising=False)
+    timefilter.set_default_timezone()
     config.set_loaded(config.LoadedConfig())
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)
     timefilter.reset_default_window()
     tools._file_list_cache.clear()
     yield
+    timefilter.set_default_timezone()
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)
     timefilter.reset_default_window()
