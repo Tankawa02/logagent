@@ -11,6 +11,7 @@ from langchain.agents.middleware import AgentMiddleware
 
 from .budget import BudgetMiddleware, TokenBudget
 from .memory import MemoryPromptMiddleware, MemorySession, build_suggest_tool
+from .report import REPORT_INSTRUCTIONS
 from .skills import build_skills, resolve_skill_sources
 from .tools import as_langchain_tools
 
@@ -185,7 +186,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 
 可信度按证据链判断：日志现象、代码分支、触发条件三者都对上为"高"，缺一环为"中"，主要靠推测为"低"。
 查完确实没有发现异常（没有 ERROR / 异常，或只有已知无害的告警）时，结论固定以"未发现异常"开头，
-例如"一句话结论：未发现异常，14:00 后只有 3 条重试成功的 WARN（可信度：高）"——定时巡检和 CI 靠这四个字判断结果。
+例如"一句话结论：未发现异常，14:00 后只有 3 条重试成功的 WARN（可信度：高）"。自动化通过结构化附录中的 assessment 判断结果。
 这一行在用户要求调整报告格式时也保留；只是简短回答一个追问、不输出完整报告时可以省略。
 然后用 2-3 句话直接回答用户的问题（发生了什么、根本原因是什么）。
 
@@ -213,6 +214,8 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 注意：所有工具都是只读的，你不能修改任何文件。如果证据不足，要诚实说明不确定性，不要编造。
 """
 
+
+SYSTEM_PROMPT += REPORT_INSTRUCTIONS
 
 _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由主代理委派一个具体的子问题。
 你的输出会交给主代理撰写最终报告，用户看不到你的中间过程。

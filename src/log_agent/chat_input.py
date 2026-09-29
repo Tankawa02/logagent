@@ -12,8 +12,12 @@ from pathlib import Path
 from .term import console, glyphs
 
 SLASH_COMMANDS: dict[str, str] = {
+    "/history": "列出当前会话历史，/history [关键词] 搜索问题和回答",
+    "/show": "查看指定轮次的完整报告，/show 3",
     "/help": "显示可用命令",
-    "/save": "保存上一条回答，/save [路径]，默认 ./log-agent-report-时间.md",
+    "/save": "保存报告，/save [--turn 轮次] [路径]，默认上一轮",
+    "/save-brief": "保存上一轮速览，/save-brief [--turn 轮次] [路径]",
+    "/save-ticket": "保存上一轮工单，/save-ticket [--turn 轮次] [路径]",
     "/copy": "把上一条回答复制到剪贴板（Markdown 原文）",
     "/retry": "重新回答上一个问题，可附补充要求，/retry [补充]",
     "/add-log": "给当前会话追加日志文件，/add-log <路径或通配符>",
@@ -40,7 +44,14 @@ def make_completer():
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
             command, separator, arg = text.partition(" ")
-            if separator and command in {"/add-log", "/add-code", "/remove-log", "/save"}:
+            if separator and command in {"/add-log", "/add-code", "/remove-log", "/save", "/save-brief", "/save-ticket"}:
+                if command.startswith("/save") and arg.lstrip().startswith("--turn"):
+                    import re
+
+                    selection = re.match(r"\s*--turn\s+[1-9][0-9]*\s+(.*)", arg)
+                    if not selection:
+                        return
+                    arg = selection[1]
                 path = arg.lstrip().lstrip('"\'')
                 completer = PathCompleter(expanduser=True, only_directories=command == "/add-code")
                 yield from completer.get_completions(Document(path, len(path)), complete_event)

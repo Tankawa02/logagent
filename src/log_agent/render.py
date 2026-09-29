@@ -23,6 +23,7 @@ from rich.text import Text
 
 from .citations import CitationLinker, LinkedMarkdown
 from .netguard import describe_api_error, retry_watch
+from .report import extract_analysis, visible_report
 from .subtrace import SubagentTracker, SubCall
 from .term import REFRESH_PER_SECOND, console, glyphs
 
@@ -618,7 +619,7 @@ class MarkdownTail:
         self._cache_lines: list[list[Segment]] = []
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        text = self.text
+        text = visible_report(self.text)
         width = options.max_width
         if (text, width) != self._cache_key:
             lines = console.render_lines(Markdown(text), options.update(height=None), pad=False)
@@ -642,7 +643,6 @@ _SUMMARY_LINE = re.compile(
     r"(?:[（(]\s*可信度\s*[:：]?\s*(?P<level>高|中|低)\s*[)）])?\s*\**\s*$"
 )
 _CONFIDENCE_STYLE = {"高": "ok", "中": "warn", "低": "err"}
-NO_FINDING_PREFIX = "未发现异常"
 
 
 def parse_summary_line(line: str) -> tuple[str, str] | None:
@@ -689,12 +689,21 @@ class TurnResult:
     confidence: str = ""
     budget_hit: bool = False
 
+    analysis: dict | None = field(default=None, init=False)
+    structured_status: str = field(default="missing", init=False)
+
+    def __post_init__(self):
+        self.report, self.analysis, self.structured_status = extract_analysis(self.report)
+        if self.analysis:
+            self.summary = self.analysis["conclusion"]
+            self.confidence = {"high": "高", "medium": "中", "low": "低"}[self.analysis["confidence"]]
+
     @property
     def finding(self) -> bool | None:
-        """是否发现了问题；没有一句话结论时无法判定，返回 None。"""
-        if not self.summary:
+        """Only validated explicit assessments can drive automation."""
+        if not self.ok or not self.analysis:
             return None
-        return not self.summary.startswith(NO_FINDING_PREFIX)
+        return {"finding": True, "clear": False, "unknown": None}[self.analysis["assessment"]]
 
     @property
     def ok(self) -> bool:
@@ -844,7 +853,7 @@ class StreamRenderer:
             console.print()
             console.print(Rule(Text("分析结果", style="accent.strong"), style="muted", characters=glyphs.rule))
             self.printed_answer_rule = True
-        for part in self._split_summary(text):
+        for part in self._split_summary(visible_report(text)):
             console.print()
             console.print(part if isinstance(part, Text) else self._markdown(part))
         self.answer_parts.append(text)
@@ -1074,7 +1083,7 @@ class StreamRenderer:
                 style="warn",
             ))
         print_stats(elapsed, usage, self._total_tools(), self.interrupted or bool(error))
-        return TurnResult(
+        result = TurnResult(
             report="\n\n".join(self.answer_parts),
             elapsed=round(elapsed, 3),
             usage=usage,
@@ -1085,3 +1094,6 @@ class StreamRenderer:
             confidence=self.summary[1] if self.summary else "",
             budget_hit=budget_hit,
         )
+        if result.structured_status != "valid":
+            console.print(Text("未获取到有效结构化报告，保留原始回答；自动化异常判定为未知。", style="warn"))
+        return result
