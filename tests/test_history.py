@@ -136,3 +136,12 @@ def test_search_field_conversion_matches_history(field, value):
                    str(value).casefold(), "not-present"]
         for query in queries:
             assert bool(store.search(query)) == bool(store.history("session", query)), (field, value, query)
+
+
+def test_sqlite_compatibility_runtime():
+    """The old-SQLite CI job must use the requested library, not the host default."""
+    import os
+
+    expected = os.environ.get("LOG_AGENT_TEST_SQLITE_VERSION")
+    if expected:
+        assert sqlite3.sqlite_version == expected
