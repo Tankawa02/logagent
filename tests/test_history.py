@@ -68,3 +68,44 @@ def test_bad_turn_selection(arg):
 def test_paths_with_spaces_and_backslashes():
     assert parse_turn_selection('--turn 3 "C:\\logs\\old report.json"') == (3, 'C:\\logs\\old report.json')
     assert parse_turn_selection('old report.md') == (None, 'old report.md')
+
+
+def test_session_search_matches_unicode_without_decoding_reports(monkeypatch):
+    from log_agent import sessions
+
+    with sqlite3.connect(":memory:") as conn:
+        store = SessionStore(conn)
+        store.touch("matching", [], [], "m")
+        store.record_turn("matching", "q", 0, {"report": "Straße 超时 100%_done", "summary": None})
+        store.record_turn("matching", "q", 0, {"report": "STRASSE"})
+        store.touch("other", [], [], "m")
+        store.record_turn("other", "q", 0, {"report": "ordinary", "settings": {"value": "hidden"}})
+        original = json.loads
+
+        def guarded(raw, *args, **kwargs):
+            assert '"report"' not in raw, "search must not decode report payloads"
+            return original(raw, *args, **kwargs)
+
+        monkeypatch.setattr(sessions.json, "loads", guarded)
+        for query in ("STRASSE", "超时", "100%_done"):
+            assert [s.name for s in store.search(query)] == ["matching"]
+        assert not store.search("hidden")
+        assert not store.search("' OR 1=1 --")
+        assert len(store.search("")) == 2
+        assert [s.name for s in store.search("OTHER")] == ["other"]
+
+
+@pytest.mark.parametrize("number", ["²", "①", "١", "１", "01", "+1", "0", "-1", "1.0",
+                                     str(2**63), "9" * 5000])
+def test_show_and_save_reject_same_invalid_numbers(number, tmp_path, sample_log, monkeypatch):
+    from log_agent.chat_state import parse_turn_number
+
+    with pytest.raises(ValueError):
+        parse_turn_number(number)
+    with pytest.raises(ValueError):
+        parse_turn_selection(f"--turn {number}")
+    _patch(monkeypatch, [])
+    result = run_chat(tmp_path, f"/show {number}\n/history\nexit\n", "-l", str(sample_log))
+    assert result.exit_code == 0, result.output
+    assert "用法：/show" in result.output
+    assert "没有匹配的历史报告" in result.output

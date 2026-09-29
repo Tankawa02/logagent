@@ -63,6 +63,18 @@ def remove_log(paths: list[str], value: str) -> list[str]:
     return [p for p in paths if p != matches[0]]
 
 
+def parse_turn_number(raw: str) -> int:
+    """Accept positive ASCII decimals representable by SQLite's INTEGER binding."""
+    import re
+
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", raw):
+        raise ValueError("轮次必须是正整数")
+    number = int(raw)
+    if number > 2**63 - 1:
+        raise ValueError("轮次超出支持范围")
+    return number
+
+
 def parse_turn_selection(arg: str) -> tuple[int | None, str]:
     """Optional leading --turn N; preserve spaces and Windows backslashes in paths."""
     import re
@@ -73,4 +85,8 @@ def parse_turn_selection(arg: str) -> tuple[int | None, str]:
     match = re.fullmatch(r"--turn\s+([1-9][0-9]*)(?:\s+(.*))?", raw)
     if not match:
         raise ValueError("用法：/save [--turn 正整数] [路径]，例如 /save --turn 3 report.md")
-    return int(match[1]), (match[2] or "").strip().strip('"').strip("'")
+    try:
+        number = parse_turn_number(match[1])
+    except ValueError as exc:
+        raise ValueError("用法：/save [--turn 正整数] [路径]，轮次超出支持范围") from exc
+    return number, (match[2] or "").strip().strip('"').strip("'")

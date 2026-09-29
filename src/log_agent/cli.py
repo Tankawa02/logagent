@@ -777,10 +777,14 @@ def chat(
                     console.print(table if entries else Text("没有匹配的历史报告。", style="muted"))
                     console.print(Text("轮次按原会话编号；旧版未保存的轮次无法查看。/show N 查看，/save --turn N 导出。", style="muted"))
                 elif command == "/show":
-                    if not arg.strip().isdigit() or int(arg.strip()) < 1:
+                    from .chat_state import parse_turn_number
+
+                    try:
+                        number = parse_turn_number(arg.strip())
+                    except ValueError:
                         console.print(Text("用法：/show <正整数轮次>", style="warn"))
                         continue
-                    entry = store.turn(session, int(arg.strip()))
+                    entry = store.turn(session, number)
                     if entry is None:
                         console.print(Text("该轮次不存在或未保存报告。输入 /history 查看可用轮次。", style="warn"))
                         continue
