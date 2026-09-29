@@ -53,6 +53,7 @@ def _now() -> str:
 class SessionStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.conn.create_function("unicode_casefold", 1, str.casefold, deterministic=True)
         with self.conn:
             self.conn.execute(_SCHEMA)
             self.conn.execute(
@@ -151,9 +152,17 @@ class SessionStore:
 
     def search(self, keyword: str) -> list[SessionInfo]:
         needle = keyword.casefold()
+        # SQLite lower()/LIKE only fold ASCII. Keep Python's Unicode casefold semantics,
+        # but extract and match inside SQLite and return names, never report payloads.
+        matched = {row[0] for row in self.conn.execute(
+            "SELECT DISTINCT name FROM log_agent_turns WHERE instr(unicode_casefold("
+            "coalesce(json_extract(payload, '$.question'), '') || ' ' || "
+            "coalesce(json_extract(payload, '$.summary'), '') || ' ' || "
+            "coalesce(json_extract(payload, '$.report'), '')), ?) > 0", (needle,),
+        )}
         return [item for item in self.list()
                 if needle in " ".join([item.name, item.title, *item.logs]).casefold()
-                or self.history(item.name, keyword)]
+                or item.name in matched]
 
     def last_turn(self, name: str) -> dict | None:
         row = self.conn.execute(
