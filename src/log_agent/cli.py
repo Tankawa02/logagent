@@ -14,6 +14,7 @@ from rich.text import Text
 
 from . import __version__
 from .render import StreamRenderer, TurnResult, format_duration, info_panel
+from .report import ReportView
 from .term import IS_WINDOWS, console, glyphs, reset_cursor_line
 
 app = typer.Typer(
@@ -338,9 +339,9 @@ def _extra_rows(rows: list, budget, baseline) -> None:
 
 
 def _finding_exit_code(result, fail_on: FailOn) -> int:
-    """--fail-on：发现问题且可信度达到门槛时返回 3；报告里没有一句话结论、无法判定时返回 4。"""
+    """--fail-on：发现问题且可信度达到门槛时返回 3；缺少有效结构化判定时返回 4。"""
     if result.finding is None:
-        console.print(Text(f"{glyphs.notice} 报告里没有一句话结论，无法判定是否发现问题（退出码 4）。", style="warn"))
+        console.print(Text(f"{glyphs.notice} 报告缺少有效结构化判定或状态为 unknown，无法判定是否发现问题（退出码 4）。", style="warn"))
         return EXIT_UNDECIDED
     if not result.finding:
         return 0
@@ -371,6 +372,7 @@ def analyze(
     ),
     output: Path = typer.Option(None, "--output", "-o", help="把报告保存到文件（.md 或 .json）"),
     fmt: ReportFormat = typer.Option(None, "--format", "-f", help="报告格式；默认按 -o 的扩展名推断"),
+    view: ReportView = typer.Option(ReportView.detailed, "--view", help="导出用途：brief 速览 / detailed 详细分析 / ticket 工单"),
     model: str = _opt_model,
     base_url: str = _opt_base_url,
     since: str = _opt_since,
@@ -437,7 +439,7 @@ def analyze(
                 settings={"since": since, "until": until, "timezone": timezone, "baseline": baseline,
                           "encoding": encoding, "budget": budget, "max_steps": max_steps, "no_redact": no_redact},
             )
-            saved = write_report(output, data, infer_format(output, fmt.value if fmt else None))
+            saved = write_report(output, data, infer_format(output, fmt.value if fmt else None), view.value)
             console.print(Text.assemble((f"{glyphs.ok} 报告已保存 ", "ok"), (str(saved), "accent")))
 
         after_turn(mem, question, ask=False)
@@ -764,6 +766,29 @@ def chat(
                     continue
                 if command == "/help":
                     _print_help()
+                elif command == "/history":
+                    entries = store.history(session, arg.strip())
+                    table = Table("轮次", "时间", "状态 / 异常判定", "问题", "结论", box=glyphs.box)
+                    for number, entry in entries:
+                        assessment = (entry.get("analysis") or {}).get("assessment", "unknown")
+                        table.add_row(str(number), Text(entry.get("generated_at") or "未知"),
+                                      Text(f"{entry.get('status', '未知')} / {assessment}"),
+                                      Text(entry.get("question", "")), Text(entry.get("summary") or "未保存结论"))
+                    console.print(table if entries else Text("没有匹配的历史报告。", style="muted"))
+                    console.print(Text("轮次按原会话编号；旧版未保存的轮次无法查看。/show N 查看，/save --turn N 导出。", style="muted"))
+                elif command == "/show":
+                    if not arg.strip().isdigit() or int(arg.strip()) < 1:
+                        console.print(Text("用法：/show <正整数轮次>", style="warn"))
+                        continue
+                    entry = store.turn(session, int(arg.strip()))
+                    if entry is None:
+                        console.print(Text("该轮次不存在或未保存报告。输入 /history 查看可用轮次。", style="warn"))
+                        continue
+                    from rich.markdown import Markdown
+
+                    from .export import to_markdown
+
+                    console.print(Markdown(to_markdown(entry)))
                 elif command == "/settings":
                     rows = [(key, str(value) if value is not None else "未设置") for key, value in settings.items()]
                     rows.extend([("model", model), ("脱敏", "关闭" if no_redact else "开启")])
@@ -862,16 +887,25 @@ def chat(
                     source_note = ""
                     store.touch(session, log_paths, code_paths, model, settings)
                     console.print(Text.assemble((f"{glyphs.ok} 已切换到新会话 ", "ok"), (session, "accent")))
-                elif command == "/save":
-                    if last is None or not last.get("report"):
-                        console.print(Text("还没有可以保存的回答。", style="muted"))
+                elif command in {"/save", "/save-brief", "/save-ticket"}:
+                    from .chat_state import parse_turn_selection
+
+                    try:
+                        number, path_arg = parse_turn_selection(arg)
+                    except ValueError as exc:
+                        console.print(Text(str(exc), style="warn"))
                         continue
-                    default_name = f"log-agent-report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
-                    target = Path(arg.strip().strip('"')) if arg.strip() else Path.cwd() / default_name
-                    data = last
+                    data = store.turn(session, number) if number is not None else last
+                    if data is None:
+                        console.print(Text("该轮次不存在或未保存报告。" if number is not None else "还没有可以保存的回答。", style="warn"))
+                        continue
+                    view = {"/save-brief": "brief", "/save-ticket": "ticket"}.get(command, "detailed")
+                    turn_label = f"-turn-{number}" if number is not None else ""
+                    default_name = f"log-agent-report-{view}{turn_label}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+                    target = Path(path_arg) if path_arg else Path.cwd() / default_name
                     fmt = "json" if target.suffix.lower() == ".json" else "markdown"
                     try:
-                        saved = write_report(target, data, fmt)
+                        saved = write_report(target, data, fmt, view)
                     except OSError as exc:
                         console.print(Text(f"{glyphs.fail} 保存失败: {exc}", style="err"))
                         continue
@@ -1190,23 +1224,17 @@ def _open_store(db: Path | None):
 @sessions_app.command("list")
 def sessions_list(
     db: Path = typer.Option(None, "--db", help="会话数据库文件路径"),
-    search: str = typer.Option(None, "--search", "-S", help="按会话名、首个问题或日志路径筛选（不区分大小写）"),
+    search: str = typer.Option(None, "--search", "-S", help="按会话名、日志路径、历史问题或回答搜索（不区分大小写）"),
 ) -> None:
     """列出所有会话（按最近使用排序）。"""
     conn, store = _open_store(db)
     try:
-        items = store.list()
+        items = store.search(search) if search else store.list()
     finally:
         conn.close()
-    if search:
-        keyword = search.casefold()
-        items = [
-            item for item in items
-            if keyword in " ".join([item.name, item.title or "", *item.logs]).casefold()
-        ]
-        if not items:
-            console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
-            return
+    if search and not items:
+        console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
+        return
     if not items:
         console.print(Text("还没有任何会话。", style="muted"))
         return

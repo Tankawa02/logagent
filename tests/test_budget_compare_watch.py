@@ -93,7 +93,7 @@ def test_budget_removes_tools_and_reports_wrap_up(
     assert "预算提示" in model.systems[-1] and "预算提示" not in model.systems[0]
     assert "接近 tokens 预算 10k" in result.output
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["budget_hit"] is True and data["finding"] is True
+    assert data["budget_hit"] is True and data["finding"] is None
 
 
 def test_bad_budget_fails_fast(sample_log: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,6 +131,12 @@ def _run_with_report(monkeypatch: pytest.MonkeyPatch, sample_log: Path, report: 
 def test_fail_on_exit_codes(
     monkeypatch: pytest.MonkeyPatch, sample_log: Path, report: str, level: str, code: int
 ) -> None:
+    from .test_report import analysis_data, report_text
+
+    if code != 4:
+        confidence = "medium" if "可信度：中" in report else "high"
+        assessment = "clear" if "未发现异常" in report else "finding"
+        report = report_text(analysis_data(assessment, confidence), report)
     result = _run_with_report(monkeypatch, sample_log, report, "--fail-on", level)
     assert result.exit_code == code, result.output
 

@@ -61,3 +61,16 @@ def remove_log(paths: list[str], value: str) -> list[str]:
     if len(paths) == 1:
         raise ValueError("至少需要保留一份日志，请先 /add-log 再移除。")
     return [p for p in paths if p != matches[0]]
+
+
+def parse_turn_selection(arg: str) -> tuple[int | None, str]:
+    """Optional leading --turn N; preserve spaces and Windows backslashes in paths."""
+    import re
+
+    raw = arg.strip()
+    if not raw.startswith("--turn"):
+        return None, raw.strip('"').strip("'")
+    match = re.fullmatch(r"--turn\s+([1-9][0-9]*)(?:\s+(.*))?", raw)
+    if not match:
+        raise ValueError("用法：/save [--turn 正整数] [路径]，例如 /save --turn 3 report.md")
+    return int(match[1]), (match[2] or "").strip().strip('"').strip("'")

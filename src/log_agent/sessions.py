@@ -64,6 +64,15 @@ class SessionStore:
                 "(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL)"
             )
             self.conn.execute("CREATE INDEX IF NOT EXISTS log_agent_turns_name ON log_agent_turns(name, id)")
+            columns = {r[1] for r in self.conn.execute("PRAGMA table_info(log_agent_turns)")}
+            if "turn_number" not in columns:
+                self.conn.execute("ALTER TABLE log_agent_turns ADD COLUMN turn_number INTEGER")
+                # Older sessions may predate snapshots: keep those missing rounds as a gap.
+                for name, total in self.conn.execute("SELECT name, turns FROM log_agent_sessions").fetchall():
+                    ids = self.conn.execute("SELECT id FROM log_agent_turns WHERE name = ? ORDER BY id", (name,)).fetchall()
+                    for number, (row_id,) in enumerate(ids, max(0, total - len(ids)) + 1):
+                        self.conn.execute("UPDATE log_agent_turns SET turn_number = ? WHERE id = ?", (number, row_id))
+
 
     def get(self, name: str) -> SessionInfo | None:
         row = self.conn.execute(
@@ -117,9 +126,34 @@ class SessionStore:
             )
             if payload is not None:
                 self.conn.execute(
-                    "INSERT INTO log_agent_turns (name, payload) VALUES (?, ?)",
-                    (name, json.dumps(payload, ensure_ascii=False)),
+                    "INSERT INTO log_agent_turns (name, payload, turn_number) "
+                    "SELECT name, ?, turns FROM log_agent_sessions WHERE name = ?",
+                    (json.dumps(payload, ensure_ascii=False), name),
                 )
+
+    def history(self, name: str, search: str = "") -> list[tuple[int, dict]]:
+        rows = self.conn.execute(
+            "SELECT turn_number, payload FROM log_agent_turns WHERE name = ? ORDER BY turn_number", (name,),
+        )
+        result = []
+        for number, raw in rows:
+            payload = json.loads(raw)
+            haystack = " ".join(str(payload.get(k) or "") for k in ("question", "summary", "report"))
+            if not search or search.casefold() in haystack.casefold():
+                result.append((number, payload))
+        return result
+
+    def turn(self, name: str, number: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT payload FROM log_agent_turns WHERE name = ? AND turn_number = ?", (name, number),
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def search(self, keyword: str) -> list[SessionInfo]:
+        needle = keyword.casefold()
+        return [item for item in self.list()
+                if needle in " ".join([item.name, item.title, *item.logs]).casefold()
+                or self.history(item.name, keyword)]
 
     def last_turn(self, name: str) -> dict | None:
         row = self.conn.execute(

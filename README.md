@@ -210,8 +210,8 @@ log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json
 ```
 
 退出码：`0` 成功，`1` 失败（如达到 `--max-steps` 上限），`2` 参数错误，`130` 被 Ctrl+C 中断。
-加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 报告缺少一句话结论、无法判定。
-是否发现问题看报告开头的一句话结论——没有异常时 agent 会写成"未发现异常……"；
+加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 结构化报告缺失、校验失败或判定为 `unknown`。
+是否发现问题由校验后的 `analysis.assessment` 决定，不再依赖结论措辞；
 JSON 导出里对应 `finding`（`true` / `false` / `null`）、`confidence` 和 `budget_hit` 字段。
 
 基线对比按错误次数占窗口日志行数的比例判断升降，并同时展示次数与比例；
@@ -298,11 +298,15 @@ log-agent sessions rm payment-bug
 旧版数据库自动兼容：若没有逐轮快照，会尝试从历史恢复回答，并标注“来源未知”，不补造当时的来源和设置。
 
 输入框支持方向键翻历史（跨会话保存在 `~/.log-agent/history`）、`Ctrl+R` 反向搜索，以及斜杠命令（输入 `/` 自动补全）；
-`/add-log`、`/add-code`、`/remove-log` 和 `/save` 的路径参数支持 Tab 补全。
+`/add-log`、`/add-code`、`/remove-log`、`/save`、`/save-brief` 和 `/save-ticket` 的路径参数支持 Tab 补全。
 
 | 命令 | 说明 |
 |------|------|
-| `/save [路径]` | 保存上一条回答为 Markdown（`.json` 结尾则存 JSON） |
+| `/history [关键词]` | 按原始轮次列出问题、结论、生成时间和状态；可搜索问题和回答 |
+| `/show <轮次>` | 查看该轮完整报告及原始来源、时间范围 |
+| `/save [--turn 轮次] [路径]` | 保存上一条回答的详细分析（`.json` 结尾则存 JSON） |
+| `/save-brief [--turn 轮次] [路径]` | 保存速览：结论、影响、下一步 |
+| `/save-ticket [--turn 轮次] [路径]` | 保存工单：现象、复现条件、证据、建议、验证方法 |
 | `/copy` | 把上一条回答（Markdown 原文）复制到剪贴板，方便贴进工单或群聊 |
 | `/retry [补充]` | 重新回答上一个问题，比如回答被中断或答偏了；可以附一句补充，如 `/retry 重点看 14:02 之后` |
 | `/add-log <路径>` | 排查中途给当前会话追加日志（支持通配符），不用退出重开，前面的对话都保留 |
@@ -329,6 +333,7 @@ log-agent sessions rm payment-bug
 | `--code` | `-c` | 源码目录（可选，可重复） |
 | `--skills` | | 额外的 skill 目录（可重复），见下方「Skills（排查手册）」 |
 | `--question` | `-q` | 想让 agent 回答的具体问题（analyze） |
+| `--view` | | 导出用途：`brief` 速览、`detailed` 详细分析（默认）、`ticket` 工单（analyze） |
 | `--output` / `--format` | `-o` / `-f` | 导出报告到文件，`markdown` 或 `json`（analyze） |
 | `--since` / `--until` | | 只分析该时间窗口内的日志，支持 `2026-06-09 14:00`、`2026-06-09T14:00:30`、`2026-06-09`、`14:00`；agent 需要对比时仍可显式查窗口外 |
 | `--model` | `-m` | 模型，`provider:model` 格式，默认读 `LOG_AGENT_MODEL`，否则 `openai:gpt-4.1` |
@@ -407,6 +412,48 @@ description: 短信供应商路由、降级、切换问题的排查手册
 系统提示词里只放每个 skill 的名字和描述，agent 判断用得上时才读全文，装再多也不会拖慢普通问题。
 手册只作经验参考，结论仍以日志和源码证据为准；手册里执行脚本、改文件之类的步骤会被忽略（所有工具都是只读的）。
 
+
+### 报告交接与结构化导出
+
+```bash
+# 速览：结论、影响范围、下一步
+log-agent analyze -l app.log -o brief.md --view brief
+# 工单：现象、复现条件、证据、根因假设、建议与验证方法
+log-agent analyze -l app.log -o ticket.md --view ticket
+# 完整结构化数据 + 详细分析，接入自动化
+log-agent analyze -l app.log -o result.json --view detailed --fail-on medium
+```
+
+`--format` 选择文件类型（Markdown / JSON），`--view` 选择导出用途；终端仍流式显示分析正文。
+三种用途从同一份结果本地生成，不额外调用模型。chat 中使用 `/save`、`/save-brief`、`/save-ticket`，
+路径以 `.json` 结尾即导出 JSON。恢复会话后也可直接导出，无需重新分析。
+
+JSON `schema_version: 2` 保留原有 `report`、`logs`、`code`、`settings`、用量和工具记录，新增：
+
+| 字段 | 含义 |
+| --- | --- |
+| `analysis.assessment` | `finding` 发现问题 / `clear` 检查后未发现问题 / `unknown` 无法判定 |
+| `analysis.confidence` | `high` / `medium` / `low` |
+| `analysis.conclusion`、`impact`、`next_steps` | 结论、影响范围、下一步 |
+| `analysis.issues[]` | 每个问题的 `title`、`symptoms`、`impact` |
+| `issues[].evidence[]` | `source`、`line_start`、`line_end`、`excerpt`；保留脱敏原文 |
+| `issues[].root_cause_hypotheses[]` | `explanation`、`confidence`、`reasoning`；区分假设与证据 |
+| `issues[].open_questions`、`recommendations` | 待确认项、处理建议（字符串列表） |
+| `issues[].reproduction_conditions`、`verification_steps` | 复现条件与验证方法（字符串列表） |
+| `analysis.open_questions` | 整轮分析的待确认项 |
+| `structured_status` | `valid` / `missing` / `invalid`，结构化字段校验结果 |
+| `view`、`rendered_report` | 所选用途及其 Markdown 正文；JSON 始终保留全部结构化数据 |
+
+`settings` 记录分析当时的 `since`、`until`、`timezone`、`baseline` 等设置；`logs`、`code` 记录当时的来源路径，
+`generated_at` 记录原生成时间。以后修改会话范围或来源不会改写已保存的报告快照。
+来源路径不是文件内容快照；原文件修改或删除后，引用内容不保证仍可复查。
+
+模型在正文末尾提供专用 JSON 附录，本地严格校验字段类型、枚举、行号范围和判定与问题列表的一致性。
+这属于格式校验，不代表证据与根因已经人工核实。缺失或无效时 `analysis: null`、`finding: null`，
+保留原始回答并提示无法判定；旧版纯文本报告仍可导出，但不会从文字猜造问题列表。
+中断或失败时即使已有结构化数据，顶层 `finding` 仍为 `null`，应先检查 `status`。
+已有自动化若依赖“未发现异常”措辞，需要改为读取显式判定；`--fail-on` 遇到缺失数据会返回 `4`，不会当作通过。
+
 ## 终端显示
 
 - 两种模式都是**流式输出**：报告按 Markdown 块边写边落到屏幕上，底部常驻状态栏实时显示
@@ -418,7 +465,7 @@ description: 短信供应商路由、降级、切换问题的排查手册
 - 默认模式下工具过程只在运行时显示，结束后折叠成一行，例如 `查了 6 步：日志概览 → 搜索日志 ×3 → 委派子任务`；
   加 `-v` 会保留每一步的完整记录。
 - 完整报告的第一行是**一句话结论 + 可信度**（高 / 中 / 低），终端里显示成高亮摘要；
-  导出的 JSON 里对应 `summary` 与 `confidence` 字段（模型没写这一行时为 `null`）。
+  导出的 JSON 里对应 `summary` 与 `confidence` 字段，有有效结构化报告时以结构化结论为准。
 - 报告里的 `app.log:42`、`app/order.py:88` 这类引用可以直接点击（终端超链接 OSC 8）：
   VS Code / Cursor 内置终端里跳到对应行，其它终端（iTerm2、Windows Terminal、GNOME Terminal 等）打开对应文件。
   用 `LOG_AGENT_LINKS` 调整：`vscode` 总是生成 `vscode://` 链接，`file` 总是生成 `file://`，`off` 关闭。
@@ -474,3 +521,29 @@ uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py
 
 契约测试失败时，失败信息会说明是哪条假设变了，对应去改 `agent.py` / `netguard.py` 里的常量。
 CI 每周一还会用允许范围内的最新版本自动跑一次这两组测试，提前发现问题。
+
+### 找回历史分析
+
+在 chat 中查看当前会话的历史，不调用模型：
+
+```text
+/history
+/history 超时
+/show 3
+/save --turn 3 "第三轮报告.json"
+/save-ticket --turn 3 ticket.md
+```
+
+轮次按会话从 1 开始编号，恢复会话后保持不变。查看和导出历史不会改变当前来源、设置、
+`/copy` 或 `/retry` 使用的上一轮回答。不指定 `--turn` 时仍导出上一轮。
+旧版没有保存报告快照的轮次会留空，不会把后来的报告重新编号或伪造成早期报告。
+`--turn` 放在路径之前；路径可包含空格，也可省略使用默认文件名。
+
+跨会话搜索可以使用：
+
+```bash
+log-agent sessions list --search "超时"
+```
+
+搜索范围包括会话名、首个问题、当前日志路径，以及已保存的每轮问题、结论和回答正文；
+按普通文本匹配，不区分大小写。旧版没有快照的回答不参与正文搜索。
