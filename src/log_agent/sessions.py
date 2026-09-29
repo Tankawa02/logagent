@@ -50,10 +50,16 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _search_field(raw: str | None) -> str:
+    """Convert a single JSON field exactly like history(), without decoding a report object."""
+    return str(json.loads(raw) or "") if raw is not None else ""
+
+
 class SessionStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.conn.create_function("unicode_casefold", 1, str.casefold, deterministic=True)
+        self.conn.create_function("history_field", 1, _search_field, deterministic=True)
         with self.conn:
             self.conn.execute(_SCHEMA)
             self.conn.execute(
@@ -154,11 +160,16 @@ class SessionStore:
         needle = keyword.casefold()
         # SQLite lower()/LIKE only fold ASCII. Keep Python's Unicode casefold semantics,
         # but extract and match inside SQLite and return names, never report payloads.
+        # CASE guarantees malformed JSON never reaches extraction (unlike relying on
+        # WHERE predicate evaluation order). Only individual search fields cross into Python.
+        fields = " || ' ' || ".join(
+            f"CASE WHEN json_type(payload, '$.{key}') = 'text' "
+            f"THEN json_extract(payload, '$.{key}') ELSE history_field(payload -> '$.{key}') END"
+            for key in ("question", "summary", "report")
+        )
         matched = {row[0] for row in self.conn.execute(
-            "SELECT DISTINCT name FROM log_agent_turns WHERE instr(unicode_casefold("
-            "coalesce(json_extract(payload, '$.question'), '') || ' ' || "
-            "coalesce(json_extract(payload, '$.summary'), '') || ' ' || "
-            "coalesce(json_extract(payload, '$.report'), '')), ?) > 0", (needle,),
+            "SELECT DISTINCT name FROM log_agent_turns WHERE CASE WHEN json_valid(payload) THEN "
+            f"instr(unicode_casefold({fields}), ?) > 0 ELSE 0 END", (needle,),
         )}
         return [item for item in self.list()
                 if needle in " ".join([item.name, item.title, *item.logs]).casefold()

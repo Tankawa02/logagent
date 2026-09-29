@@ -109,3 +109,30 @@ def test_show_and_save_reject_same_invalid_numbers(number, tmp_path, sample_log,
     assert result.exit_code == 0, result.output
     assert "用法：/show" in result.output
     assert "没有匹配的历史报告" in result.output
+
+
+def test_search_skips_malformed_turn_without_hiding_metadata():
+    with sqlite3.connect(":memory:") as conn:
+        store = SessionStore(conn)
+        store.touch("broken-session", [], [], "m")
+        conn.execute("INSERT INTO log_agent_turns(name, payload, turn_number) VALUES (?, ?, ?)",
+                     ("broken-session", '{"report": broken', 1))
+        store.touch("healthy", [], [], "m")
+        store.record_turn("healthy", "q", 0, {"report": "searchable"})
+        assert [s.name for s in store.search("BROKEN-SESSION")] == ["broken-session"]
+        assert [s.name for s in store.search("searchable")] == ["healthy"]
+        assert store.search("absent") == []
+
+
+@pytest.mark.parametrize("field", ["question", "summary", "report"])
+@pytest.mark.parametrize("value", [0, False, True, 42, 1.0, 1e-7, 10**30, None, [], {},
+                                   [True, None], {"key": False}, "Straße"])
+def test_search_field_conversion_matches_history(field, value):
+    with sqlite3.connect(":memory:") as conn:
+        store = SessionStore(conn)
+        store.touch("session", [], [], "m")
+        store.record_turn("session", "q", 0, {field: value})
+        queries = ["0", "1", "true", "false", "none", "42", "1.0", "1e-07", "key", "strasse",
+                   str(value).casefold(), "not-present"]
+        for query in queries:
+            assert bool(store.search(query)) == bool(store.history("session", query)), (field, value, query)
