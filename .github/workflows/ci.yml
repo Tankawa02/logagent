@@ -68,3 +68,26 @@ jobs:
         run: uv sync --upgrade
       - name: Upstream contracts + smoke
         run: uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py -v
+
+  sqlite-compatibility:
+    name: SQLite 3.37 / session history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - name: Install using system Python
+        run: uv sync --locked --python "$(command -v python)"
+      - name: Build SQLite 3.37 with JSON1
+        shell: bash
+        run: |
+          curl --fail --location https://www.sqlite.org/2021/sqlite-amalgamation-3370000.zip -o "$RUNNER_TEMP/sqlite.zip"
+          echo "a443aaf5cf345613492efa679ef1c9cc31ba109dcdf37ee377f61ab500d042fe  $RUNNER_TEMP/sqlite.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/sqlite.zip" -d "$RUNNER_TEMP/sqlite-compat"
+          cc -shared -fPIC -O2 -DSQLITE_ENABLE_JSON1 "$RUNNER_TEMP/sqlite-compat/sqlite-amalgamation-3370000/sqlite3.c" -o "$RUNNER_TEMP/sqlite-compat/libsqlite3.so.0" -lm -ldl -lpthread
+      - name: Verify runtime and test search against old SQLite
+        env:
+          LOG_AGENT_TEST_SQLITE_VERSION: "3.37.0"
+        run: LD_LIBRARY_PATH="$RUNNER_TEMP/sqlite-compat" .venv/bin/python -m pytest tests/test_history.py

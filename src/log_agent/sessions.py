@@ -51,8 +51,8 @@ def _now() -> str:
 
 
 def _search_field(raw: str | None) -> str:
-    """Convert a single JSON field exactly like history(), without decoding a report object."""
-    return str(json.loads(raw) or "") if raw is not None else ""
+    """Decode the first element of SQLite's multi-path JSON array using history() semantics."""
+    return str(json.loads(raw)[0] or "") if raw is not None else ""
 
 
 class SessionStore:
@@ -162,9 +162,13 @@ class SessionStore:
         # but extract and match inside SQLite and return names, never report payloads.
         # CASE guarantees malformed JSON never reaches extraction (unlike relying on
         # WHERE predicate evaluation order). Only individual search fields cross into Python.
+        # Multi-path json_extract returns JSON text even for scalars, preserving booleans,
+        # large integers and number spellings without SQLite SQL-value coercion. Repeating
+        # the path keeps both entries local to this field and works before SQLite 3.38.
         fields = " || ' ' || ".join(
             f"CASE WHEN json_type(payload, '$.{key}') = 'text' "
-            f"THEN json_extract(payload, '$.{key}') ELSE history_field(payload -> '$.{key}') END"
+            f"THEN json_extract(payload, '$.{key}') "
+            f"ELSE history_field(json_extract(payload, '$.{key}', '$.{key}')) END"
             for key in ("question", "summary", "report")
         )
         matched = {row[0] for row in self.conn.execute(
