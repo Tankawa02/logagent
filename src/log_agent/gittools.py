@@ -122,10 +122,15 @@ def _git_time(text: str, *, upper: bool) -> str | None:
     return f"@{int(utc_stamp(bound.value).timestamp())}"
 
 
-def _pathspec(path: str) -> list[str]:
+def _pathspec(repo: _Repo, path: str) -> list[str]:
     path = (path or "").strip()
     if not path:
-        return []
+        # --relative 只裁剪输出，不能代替对子目录的查询范围限制。
+        return ["--", "."] if repo.base != repo.top else []
+    # 不接受 Git 的 top/exclude 等魔法路径，也不允许通配路径借 .. 跳出目录。
+    if (path.startswith(":") or Path(path).is_absolute() or ".." in Path(path).parts
+            or not (repo.base / path).resolve().is_relative_to(repo.base)):
+        raise ValueError(f"非法路径（必须位于 code_dir 内）: {path}")
     # `**` 等通配需要 glob 魔法前缀；普通路径原样传入
     return ["--", f":(glob){path}" if any(ch in path for ch in "*?[") else path]
 
@@ -205,7 +210,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
         code_dir: 源码目录（需在 git 仓库内，可以是仓库的子目录）。
         since: 起始时间，如 `2026-06-09 14:00`、`2026-06-09`，或 `3 days ago`；空字符串表示不限。
         until: 结束时间，写法同 since；空字符串表示不限。
-        path: 只看某个文件或目录的提交（相对 code_dir，支持通配，如 `src/**/*.java`）；空字符串表示全部。
+        path: 只看某个文件或目录的提交（相对 code_dir，支持通配，如 `src/**/*.java`）；空字符串表示 code_dir 内全部。
         max_commits: 最多返回多少个提交，默认 20，上限 100。
     """
     repo, error = _open_repo(code_dir)
@@ -216,8 +221,10 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
     except ValueError as exc:
         return _err(f"{exc}。支持的写法如：{BOUND_EXAMPLES}（需带日期）或 `3 days ago`")
     limit = max(1, min(int(max_commits or DEFAULT_COMMITS), MAX_COMMITS))
-    # code_dir 是仓库子目录时，--relative 只裁剪 diff 输出，不过滤提交；用 "." 限定到该目录
-    spec = _pathspec(path) or (["--", "."] if repo.base != repo.top else [])
+    try:
+        spec = _pathspec(repo, path)
+    except ValueError as exc:
+        return _err(str(exc))
     args = [
         "log", f"-n{limit + 1}", "--relative", "--numstat", "--no-ext-diff", "--no-textconv",
         f"--format={_RS}%H{_US}%h{_US}%ct{_US}%an{_US}%P{_US}%s",
@@ -276,13 +283,14 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
     Args:
         code_dir: 源码目录（需在 git 仓库内）。
         commit: 提交号（recent_changes / blame_lines 返回的短 SHA 即可），也可以是分支名或 tag。
-        path: 只看该提交里某个文件或目录的改动（相对 code_dir，支持通配）；空字符串表示全部。
+        path: 只看该提交里某个文件或目录的改动（相对 code_dir，支持通配）；空字符串表示 code_dir 内全部。
         max_lines: diff 最多返回的行数，默认 300，上限 1000。
     """
     repo, error = _open_repo(code_dir)
     if error:
         return error
     try:
+        spec = _pathspec(repo, path)
         sha = _check_ref(repo, commit)
     except ValueError as exc:
         return _err(str(exc))
@@ -295,7 +303,6 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
         return _err(f"读取提交失败：{exc}")
     short, epoch, author, parents, body = (info.split(_US, 4) + [""] * 5)[:5]
     base_args = ["show", "--format=", "--relative", "--no-ext-diff", "--no-textconv", "--stat=120", "--patch"]
-    spec = _pathspec(path)
     try:
         diff = _run(repo.base, *base_args, "--diff-merges=first-parent", sha, *spec)
     except _GitError:
@@ -397,6 +404,11 @@ def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0
     if not lines:
         return _hint(f"{rel_path} 第 {start}-{end} 行没有可追溯的内容。", "empty")
 
+    # 先整段脱敏，防止跨行私钥被行边界或提交分组拆开；保留行号与提交归属。
+    scrubbed = redact_code("\n".join(ln.text for ln in lines), preserve_lines=True).split("\n")
+    for line, text in zip(lines, scrubbed, strict=True):
+        line.text = text
+
     out = [f"--- {rel} 第 {start}-{lines[-1].number} 行的最近修改（时区 {_tz_label()}）---"]
     newest: tuple[int, str] | None = None
     group: list[_BlameLine] = []
@@ -413,7 +425,7 @@ def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0
             summary = redact_log(meta.get("summary", ""))
             out.append(f"{span}  {group[0].sha[:8]}  {when}  {meta.get('author', '?')}  {summary}")
         width = len(str(lines[-1].number))
-        out.extend(f"  {ln.number:>{width}} | {clip_line(redact_code(ln.text), 200)}" for ln in group)
+        out.extend(f"  {ln.number:>{width}} | {clip_line(ln.text, 200)}" for ln in group)
 
     for line in lines:
         if group and line.sha != group[-1].sha:
