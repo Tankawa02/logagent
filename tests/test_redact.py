@@ -61,3 +61,16 @@ def test_code_redaction_keeps_code_intact() -> None:
 def test_can_be_disabled() -> None:
     redact.set_enabled(False)
     assert redact_log("password=hunter2") == "password=hunter2"
+
+
+def test_code_redaction_preserves_lines_for_multiple_private_keys() -> None:
+    block = "-----BEGIN PRIVATE KEY-----\nfirst_payload\n\nlast_payload\n-----END PRIVATE KEY-----"
+    code = f'before\nkey = "{block}"\nbetween\n{block}\nafter\n'
+    out = redact_code(code, preserve_lines=True)
+    assert out.split("\n") == [
+        "before", 'key = "[私钥已脱敏]', "[私钥已脱敏]", "[私钥已脱敏]", "[私钥已脱敏]", '[私钥已脱敏]"',
+        "between", *(["[私钥已脱敏]"] * 5), "after", "",
+    ]
+    assert redact_code(block) == "[私钥已脱敏]"
+    redact.set_enabled(False)
+    assert redact_code(code, preserve_lines=True) == code

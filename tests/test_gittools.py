@@ -77,6 +77,36 @@ def test_recent_changes_path_filter_and_subdirectory(git_repo: Path) -> None:
     assert sub.meta["commits"] == 2 and "    order.py  +2 -1" in sub
 
 
+@pytest.mark.parametrize("path", ["../README.md", "../docs/*.md", "..", "*/../../README.md",
+                                  ":(top)README.md", ":/README.md", ":(exclude)order.py"])
+def test_history_tools_reject_paths_outside_code_dir(git_repo: Path, path: str) -> None:
+    sub = str(git_repo / "app")
+    assert recent_changes(sub, path=path).status == "error"
+    assert show_commit(sub, "HEAD", path=path).status == "error"
+
+
+def test_history_tools_reject_absolute_paths(git_repo: Path) -> None:
+    path = str(git_repo / "README.md")
+    assert recent_changes(str(git_repo / "app"), path=path).status == "error"
+    assert show_commit(str(git_repo / "app"), "HEAD", path=path).status == "error"
+
+
+@pytest.mark.parametrize("path", ["", ".", "order.py", "*.py", "./*.py"])
+def test_history_tools_scope_subdirectory(git_repo: Path, path: str) -> None:
+    _commit(git_repo, {"app/order.py": "inside_change = 1\n", "README.md": "outside_change = 1\n"},
+            "mixed change", "2026-06-10T10:00:00+08:00")
+    (git_repo / "README.md").write_text("outside dirty\n", encoding="utf-8")
+    sub = str(git_repo / "app")
+    history = recent_changes(sub, path=path)
+    assert history.status == "ok" and history.meta["commits"] == 3
+    assert "README.md" not in history and "补充文档" not in history
+    assert "未提交的修改" not in history
+    diff = show_commit(sub, "HEAD", path=path)
+    assert diff.status == "ok" and diff.meta["files"] == 1
+    assert "inside_change" in diff and "outside_change" not in diff and "README.md" not in diff
+    assert show_commit(sub, "HEAD~1", path=path).status == "hint"
+
+
 def test_recent_changes_limits_and_reports_truncation(git_repo: Path) -> None:
     out = recent_changes(str(git_repo), max_commits=1)
     assert out.meta["commits"] == 1 and out.meta["truncated"] and "还有更早的提交" in out
@@ -150,6 +180,24 @@ def test_blame_marks_uncommitted_changes(git_repo: Path) -> None:
     (git_repo / "app" / "order.py").write_text("def pay(order):\n    return None\n", encoding="utf-8")
     out = blame_lines(str(git_repo), "app/order.py", 2)
     assert "未提交的本地修改" in out and out.meta["uncommitted"]
+
+
+@pytest.mark.parametrize("key_type", ["", "RSA ", "EC ", "OPENSSH "])
+def test_blame_redacts_multiline_keys_across_commits(git_repo: Path, key_type: str) -> None:
+    content = (f"before = 1\n-----BEGIN {key_type}PRIVATE KEY-----\n"
+               f"first_private_payload\nsecond_private_payload\n-----END {key_type}PRIVATE KEY-----\n"
+               "after = 2\n\nkey = sk-abcdefghijklmnopqrstu\n")
+    _commit(git_repo, {"app/keys.txt": content}, "add fixture", "2026-06-10T10:00:00+08:00")
+    content = content.replace("second_private_payload", "changed_private_payload")
+    _commit(git_repo, {"app/keys.txt": content}, "change fixture", "2026-06-11T10:00:00+08:00")
+    out = blame_lines(str(git_repo), "app/keys.txt", 1, 8)
+    assert out.status == "ok" and out.meta["commits"] == 2 and out.meta["end"] == 8
+    assert "private_payload" not in out and "PRIVATE KEY" not in out
+    assert "sk-abcdefghijklmnopqrstu" not in out and "sk-[已脱敏]" in out
+    for number in range(2, 6):
+        assert f"{number} | [私钥已脱敏]" in out
+    assert "1 | before = 1" in out and "6 | after = 2" in out and "7 | " in out
+    assert "L1-3" in out and "L4 " in out and "L5-8" in out
 
 
 def test_blame_rejects_traversal_and_untracked(git_repo: Path) -> None:

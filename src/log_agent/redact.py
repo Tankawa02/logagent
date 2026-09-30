@@ -85,9 +85,17 @@ def _mask_ip(match: re.Match[str]) -> str:
     return f"{head}.x.x#{_tag(raw)}"
 
 
-def _apply_secrets(text: str) -> str:
+def _apply_secrets(text: str, *, preserve_lines: bool = False) -> str:
     for pattern, replacement in _SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
+        if preserve_lines:
+            # 多行私钥的每一行都放置占位符，避免压缩行数后丢失源码行号。
+            text = pattern.sub(
+                lambda m, replacement=replacement: "\n".join(
+                    [m.expand(replacement)] * (m.group(0).count("\n") + 1)
+                ), text,
+            )
+        else:
+            text = pattern.sub(replacement, text)
     return text
 
 
@@ -103,7 +111,8 @@ def redact_log(text: str) -> str:
     return text
 
 
-def redact_code(text: str) -> str:
+def redact_code(text: str, *, preserve_lines: bool = False) -> str:
+    """源码脱敏；preserve_lines 用逐行占位符保留跨行密钥的原始行数。"""
     if not _enabled or not text:
         return text
-    return _apply_secrets(text)
+    return _apply_secrets(text, preserve_lines=preserve_lines)
