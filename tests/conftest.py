@@ -16,7 +16,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 for _name in ("FORCE_COLOR", "TTY_COMPATIBLE", "CLICOLOR_FORCE"):
     os.environ.pop(_name, None)
 
-from log_agent import config, logfile, redact, timefilter, tools  # noqa: E402
+from log_agent import config, logfile, logformat, redact, stacktrace, timefilter, tools  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,11 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     logfile.set_forced_encoding(None)
     timefilter.reset_default_window()
     tools._file_list_cache.clear()
+    logformat.set_custom_formats(None)
+    stacktrace.set_app_packages(None)
     yield
+    logformat.set_custom_formats(None)
+    stacktrace.set_app_packages(None)
     timefilter.set_default_timezone()
     redact.set_enabled(True)
     logfile.set_forced_encoding(None)

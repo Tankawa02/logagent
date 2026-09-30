@@ -28,6 +28,15 @@ def inspect_log(path: str, window) -> str:
         f"当前窗口：{window.describe() if window else '全文'} · 覆盖 {stats.window_lines:,} 行",
         "窗口级别分布：" + (" · ".join(f"{k} {v}" for k, v in stats.levels.items()) or "未识别"),
     ]
+    formats = _format_breakdown(log)
+    if formats:
+        lines.insert(4, "识别格式（前 2000 行抽样，不含堆栈续行）：" + " · ".join(formats))
+    clusters = stats.chains.top(3)
+    if clusters:
+        from .tools import _chain_lines
+
+        lines.append(f"异常链：共 {len(stats.chains.clusters)} 类（按根因异常 + 首个业务栈帧），最多的几类：")
+        lines.extend(_chain_lines(clusters))
     if not total:
         lines.append("提示：文件为空。")
     elif not stats.saw_timestamp:
@@ -45,6 +54,31 @@ def inspect_log(path: str, window) -> str:
     lines.append("样例（当前窗口，最多 3 行，跟随脱敏设置）：")
     lines.extend(f"  L{lineno}: {redact_log(line)}" for lineno, line in stats.samples)
     return "\n".join(lines)
+
+
+def _format_breakdown(log, sample: int = 2000) -> list[str]:
+    from collections import Counter
+    from contextlib import closing
+
+    from .logformat import detect_format, is_stack_line
+
+    counts: Counter[str] = Counter()
+    seen = 0
+    previous_known = False
+    with closing(log.iter_lines(1)) as lines:
+        for lineno, line in lines:
+            if lineno > sample:
+                break
+            if not line.strip() or is_stack_line(line):
+                continue
+            kind = detect_format(line)
+            # 紧跟在已识别日志之后、自己认不出的行（异常头、多行 SQL 等）是上一条的续行，不算“未识别”
+            if kind is None and previous_known:
+                continue
+            previous_known = kind is not None
+            seen += 1
+            counts[kind or "未识别"] += 1
+    return [f"{name} {count / seen:.0%}" for name, count in counts.most_common(4)] if seen else []
 
 
 def effective_config(app, command: str) -> tuple[object, dict, dict]:

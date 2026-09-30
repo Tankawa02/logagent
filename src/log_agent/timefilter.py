@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .logformat import json_record
+from .logformat import custom_formats, json_record, match_custom, maybe_wrapped, unwrap
 
 Stamp = datetime | time
 
@@ -83,26 +83,188 @@ def _micro(frac: str | None) -> int:
     return int((frac or "0")[:6].ljust(6, "0"))
 
 
-def find_timestamp(line: str) -> tuple[str, Stamp] | None:
-    """在行首附近找时间戳，返回 (原文, 解析值)；找不到或数值非法返回 None。"""
-    record = json_record(line)
-    if record is not None:
-        source = next((record[k] for k in ("timestamp", "@timestamp", "time", "ts") if isinstance(record.get(k), str)), "")
-    else:
-        source = line[:_SCAN_CHARS]
-    match = TS_RE.search(source)
-    if not match:
-        return None
+_MONTHS = {m: i for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+                                       "Dec"), start=1)}
+# nginx / Apache：[30/Sep/2026:14:00:00 +0800]
+_CLF_TS = re.compile(r"\[(?P<d>\d{2})/(?P<mon>[A-Z][a-z]{2})/(?P<y>\d{4}):(?P<t>\d{2}:\d{2}:\d{2})(?:\.(?P<f>\d+))?"
+                     r" (?P<z>[+-]\d{4})\]")
+# syslog（RFC 3164）：Sep 30 14:00:00，可带 <PRI>；没有年份
+_SYSLOG_TS = re.compile(r"^(?:<\d{1,3}>)?(?P<mon>[A-Z][a-z]{2}) {1,2}(?P<d>\d{1,2}) (?P<t>\d{2}:\d{2}:\d{2})(?:\.(?P<f>\d+))?\b")
+# Tomcat / JUL：30-Sep-2026 14:00:00.123
+_DMY_TS = re.compile(r"^(?P<d>\d{2})-(?P<mon>[A-Z][a-z]{2})-(?P<y>\d{4}) (?P<t>\d{2}:\d{2}:\d{2})(?:[.,](?P<f>\d+))?\b")
+# glog / klog：E0930 14:00:00.123456；没有年份
+_GLOG_TS = re.compile(r"^[IWEF](?P<m>\d{2})(?P<d>\d{2}) (?P<t>\d{2}:\d{2}:\d{2})\.(?P<f>\d+)\s")
+# 行首的 Unix 时间戳（秒 / 毫秒），如 squid：1780279200.123
+_EPOCH_START = re.compile(r"^(?P<e>\d{10}(?:\.\d{1,9})?|\d{13})(?=[\s,|])")
+_LOGFMT_TS = re.compile(r"(?:^|\s)(?:ts|time|timestamp|t)=\"?(?P<v>[^\s\"]+)\"?")
+_JSON_TS_KEYS = ("timestamp", "@timestamp", "time", "ts", "@t", "t", "datetime", "date")
+
+
+def _now() -> datetime:
+    return datetime.now(_default_timezone)
+
+
+def _infer_year(month: int, day: int) -> int:
+    """syslog / glog 不带年份：按今年算；落在“明天之后”说明是去年的日志。"""
+    now = _now()
     try:
-        if match.group("date"):
-            day = date.fromisoformat(match.group("date").replace("/", "-"))
-            clock = time.fromisoformat(match.group("time")).replace(microsecond=_micro(match.group("frac")))
-            zone = parse_timezone(match.group("zone")) if match.group("zone") else None
-            return match.group(0), datetime.combine(day, clock, tzinfo=zone)
-        clock = time.fromisoformat(match.group("tonly")).replace(microsecond=_micro(match.group("tfrac")))
-        return match.group(0), clock
+        candidate = date(now.year, month, day)
+    except ValueError:  # 2 月 29 日
+        return now.year - 1
+    return now.year - 1 if candidate > now.date() + timedelta(days=1) else now.year
+
+
+def _from_epoch(value: float) -> datetime | None:
+    for scale in (1, 1e3, 1e6, 1e9):  # 秒 / 毫秒 / 微秒 / 纳秒
+        seconds = value / scale
+        if 946684800 <= seconds < 4102444800:  # 2000-01-01 ~ 2100-01-01
+            return datetime.fromtimestamp(seconds, tz=UTC)
+    return None
+
+
+def _clock(text: str, frac: str | None) -> time:
+    return time.fromisoformat(text).replace(microsecond=_micro(frac))
+
+
+def _named_month(match: re.Match[str]) -> datetime | None:
+    month = _MONTHS.get(match["mon"])
+    if month is None:
+        return None
+    groups = match.groupdict()
+    year = int(groups["y"]) if groups.get("y") else _infer_year(month, int(match["d"]))
+    zone = parse_timezone(groups["z"]) if groups.get("z") else None
+    return datetime.combine(date(year, month, int(match["d"])), _clock(match["t"], groups.get("f")), tzinfo=zone)
+
+
+def _parse_value(value: object) -> Stamp | None:
+    """JSON / logfmt 字段里的时间：ISO 字符串或数字时间戳。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return _from_epoch(float(value))
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"\d{10,19}(?:\.\d+)?", text):
+            return _from_epoch(float(text))
+        match = TS_RE.search(text)
+        if match and match.group("date"):
+            return _iso(match)
+        if match:  # 旧行为：JSON 里只有时刻的字符串
+            return time.fromisoformat(match.group("tonly")).replace(microsecond=_micro(match.group("tfrac")))
+    return None
+
+
+def _iso(match: re.Match[str]) -> Stamp:
+    day = date.fromisoformat(match.group("date").replace("/", "-"))
+    clock = time.fromisoformat(match.group("time")).replace(microsecond=_micro(match.group("frac")))
+    zone = parse_timezone(match.group("zone")) if match.group("zone") else None
+    return datetime.combine(day, clock, tzinfo=zone)
+
+
+def parse_custom_time(text: str, time_format: str | None) -> Stamp | None:
+    """自定义格式里 time 分组的解析：给了 time_format 就按它来，否则按内置规则识别。"""
+    text = text.strip()
+    if time_format:
+        try:
+            value = datetime.strptime(text, time_format)
+        except ValueError:
+            return None
+        if "%Y" not in time_format and "%y" not in time_format:
+            value = value.replace(year=_infer_year(value.month, value.day))
+        return value
+    if re.fullmatch(r"\d{10,19}(?:\.\d+)?", text):
+        return _from_epoch(float(text))
+    # 先按带日期的写法找（分组里通常不带 nginx 的方括号，补上再试），最后才接受“只有时刻”
+    for candidate in (text, f"[{text}]"):
+        found = _find_text_timestamp(candidate, scan=len(candidate))
+        if found and isinstance(found[1], datetime):
+            return found[1]
+    found = _find_text_timestamp(text, scan=len(text))
+    return found[1] if found else None
+
+
+def _find_text_timestamp(line: str, scan: int = _SCAN_CHARS) -> tuple[str, Stamp] | None:
+    source = line[:scan]
+    match = TS_RE.search(source)
+    try:
+        if match and match.group("date"):
+            return match.group(0), _iso(match)
+        # 没有完整日期时，先试带日期的专用格式，再退回“只有时刻”；缩进的续行（栈帧）不会以这些格式开头
+        specials = () if line[:1] in (" ", "\t") else ((_CLF_TS, 160), (_DMY_TS, scan), (_SYSLOG_TS, scan),
+                                                        (_GLOG_TS, scan))
+        for pattern, window in specials:
+            special = pattern.search(line, 0, window)
+            if special:
+                if pattern is _GLOG_TS:
+                    month, day = int(special["m"]), int(special["d"])
+                    stamp = datetime.combine(date(_infer_year(month, day), month, day), _clock(special["t"], special["f"]))
+                    return special.group(0).strip(), stamp
+                stamp = _named_month(special)
+                if stamp is not None:
+                    return special.group(0).strip("[] "), stamp
+        epoch = _EPOCH_START.match(source)
+        if epoch:
+            stamp = _from_epoch(float(epoch["e"]))
+            if stamp is not None:
+                return epoch["e"], stamp
+        if "=" in source:
+            logfmt = _LOGFMT_TS.search(line[:400])
+            if logfmt:
+                stamp = _parse_value(logfmt["v"])
+                if stamp is not None:
+                    return logfmt["v"], stamp
+        if match:
+            clock = time.fromisoformat(match.group("tonly")).replace(microsecond=_micro(match.group("tfrac")))
+            return match.group(0), clock
     except ValueError:
         return None
+    return None
+
+
+def find_timestamp(line: str, _depth: int = 0) -> tuple[str, Stamp] | None:
+    """在行首附近找时间戳，返回 (原文, 解析值)；找不到或数值非法返回 None。
+
+    支持：ISO（含 `/` 分隔、逗号毫秒、时区偏移）、nginx / Apache `[30/Sep/2026:14:00:00 +0800]`、
+    syslog `Sep 30 14:00:00`、Tomcat `30-Sep-2026 14:00:00`、glog `E0930 14:00:00.123456`、
+    行首 Unix 时间戳、logfmt 的 `ts=` / `time=`、JSON 的字符串或数字时间字段，
+    以及配置文件里的自定义格式；Docker / CRI 容器日志先看应用自己的时间，没有再用运行时时间。
+    """
+    if custom_formats():
+        custom = match_custom(line)
+        if custom:
+            fmt, match = custom
+            raw = fmt.group(match, ("time", "ts", "timestamp"))
+            if raw is None:
+                return None
+            stamp = parse_custom_time(raw, fmt.time_format)
+            return (raw, stamp) if stamp is not None else None
+    first = line[:1]
+    record = json_record(line) if first == "{" or (first in " \t" and line.lstrip()[:1] == "{") else None
+    if record is None and first.isdigit():
+        # 热路径：最常见的 ISO 时间戳直接解析，不经过容器 / 专用格式的判断
+        match = TS_RE.search(line, 0, _SCAN_CHARS)
+        if match and match.group("date") and line[10:11] != "T":
+            try:
+                return match.group(0), _iso(match)
+            except ValueError:
+                return None
+    if _depth == 0 and (record is not None or maybe_wrapped(line)):
+        wrapped = unwrap(line, record)
+        if wrapped:
+            inner, outer = wrapped
+            found = find_timestamp(inner, _depth + 1) if inner else None
+            if found and isinstance(found[1], datetime):
+                return found
+            stamp = _parse_value(outer) if outer else None
+            return (outer, stamp) if stamp is not None else found
+    if record is not None:
+        for key in _JSON_TS_KEYS:
+            if key in record:
+                stamp = _parse_value(record[key])
+                if stamp is not None:
+                    return str(record[key]), stamp
+        return None
+    return _find_text_timestamp(line)
 
 
 @dataclass(frozen=True)
