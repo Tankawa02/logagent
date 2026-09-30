@@ -21,9 +21,10 @@ from typing import Any
 
 from .gittools import GIT_TOOLS
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
-from .logformat import level_and_body
+from .logformat import is_stack_line, json_record, level_and_body, maybe_wrapped, unwrap
 from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_code_lines, redact_log
+from .stacktrace import ChainCollector, stack_from_record, starts_block
 from .timefilter import (
     TimeWindow,
     WindowTracker,
@@ -192,12 +193,15 @@ class _OverviewStats:
         self.timestamp_lines = 0
         self.level_lines = 0
         self.samples: list[tuple[int, str]] = []
+        self.chains = ChainCollector()
 
 
 def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
     """扫描全文统计概览。时间范围总是按全文统计，级别/错误/异常只统计窗口内的行。"""
     stats = _OverviewStats()
     tracker = WindowTracker(window)
+    chains = stats.chains
+    block_has_ts = False
     for lineno, line in log.iter_lines(1):
         stats.total = lineno
         parsed = level_and_body(line)
@@ -212,7 +216,13 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
         if parsed:
             stats.level_lines += 1
         # 概览要报告全文行数与时间范围，所以越过窗口后也不提前结束
-        if window and not tracker.accept(line):
+        in_window = tracker.accept(line) if window else True
+        # 热路径：没有进行中的堆栈、本行有时间戳且不是 ERROR / FATAL 时，这一行不会开启或延续异常链
+        if chains.open or not found or (parsed and parsed[0] in ("FATAL", "ERROR")) or maybe_wrapped(line):
+            _collect_chain(chains, lineno, line, parsed, found, in_window, block_has_ts)
+            if chains.open:
+                block_has_ts = block_has_ts if chains.extended else bool(found)
+        if not in_window:
             continue
         stats.window_lines += 1
         stats.window_first = stats.window_first or lineno
@@ -230,11 +240,73 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
         for exc in set(_EXC_RE.findall(line[:4000])):
             stats.exceptions[exc] += 1
             stats.exc_first.setdefault(exc, lineno)
+    chains.flush()
     return stats
 
 
+def _collect_chain(chains: ChainCollector, lineno: int, line: str, parsed, found, in_window: bool,
+                   block_has_ts: bool) -> None:
+    """把一段堆栈（首行 + 续行）交给 ChainCollector。
+
+    续行：有时间戳的日志里，没有时间戳的行都算上一条的续行（和时间窗口的规则一致）；
+    整份日志都没有时间戳时，退而要求“没有级别”。容器日志按拆出来的应用原始行判断。
+    """
+    wrapped = unwrap(line) if maybe_wrapped(line) else None
+    text = wrapped[0] if wrapped else line
+    if wrapped:
+        found = find_timestamp(text, 1)
+    if chains.open and not found and (block_has_ts or not parsed or is_stack_line(text)):
+        if chains.extend(text):
+            return
+    chains.flush()
+    if not in_window:
+        return
+    if parsed and parsed[0] in ("FATAL", "ERROR"):
+        record = json_record(text) if text[:1] == "{" else None
+        stack = stack_from_record(record) if record else None
+        if stack:
+            chains.add_lines(lineno, [parsed[1], *stack])
+        else:
+            chains.begin(lineno, text)
+    elif not parsed and starts_block(text):
+        chains.begin(lineno, text)
+
+
+def _chain_lines(clusters) -> list[str]:
+    out = []
+    for i, cluster in enumerate(clusters, start=1):
+        chain = cluster.example
+        out.append(f"  {i}. x{cluster.count}  首次 L{cluster.first_line}  "
+                   f"{redact_log(clip_line(cluster.describe_root(), 200))}")
+        frame = chain.app_frame
+        if frame:
+            out.append(f"       位置：{redact_log(frame.describe())}")
+        if chain.wrappers:
+            out.append(f"       外层：{' ← '.join(chain.wrappers)}")
+        more = "…" if cluster.count > len(cluster.lines) else ""
+        out.append(f"       出现在：{'、'.join(f'L{n}' for n in cluster.lines)}{more}")
+    return out
+
+
+def _chain_meta(cluster) -> dict[str, Any]:
+    chain = cluster.example
+    frame = chain.app_frame
+    return {
+        "root": chain.root.type,
+        "message": redact_log(clip_line(chain.root.message, 200)),
+        "frame": redact_log(frame.describe()) if frame else "",
+        "wrappers": chain.wrappers,
+        "language": chain.language,
+        "count": cluster.count,
+        "first_line": cluster.first_line,
+    }
+
+
 def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
-    """快速了解整份日志：行数、大小、编码、时间范围、各级别数量、高频错误与异常类型。
+    """快速了解整份日志：行数、大小、编码、时间范围、各级别数量、高频错误、异常链与异常类型。
+
+    异常链按“根因异常 + 首个业务栈帧”聚类：同一个根因被不同外层异常包装时会合并成一类，
+    并给出业务代码位置（可直接用 read_code_file 查看）和出现的行号（可用 read_log_chunk 查看完整堆栈）。
 
     建议作为排查的第一步调用，先掌握全局再决定搜索什么。大文件会扫描一遍全文，
     同时建立行索引，之后的 read_log_chunk 跳读会更快。
@@ -310,6 +382,12 @@ def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
         out.append("高频错误（数字 / id 已归一化，按次数排序）：")
         for i, (sig, count) in enumerate(signatures.most_common(10), start=1):
             out.append(f"  {i}. x{count}  首次 L{first_seen[sig]}  {redact_log(clip_line(sig, 200))}")
+    clusters = stats.chains.top(8)
+    if clusters:
+        out.append("")
+        out.append(f"异常链（按根因异常 + 首个业务栈帧聚类，共 {len(stats.chains.clusters)} 类；"
+                   "同一根因被不同外层包装时会合并）：")
+        out.extend(_chain_lines(clusters))
     if exceptions:
         out.append("")
         out.append("异常类型：")
@@ -322,6 +400,8 @@ def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
         warnings=levels["WARN"],
         window=window.describe() if window else None,
         window_lines=stats.window_lines if window else None,
+        chains=len(stats.chains.clusters),
+        top_chains=[_chain_meta(c) for c in clusters[:5]],
         top_errors=[
             {"signature": redact_log(clip_line(sig, 200)), "count": count, "first_line": first_seen[sig]}
             for sig, count in signatures.most_common(5)

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from log_agent import cli, tools
+from log_agent import cli, timefilter, tools
 from log_agent.render import summarize_tool_output
 from log_agent.timefilter import (
     WindowTracker,
@@ -23,12 +23,14 @@ from log_agent.timefilter import (
         ("2026-06-09 14:02:03,123 ERROR x", datetime(2026, 6, 9, 14, 2, 3, 123000)),
         ("2026-06-09T14:02:03.5Z INFO", datetime(2026, 6, 9, 14, 2, 3, 500000, tzinfo=UTC)),
         ("[2026/06/09 14:02:03] WARN", datetime(2026, 6, 9, 14, 2, 3)),
-        ("Jun  9 14:02:03 host sshd[1]: ok", time(14, 2, 3)),
+        # syslog 不带年份：按“今天”推断（见 conftest 固定的日期）
+        ("Jun  9 14:02:03 host sshd[1]: ok", datetime(2026, 6, 9, 14, 2, 3)),
         ("  at com.foo.Bar.run(Bar.java:10)", None),
         ("2026-13-40 14:02:03 bad date", None),
     ],
 )
-def test_find_timestamp(line: str, expected: object) -> None:
+def test_find_timestamp(line: str, expected: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(timefilter, "_now", lambda: datetime(2026, 9, 30, 12, 0, tzinfo=UTC))
     found = find_timestamp(line)
     assert (found[1] if found else None) == expected
 

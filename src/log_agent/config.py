@@ -46,6 +46,9 @@ _KEYS: dict[str, str | None] = {
     "memory": "memory",
     "timeout": None,
     "max_retries": None,
+    # 日志解析相关，不走命令行参数，由 apply_log_settings 生效
+    "log_formats": None,
+    "app_packages": None,
 }
 # 这些键有对应的环境变量：环境变量已设置时以环境变量为准
 _ENV_OVERRIDES = {
@@ -130,6 +133,9 @@ def _read(path: Path, config: LoadedConfig) -> None:
     for name, section in data.items():
         if not isinstance(section, dict):
             continue
+        if name == "log_formats":  # 只写了一个 [log_formats] 表（而不是 [[log_formats]] 数组）
+            config.shared["log_formats"] = [*config.shared.get("log_formats", []), section]
+            continue
         if name not in COMMANDS:
             config.warnings.append(f"{path}: 忽略不认识的配置段 [{name}]")
             continue
@@ -154,6 +160,25 @@ def load_config(cwd: Path | None = None) -> LoadedConfig:
         if project and project.resolve() != user.resolve():
             _read(project, config)
     return config
+
+
+def apply_log_settings(values: dict[str, Any]) -> None:
+    """让配置里的自定义日志格式与业务包前缀生效。
+
+    Raises:
+        ConfigError: 自定义格式写错（正则无效、缺少命名分组、sample 对不上等）。
+    """
+    from .logformat import set_custom_formats
+    from .stacktrace import set_app_packages
+
+    try:
+        set_custom_formats(values.get("log_formats"))
+    except ValueError as exc:
+        raise ConfigError(f"自定义日志格式有误：{exc}") from exc
+    packages = values.get("app_packages")
+    if packages is not None and (not isinstance(packages, list) or not all(isinstance(p, str) for p in packages)):
+        raise ConfigError("app_packages 必须是字符串列表，例如 [\"com.acme\", \"app/\"]")
+    set_app_packages(packages)
 
 
 def apply_to_environment(values: dict[str, Any]) -> None:

@@ -12,6 +12,8 @@
   列源码、按行号读源码、grep 源码（装了 `rg` 会自动用 ripgrep 加速）
 - 按请求追踪：给一个 traceId / requestId / 手机号，跨多份日志把同一请求的所有行按时间合并排好，连带堆栈
 - 日志级别支持大小写与 JSON 字段；错误聚类保留 HTTP 状态码、业务错误码，避免把不同原因合并
+- 异常链聚类：解析 Java / Python / Go / Node.js / .NET 的整段堆栈，按**根因异常 + 首个业务栈帧**归类，同一根因被不同外层包装时合并
+- 日志格式：内置 nginx / Apache、syslog、glog、Tomcat、logfmt、Docker / CRI 容器日志、pino / Serilog / ECS JSON 等；也可在配置里自定义格式
 - 跨日志时间比较保留 `Z` / `+08:00` 偏移；无偏移时间可通过 `--timezone` 指定时区
 - 配置文件：模型、接口地址、默认源码目录写进 `.log-agent.toml`，命令行只写日志和问题
 - 日志输入：可传多份、支持通配符与 `.gz`、支持管道 `-l -`；自动识别 UTF-8 / GBK / UTF-16 编码
@@ -220,10 +222,8 @@ JSON 导出里对应 `finding`（`true` / `false` / `null`）、`confidence` 和
 “明显增多”要求出现率至少翻倍、目标窗口至少出现 5 次，避免将极少量样本直接判成激增。
 这里的比例是**日志行出现率**，并非请求失败率（堆栈行、日志级别配置也会影响分母）。
 
-JSON 日志优先读取 `level` / `severity` / `levelname` / `severityText` 级别、`message` / `msg` 消息，
-以及 `timestamp` / `@timestamp` / `time` / `ts` 字符串时间戳，字段顺序不影响识别。
-聚类时保留 `status`、`status_code`、`statusCode`、`http_status`、`code`、`error_code`、`errorCode` 字段。
-当前支持单行 JSON 对象（不超过 65,536 个字符）；没有级别字段的 JSON 不从消息正文猜测级别。
+JSON 日志的级别、消息、时间字段及其它内置格式见下方「日志格式」。聚类时保留 `status`、`status_code`、`statusCode`、`http_status`、`code`、`error_code`、`errorCode` 字段；
+当前支持单行 JSON 对象（不超过 65,536 个字符），没有级别字段的 JSON 不从消息正文猜测级别。
 
 ### 追踪模式（watch）
 
@@ -503,6 +503,66 @@ log-agent analyze -l app.log -c ./repo --timezone +08:00 -q "14:02 之后开始�
 ```
 
 需要本机装有 git；不是 git 仓库时这些工具只返回提示，不影响其它分析。提交说明按日志规则脱敏，diff 按源码规则脱敏。
+
+### 异常链聚类
+
+`log_overview` / `inspect` 会把一段报错连同后面的堆栈续行解析成异常链，按**根因异常 + 首个业务栈帧**聚类：
+
+```
+异常链（按根因异常 + 首个业务栈帧聚类，共 2 类；同一根因被不同外层包装时会合并）：
+  1. x3  首次 L1  java.sql.SQLTimeoutException: Query timed out after 3000ms
+       位置：com.acme.order.repo.OrderRepo.findById (OrderRepo.java:86)
+       外层：org.springframework.dao.QueryTimeoutException
+       出现在：L1、L20、L47
+```
+
+| 语言 | 识别内容 |
+| --- | --- |
+| Java / Kotlin / Scala | `Caused by:` 逐层深入，最后一个是根因；`Suppressed:`、`... N more` 忽略；异常挂在日志首行末尾也能识别 |
+| Python | 多段 traceback 由 “During handling…” / “The above exception was the direct cause…” 连接，第一段是根因 |
+| Go | `panic:` / `fatal error:` + goroutine 栈，跳过 `runtime.*` |
+| Node.js | `TypeError: …` + `at fn (file:line:col)`，`[cause]:` 视为更深一层 |
+| .NET | `A ---> B`，最内层是根因；按 `--- End of inner exception stack trace ---` 分配栈帧 |
+
+- **业务栈帧**：第一个不属于标准库 / 常见框架（Spring、Netty、Hikari、site-packages、node_modules、Go runtime 等）的帧。
+  也可以在配置里写 `app_packages = ["com.acme", "app/"]` 指定业务包前缀或路径片段，优先级最高。
+- 聚类键不含行号和消息里的数字 / id / 引号内容，发布后行号变了也能归到同一类。
+- JSON 日志的 `stack_trace` / `stack` / `exception` / `error.stack_trace` 等字段、Docker / CRI 逐行包装的堆栈同样支持。
+- 栈帧里的包名（如 `com.acme.error.Handler`）不再被误识别成 ERROR 级别，堆栈也不会被拆散。
+- `compare_windows` 会列出目标时段**新出现的根因异常**。
+
+### 日志格式
+
+不用配置即可识别（`log-agent inspect` 会显示抽样识别到的格式和占比）：
+
+| 格式 | 示例 | 级别来源 |
+| --- | --- | --- |
+| 常见文本 | `2026-06-09 14:02:03,123 ERROR ...`、`2026/06/09 14:02:03 [error] ...` | 级别单词（含 crit / emerg / alert / notice） |
+| nginx / Apache 访问日志 | `1.2.3.4 - - [30/Sep/2026:14:00:00 +0800] "GET /api HTTP/1.1" 502 ...` | 状态码：5xx=ERROR、4xx=WARN；按 `status + 方法 + 路径` 聚类 |
+| syslog | `<11>Sep 30 14:00:00 host app[1]: ...` | 级别单词，没有时用 `<PRI>` |
+| Tomcat / JUL | `30-Sep-2026 14:00:00.123 SEVERE ...` | 级别单词 |
+| glog / klog | `E0930 14:00:00.123456 1 file.go:42] ...` | 首字母 I / W / E / F |
+| logfmt | `time=... level=error msg="..." status=504` | `level` / `lvl` / `severity` |
+| JSON | pino / bunyan（数字级别）、Serilog CLEF（`@t` / `@l` / `@m`）、ECS（`log.level`）等 | 级别字段 |
+| 容器日志 | Docker json-file `{"log": ...}`、CRI / containerd `...Z stderr F ...` | 先拆出应用原始行再识别 |
+| Unix 时间戳 | JSON / logfmt 的秒、毫秒、微秒、纳秒；行首 `1790740800.123` | — |
+
+syslog、glog 不带年份时按当前日期推断（落在明天之后的算作去年）。
+
+**自定义格式**：内置规则认不出时，在 `.log-agent.toml` 里用正则声明，按顺序优先于内置规则：
+
+```toml
+[[log_formats]]
+name = "legacy-gateway"
+# 命名分组：time / ts / timestamp（时间）、level（级别）、message / msg（正文）；至少要有时间或级别
+pattern = '^(?P<time>\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}) \|(?P<level>\w)\| (?P<message>.*)$'
+time_format = "%d.%m.%Y %H:%M:%S"               # 可选，strptime 写法；不写时按内置规则识别时间
+levels = { E = "ERROR", W = "WARN", I = "INFO" } # 可选，把私有级别映射到标准级别
+sample = "30.09.2026 14:00:05 |E| upstream reset" # 可选，启动时用它校验 pattern / time_format / levels
+```
+
+写错（正则无效、缺命名分组、级别映射非法、`sample` 对不上）时命令直接报错退出（退出码 2），不会带着错误的格式跑分析。
+用 `log-agent inspect -l app.log` 可以确认识别比例（例如 `识别格式：自定义：legacy-gateway 100%`）。
 
 ## 终端显示
 

@@ -426,6 +426,8 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
             parts.append(f"窗口内 {meta.get('window_lines', 0):,} 行")
         errors = meta.get("errors", 0)
         parts.append(f"ERROR {errors:,}" if errors else "无 ERROR")
+        if meta.get("chains"):
+            parts.append(f"异常链 {meta['chains']} 类")
         if meta.get("cached"):
             parts.append("缓存")
         return sep.join(parts)
