@@ -105,7 +105,16 @@ def render_comparison(name: str, base_desc: str, target_desc: str, base, target,
         out.append("新出现的异常类型：" + "、".join(
             f"{exc} x{target.exceptions[exc]}（首次 L{target.exc_first[exc]}）" for exc in new_exc[:_MAX_ROWS]
         ))
-    if not (new or surged or dropped or new_exc):
+    base_keys = set(base.chains.clusters)
+    new_chains = [c for c in target.chains.top(50) if c.key not in base_keys]
+    if new_chains:
+        out.append("")
+        out.append("新出现的根因异常（按根因 + 业务栈帧）：")
+        for cluster in new_chains[:_MAX_ROWS]:
+            frame = cluster.example.app_frame
+            where = f" @ {redact(frame.describe())}" if frame else ""
+            out.append(f"  x{cluster.count}（首次 L{cluster.first_line}）  {redact(cluster.describe_root())}{where}")
+    if not (new or surged or dropped or new_exc or new_chains):
         out.append("")
         out.append("两段的错误签名没有明显差异。")
     return "\n".join(out)

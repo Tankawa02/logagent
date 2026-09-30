@@ -104,7 +104,15 @@ _opt_memory = typer.Option(
 @app.callback()
 def _load_config(ctx: typer.Context) -> None:
     """读取配置文件，作为 analyze / chat 各参数的默认值（命令行显式传入的仍然优先）。"""
-    from .config import COMMANDS, ConfigError, apply_to_environment, cli_defaults, load_config, set_loaded
+    from .config import (
+        COMMANDS,
+        ConfigError,
+        apply_log_settings,
+        apply_to_environment,
+        cli_defaults,
+        load_config,
+        set_loaded,
+    )
 
     command = ctx.invoked_subcommand
     if command not in COMMANDS:
@@ -119,6 +127,10 @@ def _load_config(ctx: typer.Context) -> None:
     if not config.files:
         return
     values = config.for_command(command)
+    try:
+        apply_log_settings(values)
+    except ConfigError as exc:
+        _fail(str(exc))
     apply_to_environment(values)
     existing = dict(ctx.default_map or {})
     existing[command] = {**cli_defaults(values), **existing.get(command, {})}
