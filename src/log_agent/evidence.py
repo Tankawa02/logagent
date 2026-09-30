@@ -28,13 +28,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .logfile import open_log, read_text_file
-from .redact import redact_code, redact_log
+from .redact import redact_code_lines, redact_log
 
 Status = Literal["verified", "shifted", "mismatch", "unresolved"]
 
 # 行号偏移的容忍范围：模型常把多行堆栈的起止行记偏一两行
 SHIFT_TOLERANCE = 5
-# 单条证据最多回查的行数，防止 line_end 写成超大值时读穿大日志
+# 单条证据最多回查的行数，防止 line_end 写成超大值时读穿大日志。
+# 超出部分没查到时标为“无法核对”，不会把后面可能存在的真实摘录误判为不符。
 MAX_CHECK_LINES = 500
 # 单行参与模糊比对的最大长度，避免超长 JSON 行拖慢 difflib
 _FUZZY_LINE_CHARS = 2000
@@ -48,6 +49,8 @@ _PREFIX = re.compile(r"^\s*(?:[^\s:|]+:)?\d+(?:\s*\|\s?|[:\-](?:\s|$)|\s{2,})")
 # 摘录里的省略号与工具的截断提示：两侧片段分别匹配
 _SPLIT = re.compile(r"\s*(?:…*\s*[(（]本行共\s*\d+\s*字[，,]已截断[^)）]*[)）]|…+|\.{3,})\s*")
 _SPACES = re.compile(r"\s+")
+# 工具输出的头尾说明行（`--- app.log 第 1-20 行 ---`、`... 还有 N 行未显示`），不是原文，摘录里出现时忽略
+_TOOL_CHROME = re.compile(r"^\s*(?:---\s.*\s---|\.\.\.\s*(?:还有|diff\s))")
 _LINE_SUFFIX = re.compile(r":(\d+)(?:\s*[-–~]\s*\d+)?$")
 
 
@@ -144,6 +147,8 @@ def _requirements(excerpt: str) -> list[list[list[str]]]:
     """摘录的每一行 -> 若干备选写法 -> 每种写法切出的片段。"""
     reqs: list[list[list[str]]] = []
     for line in excerpt.splitlines():
+        if _TOOL_CHROME.match(line):
+            continue
         variants: list[list[str]] = []
         forms = [line]
         stripped = _PREFIX.sub("", line, count=1)
@@ -158,8 +163,14 @@ def _requirements(excerpt: str) -> list[list[list[str]]]:
     return reqs
 
 
+_DIGITS = re.compile(r"\d+")
+
+
 def _fuzzy_contains(piece: str, line: str) -> bool:
     if len(piece) < 12:  # 短片段不做模糊匹配，避免误判为命中
+        return False
+    # 数字（id、行号、状态码、耗时）必须原样出现：编造的引用往往就是改了数字，不能被“相似度够高”放过
+    if any(number not in line for number in _DIGITS.findall(piece)):
         return False
     line = line[:_FUZZY_LINE_CHARS]
     matcher = SequenceMatcher(None, piece, line, autojunk=False)
@@ -212,9 +223,9 @@ def _read_log_lines(path: Path, lo: int, hi: int) -> tuple[dict[int, str], int |
 def _read_code_lines(path: Path, lo: int, hi: int) -> tuple[dict[int, str], int | None]:
     if path.stat().st_size > _MAX_CODE_BYTES:
         raise OSError("文件过大，跳过核对")
-    all_lines = read_text_file(path).splitlines()
-    raw = {n: all_lines[n - 1] for n in range(lo, min(hi, len(all_lines)) + 1)}
-    return _redact_lines(raw, redact_code), len(all_lines)
+    # 与 read_code_file 一致：整份文件脱敏后再取区间
+    all_lines = redact_code_lines(read_text_file(path).splitlines())
+    return {n: all_lines[n - 1] for n in range(lo, min(hi, len(all_lines)) + 1)}, len(all_lines)
 
 
 def _redact_lines(raw: dict[int, str], redact) -> dict[int, str]:
@@ -249,8 +260,8 @@ def check_one(resolver: SourceResolver, evidence: dict[str, Any], issue: int, in
     lo, hi = max(1, start - SHIFT_TOLERANCE), checked_end + SHIFT_TOLERANCE
     try:
         lines, total = (_read_log_lines if kind == "log" else _read_code_lines)(path, lo, hi)
-    except Exception as exc:
-        result.note = redact_log(f"读取失败：{exc}")
+    except Exception as exc:  # noqa: BLE001 — 损坏的 gzip 会抛 EOFError / zlib.error；核对失败不能打断本轮结果
+        result.note = redact_log(f"读取失败：{type(exc).__name__}: {exc}")
         return result
 
     if start not in lines:
@@ -285,6 +296,14 @@ def check_one(resolver: SourceResolver, evidence: dict[str, Any], issue: int, in
     return result
 
 
+def _safe_check(resolver: SourceResolver, evidence: dict[str, Any], issue: int, index: int) -> EvidenceResult:
+    try:
+        return check_one(resolver, evidence, issue, index)
+    except Exception as exc:  # noqa: BLE001
+        return EvidenceResult(issue, index, str(evidence.get("source", "")), int(evidence.get("line_start", 0)),
+                              int(evidence.get("line_end", 0)), "unresolved", f"核对出错：{type(exc).__name__}: {exc}")
+
+
 def check_analysis(
     analysis: dict[str, Any] | None, log_paths: Sequence[str | Path], code_dirs: Sequence[str | Path],
 ) -> dict[str, Any] | None:
@@ -293,7 +312,7 @@ def check_analysis(
         return None
     resolver = SourceResolver(log_paths, code_dirs)
     items = [
-        check_one(resolver, evidence, i, j)
+        _safe_check(resolver, evidence, i, j)
         for i, issue in enumerate(analysis.get("issues") or [], start=1)
         for j, evidence in enumerate(issue.get("evidence") or [], start=1)
     ]
