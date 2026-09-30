@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from typer.testing import CliRunner
 
-from log_agent import cli, redact
+from log_agent import cli, evidence, redact
 from log_agent.evidence import SourceResolver, check_analysis, check_one, summary_line
 from log_agent.export import build_payload, to_markdown
 from log_agent.render import TurnResult
@@ -103,6 +103,35 @@ def test_gzip_logs_are_checked(tmp_path: Path) -> None:
     assert item.status == "verified"
 
 
+def test_truncated_gzip_is_unresolved(tmp_path: Path) -> None:
+    path = tmp_path / "truncated.log.gz"
+    path.write_bytes(gzip.compress(b"ERROR request failed\n")[:-8])
+    item = check_one(SourceResolver([path], []), _ev(path.name, 1, 1, "ERROR request failed"), 1, 1)
+    assert item.status == "unresolved" and "读取失败" in item.note
+
+
+@pytest.mark.parametrize("kind", ["log", "code"])
+@pytest.mark.parametrize(("position", "expected"), [
+    (500, "verified"), (501, "verified"), (505, "verified"), (506, "unresolved"), (600, "unresolved"),
+])
+def test_scan_limit_never_claims_unchecked_evidence_is_absent(tmp_path: Path, kind: str,
+                                                           position: int, expected: str) -> None:
+    path = tmp_path / ("large.log" if kind == "log" else "large.py")
+    lines = ["ordinary source line\n"] * 700
+    lines[position - 1] = "unique failure marker\n"
+    path.write_text("".join(lines), encoding="utf-8")
+    resolver = SourceResolver([path], []) if kind == "log" else SourceResolver([], [tmp_path])
+    item = check_one(resolver, _ev(path.name, 1, 700, "unique failure marker"), 1, 1)
+    assert item.status == expected
+    if expected == "unresolved":
+        assert "500 行的核对上限" in item.note and "未覆盖完整引用范围 1-700" in item.note
+
+
+def test_scan_limit_allows_mismatch_when_eof_proves_range_was_checked(sample_log: Path) -> None:
+    item = _check(sample_log, source="app.log", start=1, end=1000, excerpt="invented failure marker")
+    assert item["status"] == "mismatch"
+
+
 @pytest.mark.parametrize("source", ["app/order.py", "repo/app/order.py", "app\\order.py"])
 def test_code_sources_resolve_relative_to_code_dir(sample_log: Path, code_repo: Path, source: str) -> None:
     item = _check(sample_log, [code_repo], source=source, start=3, end=3, excerpt="3 | return order['order_id']")
@@ -190,6 +219,38 @@ def test_fail_on_undecided_when_all_evidence_fails(monkeypatch: pytest.MonkeyPat
     result = _run(monkeypatch, sample_log, data, "--fail-on", "low")
     assert result.exit_code == 4, result.output
     assert "与原文不符" in result.output
+
+
+def test_fail_on_undecided_when_all_evidence_is_unresolved(monkeypatch: pytest.MonkeyPatch,
+                                                         sample_log: Path, tmp_path: Path) -> None:
+    out = tmp_path / "unresolved.json"
+    data = _analysis_with(_ev("unknown.log", 4, 4, "payment failed order=1001"))
+    result = _run(monkeypatch, sample_log, data, "-o", str(out), "--fail-on", "low")
+    assert result.exit_code == 4, result.output
+    check = json.loads(out.read_text(encoding="utf-8"))["evidence_check"]
+    assert check["status"] == "unverifiable" and check["unresolved"] == 1
+    assert "无法据此判定" in result.output
+
+
+@pytest.mark.parametrize("fail_on", [False, True])
+@pytest.mark.parametrize("failure_stage", ["read", "check"])
+def test_evidence_failure_preserves_report(monkeypatch: pytest.MonkeyPatch, sample_log: Path,
+                                          tmp_path: Path, failure_stage: str, fail_on: bool) -> None:
+    def fail(*args):
+        raise EOFError("truncated stream")
+
+    monkeypatch.setattr(evidence, "_read_log_lines" if failure_stage == "read" else "check_analysis", fail)
+    out = tmp_path / "preserved.json"
+    args = ["-o", str(out), *(["--fail-on", "low"] if fail_on else [])]
+    data = analysis_data()
+    result = _run(monkeypatch, sample_log, data, *args)
+    assert result.exit_code == (4 if fail_on else 0), result.output
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["analysis"] == data
+    assert payload["status"] == "ok" and payload["report"] == "完整推导：请求 → 校验 → 异常"
+    assert payload["evidence_check"]["status"] == "unverifiable"
+    assert "truncated stream" in result.output
+    assert "truncated stream" in to_markdown(payload)
 
 
 def test_fail_on_downgrades_confidence_on_partial_mismatch(monkeypatch: pytest.MonkeyPatch, sample_log: Path) -> None:

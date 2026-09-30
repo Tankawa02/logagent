@@ -1160,6 +1160,16 @@ class StreamRenderer:
         elif self.linker is not None:
             from .evidence import check_analysis
 
-            result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
+            try:
+                result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
+            except Exception as exc:
+                from .redact import redact_log
+
+                # 核对是附加步骤：异常不能丢弃报告，也不能被当成“未做核对”而通过 --fail-on。
+                result.evidence_check = {
+                    "status": "unverifiable", "total": 0, "verified": 0, "shifted": 0,
+                    "mismatch": 0, "unresolved": 0, "items": [],
+                    "error": redact_log(f"{type(exc).__name__}: {exc}"),
+                }
             print_evidence_check(result.evidence_check)
         return result

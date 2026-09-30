@@ -249,8 +249,8 @@ def check_one(resolver: SourceResolver, evidence: dict[str, Any], issue: int, in
     lo, hi = max(1, start - SHIFT_TOLERANCE), checked_end + SHIFT_TOLERANCE
     try:
         lines, total = (_read_log_lines if kind == "log" else _read_code_lines)(path, lo, hi)
-    except OSError as exc:
-        result.note = f"读取失败：{exc}"
+    except Exception as exc:
+        result.note = redact_log(f"读取失败：{exc}")
         return result
 
     if start not in lines:
@@ -258,8 +258,15 @@ def check_one(resolver: SourceResolver, evidence: dict[str, Any], issue: int, in
         result.note = f"行号超出文件范围（共 {total:,} 行）" if total is not None else "行号超出文件范围"
         return result
 
-    if _locate(reqs, lines, start, checked_end) is not None:
+    # 容差窗口也可能落在原引用范围内，此处命中仍是 verified，而非行号偏移。
+    if _locate(reqs, lines, start, min(end, hi)) is not None:
         result.status = "verified"
+        return result
+    if end > hi and (total is None or total > hi):
+        result.note = (
+            f"达到单条证据 {MAX_CHECK_LINES} 行的核对上限，仅检查第 {lo}-{hi} 行（含偏移容差）；"
+            f"未覆盖完整引用范围 {start}-{end}，无法判定摘录是否存在"
+        )
         return result
     hits = _locate(reqs, lines, lo, hi)
     if hits is not None:
@@ -334,6 +341,8 @@ def item_label(item: dict[str, Any]) -> str:
 
 def summary_line(check: dict[str, Any]) -> str:
     """一句话概括核对结果，用于终端与 Markdown 元信息。"""
+    if check.get("error"):
+        return f"核对失败，无法判定：{check['error']}"
     total = check["total"]
     supported = check["verified"] + check["shifted"]
     parts = [f"{supported}/{total} 条与原文一致"]
