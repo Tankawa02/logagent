@@ -168,7 +168,10 @@ def equivalent(a: str, b: str) -> bool:
 def clean_text(text: str) -> str:
     """存储前统一处理：压缩空白、截断、脱敏（与工具输出同一套规则，跟随 --no-redact 开关）。"""
     text = redact.redact_log(str(text))
-    return " ".join(text.split())[:MAX_TEXT]
+    text = " ".join(text.split())
+    # 私钥按行遮盖（保持行号），存成一行后连续的占位符合并为一个
+    mask = re.escape(redact.KEY_MASK)
+    return re.sub(f"{mask}(?: {mask})+", redact.KEY_MASK, text)[:MAX_TEXT]
 
 
 @dataclass

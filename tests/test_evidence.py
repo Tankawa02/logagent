@@ -53,6 +53,15 @@ def test_off_by_a_few_lines_is_shifted_with_actual_range(sample_log: Path) -> No
     assert "第 4-4 行" in item["note"]
 
 
+def test_fuzzy_match_never_tolerates_changed_numbers(sample_log: Path) -> None:
+    # 只改一个数字的“近似”摘录：字符相似度很高，但数字对不上，必须判为不符
+    item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order] payment failed order=1009")
+    assert item["status"] == "mismatch"
+    # 标点、空白的细微差异仍然放过
+    item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order]: payment failed, order=1001")
+    assert item["status"] == "verified"
+
+
 def test_fabricated_excerpt_is_mismatch(sample_log: Path) -> None:
     item = _check(sample_log, source="app.log", start=4, end=4, excerpt="NullPointerException at Router.select")
     assert item["status"] == "mismatch"
@@ -257,3 +266,45 @@ def test_fail_on_downgrades_confidence_on_partial_mismatch(monkeypatch: pytest.M
     data = _analysis_with(_ev("app.log", 4, 4, "payment failed order=1001"), _ev("app.log", 9, 9, "invented"))
     assert _run(monkeypatch, sample_log, data, "--fail-on", "high").exit_code == 0   # 高 → 按中判断
     assert _run(monkeypatch, sample_log, data, "--fail-on", "medium").exit_code == 3
+
+
+# ---------------------------------------------------------------------------
+# 审查修复的回归用例
+# ---------------------------------------------------------------------------
+
+
+def test_fail_on_undecided_when_no_evidence_can_be_checked(monkeypatch: pytest.MonkeyPatch, sample_log: Path) -> None:
+    data = _analysis_with(_ev("elsewhere.log", 4, 4, "payment failed"))
+    assert _run(monkeypatch, sample_log, data, "--fail-on", "low").exit_code == 4
+
+
+def test_key_excerpt_copied_from_read_code_file_is_verified(sample_log: Path, code_repo: Path) -> None:
+    from log_agent import tools
+
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
+    lines = ['KEY = """', "-----BEGIN PRIVATE KEY-----", body, "-----END PRIVATE KEY-----", '"""', "x = 1"]
+    (code_repo / "app" / "keys.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # 只读私钥正文中间一行也要遮住
+    assert body not in str(tools.read_code_file(str(code_repo), "app/keys.py", 3, 3))
+    shown = str(tools.read_code_file(str(code_repo), "app/keys.py", 2, 4))
+    assert body not in shown and shown.count("[私钥已脱敏]") == 3
+    # 整段照抄工具输出（含头尾说明行）也应通过
+    item = _check(sample_log, [code_repo], source="app/keys.py", start=2, end=4, excerpt=shown)
+    assert item["status"] == "verified", item
+
+
+def test_large_range_beyond_scan_limit_is_unresolved_not_mismatch(tmp_path: Path) -> None:
+    log = tmp_path / "long.log"
+    log.write_text("".join(f"2026-06-09 10:00:00 INFO line {i}\n" for i in range(1, 3001)), encoding="utf-8")
+    resolver = SourceResolver([str(log)], [])
+    assert check_one(resolver, _ev("long.log", 100, 1500, "INFO line 400"), 1, 1).status == "verified"
+    beyond = check_one(resolver, _ev("long.log", 100, 1500, "INFO line 1400"), 1, 1)
+    assert beyond.status == "unresolved" and "核对上限" in beyond.note
+
+
+def test_corrupt_gzip_does_not_crash_the_turn(tmp_path: Path) -> None:
+    path = tmp_path / "bad.log.gz"
+    data = gzip.compress(b"".join(b"2026-06-09 10:00:00 ERROR boom %d\n" % i for i in range(5000)))
+    path.write_bytes(data[: len(data) // 2])
+    check = check_analysis(_analysis_with(_ev("bad.log.gz", 4000, 4000, "ERROR boom 3999")), [str(path)], [])
+    assert check["items"][0]["status"] in {"unresolved", "mismatch"}
