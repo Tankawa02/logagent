@@ -287,7 +287,10 @@ class MemoryStore:
             cur = self.conn.execute(
                 "UPDATE memories SET text = ?, updated_at = ? WHERE id = ?", (clean_text(text), _ts(_now()), memory_id)
             )
-        return self.get(memory_id) if cur.rowcount else None
+            memory = self.get(memory_id) if cur.rowcount else None
+            if memory is not None:
+                self._drop_duplicate_candidates(memory.project, memory.kind, memory.text)
+        return memory
 
     def remove(self, memory_id: int) -> Memory | None:
         memory = self.get(memory_id)
@@ -345,10 +348,17 @@ class MemoryStore:
 
     def accept(self, candidate: Candidate, text: str | None = None, *, replace_id: int | None = None) -> Memory:
         with self.conn:
-            memory, _ = self._write_memory(
-                text or candidate.text, candidate.kind, candidate.project, "suggested", replace_id=replace_id
-            )
+            # 先取得写锁，再复核已保存记忆；旧 review 列表或其他进程可能已保存了等价内容。
+            # 后续失败会连同候选删除一起回滚。
             self.conn.execute("DELETE FROM memory_candidates WHERE id = ?", (candidate.id,))
+            saved_text = clean_text(text or candidate.text)
+            for existing in self.memories(candidate.project):
+                if existing.kind == candidate.kind and equivalent(existing.text, saved_text):
+                    self._drop_duplicate_candidates(existing.project, existing.kind, existing.text)
+                    return existing
+            memory, _ = self._write_memory(
+                saved_text, candidate.kind, candidate.project, "suggested", replace_id=replace_id
+            )
         return memory
 
     def reject(self, candidate: Candidate, *, permanent: bool) -> None:
@@ -380,8 +390,14 @@ class MemoryStore:
         return Candidate(cid, kind, project, text, signal, int(occurrences), json.loads(sessions or "[]"), first_seen, last_seen)
 
     def _drop_duplicate_candidates(self, project: str | None, kind: str, text: str) -> None:
-        self.conn.execute(
-            "DELETE FROM memory_candidates WHERE project IS ? AND kind = ? AND text = ?", (project, kind, text)
+        """清理能看到这条记忆的等价候选：全局记忆覆盖所有范围，项目记忆只覆盖本项目。"""
+        rows = self.conn.execute(
+            "SELECT id, text FROM memory_candidates WHERE kind = ? AND (? IS NULL OR project = ?)",
+            (kind, project, project),
+        ).fetchall()
+        self.conn.executemany(
+            "DELETE FROM memory_candidates WHERE id = ?",
+            [(candidate_id,) for candidate_id, candidate_text in rows if equivalent(candidate_text, text)],
         )
 
     def _cap_candidates(self, project: str | None) -> None:
