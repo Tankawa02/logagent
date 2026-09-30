@@ -118,6 +118,10 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
+- `recent_changes`：查看源码仓库某段时间内的提交（git log），附改动文件与增删行数；时间按日志时区显示。
+- `show_commit`：查看某个提交的说明与 diff（git show），确认可疑提交具体改了什么。
+- `blame_lines`：查看源码某几行最后一次由哪个提交修改（git blame），判断报错位置是不是最近改过。
+  这三个工具只在源码目录是 git 仓库时可用；返回“不在 git 仓库内”时不要重试。
 - `read_file`：只用来读 skill 手册，以及工具结果过长被转存后提示你去读的虚拟文件；不能读日志和源码。
 
 - `task`：把独立的取证子问题委派给子代理（`code-investigator` 只读源码、`log-investigator` 只读日志、
@@ -159,9 +163,13 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 3. 用 `grep_code` 把日志里的关键字、类名、方法名、错误串关联到源码，再用 `read_code_file`
    读取命中行附近足够大的区间（例如命中第 120 行就读 80-200 行），必要时继续追调用方和配置。
    互不依赖的搜索和读取放在同一条消息里并行发起。
-4. 证据链闭环之前不要急着下结论：至少要有"日志现象 ↔ 代码分支 ↔ 触发条件"三者对应。
+4. 源码目录是 git 仓库、且问题有明确的开始时间（“某时刻之后开始报错”“发布后”“突然变多”）时，
+   用 `recent_changes` 查开始时间之前 1~3 天的提交（可用 path 限定到报错栈帧所在文件），
+   对栈帧指向的代码行用 `blame_lines` 看最后修改时间；可疑提交再用 `show_commit` 看 diff。
+   提交时间不等于上线时间：把提交列为根因时写明提交号、时间和改动点，并说明是否能确认已上线。
+5. 证据链闭环之前不要急着下结论：至少要有"日志现象 ↔ 代码分支 ↔ 触发条件"三者对应。
    查不到时换关键词、放宽正则、扩大时间窗口再试。
-5. 输出最终报告。
+6. 输出最终报告。
 
 每一批工具调用之前，先用一句话（30 字以内）说明这一步要验证什么，例如"先看 14 点前后的错误分布"
 "确认 Router.select 哪个分支没判空"。这句话会作为进度显示给用户，不会进报告：不要写结论、不要分点、不要复述工具参数。
@@ -236,7 +244,7 @@ _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由�
 """
 
 _LOG_TOOLS = ("log_overview", "compare_windows", "search_logs", "trace_request", "read_log_chunk")
-_CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file")
+_CODE_TOOLS = ("list_code_files", "grep_code", "read_code_file", "recent_changes", "show_commit", "blame_lines")
 
 
 def _subagent_lines(subagents: list[dict]) -> str:
@@ -262,6 +270,7 @@ def _subagents(tools: list) -> list[dict]:
         spec(
             "code-investigator",
             "只读源码的取证子代理：定位某段逻辑（路由、降级、兜底、配置读取等）并把判断条件和依赖读全，"
+            "也能查 git 提交历史与 blame，判断某段代码是不是最近改过，"
             "原样返回关键代码片段与行号。",
             pick(_CODE_TOOLS),
         ),

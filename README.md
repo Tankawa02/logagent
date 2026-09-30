@@ -18,6 +18,8 @@
 - 大日志友好：稀疏行索引让跳读 GB 级日志的第 N 行近乎瞬时，超长单行自动截断
 - 默认脱敏：token、密码、手机号、身份证、邮箱、IP 在发给模型前打码
 - 报告可导出为 Markdown / JSON，方便贴进工单或接入自动化
+- 证据回查：报告里每条证据的 `文件:行号` 与摘录都会在本地回读原文核对，编造或记错的引用会被标出来
+- 关联代码变更：源码目录是 git 仓库时，agent 能查问题开始前的提交、报错行的 blame 和可疑提交的 diff
 - 利用 deepagents 的子代理委派与上下文压缩
 - 使用 OpenAI 模型（可切换其他 provider）
 - 跨平台：macOS / Linux / Windows 行为一致（搜索为纯 Python 实现，不依赖系统 `grep`）
@@ -447,6 +449,7 @@ JSON `schema_version: 2` 保留原有 `report`、`logs`、`code`、`settings`、
 | `issues[].reproduction_conditions`、`verification_steps` | 复现条件与验证方法（字符串列表） |
 | `analysis.open_questions` | 整轮分析的待确认项 |
 | `structured_status` | `valid` / `missing` / `invalid`，结构化字段校验结果 |
+| `evidence_check` | 证据回查结果：`status`、各状态计数与逐条 `items`，见下方「证据回查」 |
 | `view`、`rendered_report` | 所选用途及其 Markdown 正文；JSON 始终保留全部结构化数据 |
 
 `settings` 记录分析当时的 `since`、`until`、`timezone`、`baseline` 等设置；`logs`、`code` 记录当时的来源路径，
@@ -458,6 +461,48 @@ JSON `schema_version: 2` 保留原有 `report`、`logs`、`code`、`settings`、
 保留原始回答并提示无法判定；旧版纯文本报告仍可导出，但不会从文字猜造问题列表。
 中断或失败时即使已有结构化数据，顶层 `finding` 仍为 `null`，应先检查 `status`。
 已有自动化若依赖“未发现异常”措辞，需要改为读取显式判定；`--fail-on` 遇到缺失数据会返回 `4`，不会当作通过。
+
+### 证据回查
+
+每轮分析结束后，程序会把结构化报告里的每条证据按 `source` 和行号**在本地重新读取原文**，
+以工具当时给模型看的样子（同样的脱敏）核对 `excerpt`，不额外调用模型：
+
+| 状态 | 含义 |
+| --- | --- |
+| `verified` | 摘录出现在所引行内 |
+| `shifted` | 摘录真实存在，但落在所引行附近 5 行内（行号记偏），会给出实际行号 |
+| `mismatch` | 所引行找不到摘录，或行号超出文件范围——引用很可能是编造或记错的 |
+| `unresolved` | 来源对应不到本次的日志 / 源码，或读取失败，无法核对 |
+
+比对只为抓编造，不挑措辞：会去掉 `42: `、`42 | ` 这类行号前缀，按 `…` 和截断提示分段匹配，
+忽略空白与全半角差异，仍不命中时允许极小的字符差异。
+
+- 终端里在报告后给出一行结果；有问题的证据逐条列出（最多 3 条）。
+- Markdown 导出在每条证据后标注 `✓ 已核对原文` / `△ 行号偏移` / `✗ 与原文不符` / `? 无法核对`，元信息里有汇总。
+- JSON 导出新增 `evidence_check`，`items[]` 含 `issue`、`index`、`status`、`note`、`actual_start` / `actual_end`。
+- `--fail-on`：所有证据都未通过核对时退出码为 `4`（无法判定）；部分不符时按**降一级**的可信度判断门槛。
+  报告里模型给出的 `confidence` 原样保留，不被改写。
+
+### 关联代码变更（git）
+
+`-c` 指向的源码目录是 git 仓库（或仓库的子目录）时，agent 多了三个只读工具：
+
+| 工具 | 作用 |
+| --- | --- |
+| `recent_changes` | 某段时间内的提交（`git log`），附改动文件与增删行数，可按路径过滤 |
+| `blame_lines` | 源码某几行最后一次由哪个提交修改（`git blame`），会标出未提交的本地修改 |
+| `show_commit` | 某个提交的说明与 diff（`git show`），合并提交显示相对第一父提交的改动 |
+
+典型链路：日志确定问题从 14:02 开始 → `recent_changes` 查之前 1～3 天的提交 → 对栈帧指向的行 `blame_lines`
+→ 可疑提交 `show_commit` 看改动。提交时间按 `--timezone` 显示，便于和日志直接对比；
+提交时间不等于上线时间，agent 在把提交列为根因时会说明这一点。
+
+```bash
+# 问题里说清时间，agent 会自己去查这段时间前后的提交
+log-agent analyze -l app.log -c ./repo --timezone +08:00 -q "14:02 之后开始大量 KeyError，是不是最近的改动引起的？"
+```
+
+需要本机装有 git；不是 git 仓库时这些工具只返回提示，不影响其它分析。提交说明按日志规则脱敏，diff 按源码规则脱敏。
 
 ## 终端显示
 
@@ -495,6 +540,7 @@ JSON `schema_version: 2` 保留原有 `report`、`logs`、`code`、`settings`、
 ## 安全说明
 
 - 所有工具均为**只读**，agent 不会修改你的日志或源码。
+- git 工具只执行 `log` / `show` / `blame` / `status` / `rev-parse`，关闭分页器、外部 diff、textconv 与交互提示，不会改动仓库。
 - 日志/源码内容会发送给模型服务。工具输出默认先脱敏：日志中的 token / 密码 / 手机号 / 身份证（带校验位校验，
   不会误伤订单号）/ 邮箱 / IP（同一 IP 映射为同一代号，仍能区分机器）会被打码；源码只打明确的密钥
   （`sk-`、AccessKey、JWT、Bearer），不改动代码本身。规则无法覆盖所有业务字段，高敏数据建议改用本地模型。

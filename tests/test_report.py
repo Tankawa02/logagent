@@ -20,8 +20,8 @@ def analysis_data(assessment="finding", confidence="high"):
         "impact": "已观察到一条请求失败，整体影响待确认", "next_steps": ["确认入参"],
         "issues": [] if assessment == "clear" else [{
             "title": "缺少 order_id", "symptoms": "支付返回 500", "impact": "请求 abc",
-            "evidence": [{"source": "app.log", "line_start": 7, "line_end": 8,
-                          "excerpt": "ERROR [已脱敏]\nKeyError: order_id"}],
+            "evidence": [{"source": "app.log", "line_start": 4, "line_end": 7,
+                          "excerpt": "ERROR [order] payment failed order=1001\nKeyError: 'order_id'"}],
             "root_cause_hypotheses": [{"explanation": "入参缺少字段", "confidence": "medium",
                                        "reasoning": "日志显示 KeyError，还需核对请求参数"}],
             "open_questions": ["上游是否遗漏"], "recommendations": ["增加入参校验"],
@@ -106,7 +106,7 @@ def test_analyze_structured_export_and_fail_on(tmp_path, sample_log, monkeypatch
     assert out.exit_code == 3, out.output
     assert '"assessment"' not in out.output
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["analysis"]["issues"][0]["evidence"][0]["line_start"] == 7
+    assert saved["analysis"]["issues"][0]["evidence"][0]["line_start"] == 4
     assert saved["settings"]["timezone"] == "+08:00"
     assert "验证方法" in saved["rendered_report"]
 

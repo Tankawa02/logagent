@@ -69,6 +69,8 @@ class CitationLinker:
 
     def __init__(self, log_paths: Sequence[str], code_dirs: Sequence[str], mode: str | None = None) -> None:
         self.mode = mode or link_mode()
+        # 原样保留本次来源，供证据回查（evidence.check_analysis）按同一份清单解析
+        self.log_paths = [str(p) for p in log_paths]
         self.code_dirs = [Path(p) for p in code_dirs]
         self._logs: dict[str, Path | None] = {}
         for raw in log_paths:

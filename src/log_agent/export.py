@@ -21,6 +21,7 @@ def build_payload(
         "schema_version": 2,
         "analysis": deepcopy(result.analysis),
         "structured_status": result.structured_status,
+        "evidence_check": deepcopy(result.evidence_check),
         "tool": "log-agent",
         "version": __version__,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -56,6 +57,11 @@ def to_markdown(payload: dict[str, Any], view: str = "detailed") -> str:
     analysis = payload.get("analysis")
     if analysis:
         meta.append(f"- 异常判定：{analysis['assessment']} · 可信度：{analysis['confidence']}")
+    check = payload.get("evidence_check")
+    if check:
+        from .evidence import summary_line
+
+        meta.append(f"- 证据核对：{summary_line(check)}")
     settings = payload.get("settings", {})
     if settings:
         meta.extend([

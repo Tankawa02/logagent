@@ -37,6 +37,9 @@ _TOOL_META: dict[str, tuple[str, str]] = {
     "list_code_files": ("code", "浏览源码"),
     "read_code_file": ("code", "读取源码"),
     "grep_code": ("code", "检索源码"),
+    "recent_changes": ("code", "提交记录"),
+    "show_commit": ("code", "查看提交"),
+    "blame_lines": ("code", "代码追溯"),
     "read_file": ("other", "读取文件"),
     "task": ("other", "委派子任务"),
     "suggest_memory": ("other", "建议记忆"),
@@ -355,6 +358,29 @@ def _tool_parts(name: str, args: dict[str, Any]) -> list[tuple[str, str]]:
             parts.append((search_flags(), "muted"))
         if arg("code_dir"):
             parts.append((_path_name(arg("code_dir")), "muted"))
+    elif name == "recent_changes":
+        span = " → ".join(v for v in (arg("since"), arg("until")) if v)
+        if span:
+            parts.append((_clip(span, 40), "accent"))
+        if arg("path"):
+            parts.append((_clip(arg("path"), 32), "accent"))
+        if arg("code_dir"):
+            parts.append((_path_name(arg("code_dir")), "muted"))
+    elif name == "show_commit":
+        if arg("commit"):
+            parts.append((_clip(arg("commit"), 16), "accent"))
+        if arg("path"):
+            parts.append((_clip(arg("path"), 32), "accent"))
+        if arg("code_dir"):
+            parts.append((_path_name(arg("code_dir")), "muted"))
+    elif name == "blame_lines":
+        if arg("rel_path"):
+            parts.append((_clip(arg("rel_path")), "accent"))
+        start = num("start_line", 1)
+        end = num("end_line", 0)
+        parts.append((f"L{start}-{end}" if end > start else f"L{start}", "accent"))
+        if arg("code_dir"):
+            parts.append((_path_name(arg("code_dir")), "muted"))
     elif name == "read_file":
         path = arg("file_path")
         segments = [p for p in path.split("/") if p]
@@ -421,6 +447,17 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
     if name == "read_code_file":
         start, end, total = meta["start"], meta["end"], meta["total_lines"]
         return f"{total} 行" if start == 1 and end == total else f"L{start}-{end} / {total} 行"
+    if name == "recent_changes":
+        if not meta.get("commits"):
+            return "无提交"
+        more = "+" if meta.get("truncated") else ""
+        return f"{meta['commits']}{more} 个提交{sep}最近 {str(meta.get('newest', ''))[:16]}"
+    if name == "show_commit":
+        return f"{meta.get('files', 0)} 个文件{sep}+{meta.get('additions', 0)} -{meta.get('deletions', 0)}"
+    if name == "blame_lines":
+        newest = str(meta.get("newest", ""))[:16]
+        text = f"{meta.get('commits', 0)} 个提交" + (f"{sep}最近 {newest}" if newest else "")
+        return text + (f"{sep}含未提交修改" if meta.get("uncommitted") else "")
     if name == "grep_code":
         more = "+" if meta.get("truncated") else ""
         return f"命中 {meta.get('hits', 0)}{more} 处{sep}{meta.get('files', 0)} 个文件"
@@ -691,6 +728,8 @@ class TurnResult:
 
     analysis: dict | None = field(default=None, init=False)
     structured_status: str = field(default="missing", init=False)
+    # 证据回查结果（见 evidence.check_analysis）；没有结构化证据或未提供来源时为 None
+    evidence_check: dict | None = field(default=None, init=False)
 
     def __post_init__(self):
         self.report, self.analysis, self.structured_status = extract_analysis(self.report)
@@ -708,6 +747,28 @@ class TurnResult:
     @property
     def ok(self) -> bool:
         return not self.interrupted and not self.error
+
+
+def print_evidence_check(check: dict | None, limit: int = 3) -> None:
+    """终端里用一两行交代证据回查结果；全部通过时只给一行弱提示。"""
+    if not check:
+        return
+    from .evidence import summary_line
+
+    line = summary_line(check)
+    if check["status"] == "verified":
+        console.print(Text(f"{glyphs.ok} 证据核对：{line}", style="muted"))
+        return
+    style = "warn" if check["mismatch"] else "muted"
+    console.print(Text(f"{glyphs.notice} 证据核对：{line}", style=style))
+    flagged = [it for it in check["items"] if it["status"] in ("mismatch", "unresolved")]
+    for item in flagged[:limit]:
+        mark = glyphs.fail if item["status"] == "mismatch" else "?"
+        ref = f"{item['source']}:{item['line_start']}" + (
+            f"-{item['line_end']}" if item["line_end"] != item["line_start"] else "")
+        console.print(Text(f"    {mark} 问题 {item['issue']} · {ref}  {item['note']}", style=style))
+    if len(flagged) > limit:
+        console.print(Text(f"    … 另有 {len(flagged) - limit} 条，详见导出报告", style="muted"))
 
 
 class StreamRenderer:
@@ -1096,4 +1157,9 @@ class StreamRenderer:
         )
         if result.structured_status != "valid":
             console.print(Text("未获取到有效结构化报告，保留原始回答；自动化异常判定为未知。", style="warn"))
+        elif self.linker is not None:
+            from .evidence import check_analysis
+
+            result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
+            print_evidence_check(result.evidence_check)
         return result
