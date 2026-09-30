@@ -133,7 +133,7 @@ def _bigrams(text: str) -> set[str]:
 
 
 def similar(a: str, b: str) -> bool:
-    """字符二元组 Dice 系数：只用于判断"是不是同一条"，判错的代价是多问或少问一次。"""
+    """字符二元组 Dice 系数：用于推荐替换目标和拒绝冷却，不作为自动覆盖依据。"""
     left, right = _bigrams(a), _bigrams(b)
     if not left or not right:
         return False
@@ -142,8 +142,8 @@ def similar(a: str, b: str) -> bool:
 
 def clean_text(text: str) -> str:
     """存储前统一处理：压缩空白、截断、脱敏（与工具输出同一套规则，跟随 --no-redact 开关）。"""
-    text = " ".join(str(text).split())[:MAX_TEXT]
-    return redact.redact_log(text)
+    text = redact.redact_log(str(text))
+    return " ".join(text.split())[:MAX_TEXT]
 
 
 @dataclass
@@ -222,27 +222,45 @@ class MemoryStore:
         ).fetchone()
         return Memory(*row) if row else None
 
-    def add(self, text: str, kind: str, project: str | None, origin: str = "explicit") -> tuple[Memory, bool]:
-        """保存一条记忆，返回 (记忆, 是否更新了已有的相似条目)。
+    def add(
+        self, text: str, kind: str, project: str | None, origin: str = "explicit", *, replace_id: int | None = None
+    ) -> tuple[Memory, bool]:
+        """保存记忆；仅完全重复时去重，替换必须指定同类型、同范围的 ID。"""
+        with self.conn:
+            return self._write_memory(text, kind, project, origin, replace_id=replace_id)
 
-        同范围内已有相似条目时直接改写它（视为纠正），避免同一件事存两条互相矛盾的版本。
-        """
+    def similar_memories(self, text: str, kind: str, project: str | None) -> list[Memory]:
+        text = clean_text(text)
+        memories = [m for m in self._same_scope(project) if m.kind == kind]
+        if any(m.text == text for m in memories):
+            return []
+        return [m for m in memories if similar(m.text, text)]
+
+    def _write_memory(
+        self, text: str, kind: str, project: str | None, origin: str, *, replace_id: int | None = None
+    ) -> tuple[Memory, bool]:
+        """由调用者管理事务，避免嵌套 connection 上下文提前提交。"""
         text = clean_text(text)
         now = _ts(_now())
-        for existing in self._same_scope(project):
-            if existing.kind == kind and similar(existing.text, text):
-                with self.conn:
-                    self.conn.execute(
-                        "UPDATE memories SET text = ?, updated_at = ? WHERE id = ?", (text, now, existing.id)
-                    )
-                self._drop_similar_candidates(project, text)
-                return self.get(existing.id), True  # type: ignore[return-value]
-        with self.conn:
-            cur = self.conn.execute(
-                "INSERT INTO memories (kind, project, text, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (kind, project, text, origin, now, now),
+        if replace_id is not None:
+            existing = self.get(replace_id)
+            if existing is None or existing.project != project or existing.kind != kind:
+                raise ValueError("替换目标已不存在，或类型、范围不匹配，请重新确认。")
+            self.conn.execute(
+                "UPDATE memories SET text = ?, origin = ?, updated_at = ? WHERE id = ?",
+                (text, origin, now, replace_id),
             )
-        self._drop_similar_candidates(project, text)
+            self._drop_duplicate_candidates(project, kind, text)
+            return self.get(replace_id), True  # type: ignore[return-value]
+        for existing in self._same_scope(project):
+            if existing.kind == kind and existing.text == text:
+                self._drop_duplicate_candidates(project, kind, text)
+                return existing, False
+        cur = self.conn.execute(
+            "INSERT INTO memories (kind, project, text, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (kind, project, text, origin, now, now),
+        )
+        self._drop_duplicate_candidates(project, kind, text)
         return self.get(int(cur.lastrowid)), False  # type: ignore[return-value]
 
     def update(self, memory_id: int, text: str) -> Memory | None:
@@ -258,8 +276,8 @@ class MemoryStore:
             return None
         with self.conn:
             self.conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-        # 删掉的内容不该马上又被当成候选提出来
-        self._reject(memory.project, memory.text, permanent=False)
+            # 删掉的内容不该马上又被当成候选提出来
+            self._reject(memory.project, memory.text, permanent=False)
         return memory
 
     def _same_scope(self, project: str | None) -> list[Memory]:
@@ -274,13 +292,13 @@ class MemoryStore:
         text = clean_text(text)
         if not _normalize(text):
             return None
-        if any(similar(m.text, text) for m in self.memories(project)):
+        if any(m.kind == kind and m.text == text for m in self._same_scope(project)):
             return None
         if self._is_rejected(project, text):
             return None
         now = _ts(_now())
         for candidate in self._candidates(project):
-            if candidate.project != project or not similar(candidate.text, text):
+            if candidate.project != project or candidate.kind != kind or candidate.text != text:
                 continue
             sessions = candidate.sessions if session in candidate.sessions else [*candidate.sessions, session][-10:]
             strongest = max(candidate.signal, signal, key=lambda s: _SIGNAL_RANK.get(s, 0))
@@ -306,16 +324,18 @@ class MemoryStore:
         """已经达到确认条件、等用户处理的候选。"""
         return [c for c in self._candidates(project, all_projects=all_projects) if c.due]
 
-    def accept(self, candidate: Candidate, text: str | None = None) -> Memory:
+    def accept(self, candidate: Candidate, text: str | None = None, *, replace_id: int | None = None) -> Memory:
         with self.conn:
+            memory, _ = self._write_memory(
+                text or candidate.text, candidate.kind, candidate.project, "suggested", replace_id=replace_id
+            )
             self.conn.execute("DELETE FROM memory_candidates WHERE id = ?", (candidate.id,))
-        memory, _ = self.add(text or candidate.text, candidate.kind, candidate.project, origin="suggested")
         return memory
 
     def reject(self, candidate: Candidate, *, permanent: bool) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM memory_candidates WHERE id = ?", (candidate.id,))
-        self._reject(candidate.project, candidate.text, permanent=permanent)
+            self._reject(candidate.project, candidate.text, permanent=permanent)
 
     def _candidates(self, project: str | None, *, all_projects: bool = False) -> list[Candidate]:
         sql = (
@@ -340,11 +360,10 @@ class MemoryStore:
         cid, kind, project, text, signal, occurrences, sessions, first_seen, last_seen = row
         return Candidate(cid, kind, project, text, signal, int(occurrences), json.loads(sessions or "[]"), first_seen, last_seen)
 
-    def _drop_similar_candidates(self, project: str | None, text: str) -> None:
-        stale = [c.id for c in self._candidates(project) if similar(c.text, text)]
-        if stale:
-            with self.conn:
-                self.conn.executemany("DELETE FROM memory_candidates WHERE id = ?", [(i,) for i in stale])
+    def _drop_duplicate_candidates(self, project: str | None, kind: str, text: str) -> None:
+        self.conn.execute(
+            "DELETE FROM memory_candidates WHERE project IS ? AND kind = ? AND text = ?", (project, kind, text)
+        )
 
     def _cap_candidates(self, project: str | None) -> None:
         with self.conn:
@@ -359,11 +378,10 @@ class MemoryStore:
     def _reject(self, project: str | None, text: str, *, permanent: bool) -> None:
         now = _now()
         until = None if permanent else _ts(now + REJECT_COOLDOWN)
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO memory_rejections (project, text, until, created_at) VALUES (?, ?, ?, ?)",
-                (project, text, until, _ts(now)),
-            )
+        self.conn.execute(
+            "INSERT INTO memory_rejections (project, text, until, created_at) VALUES (?, ?, ?, ?)",
+            (project, text, until, _ts(now)),
+        )
 
     def _is_rejected(self, project: str | None, text: str) -> bool:
         rows = self.conn.execute(
