@@ -10,6 +10,8 @@
 - 路径一律相对 `code_dir`（与 read_code_file 一致），code_dir 是仓库子目录时也成立。
 - 提交说明按日志规则脱敏，diff 与源码行按源码规则脱敏。
 - 调 git 时关闭分页器、外部 diff、textconv、交互提示与可选锁，不会修改仓库。
+- 不读工作区：仓库配置（fsmonitor、clean/smudge 过滤器、签名校验程序等）可以指定任意命令，
+  而 code_dir 可能指向不可信仓库。所以不跑 `git status`，blame 针对 HEAD，全部命令只读对象库。
 """
 
 from __future__ import annotations
@@ -18,12 +20,14 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from .logfile import clip_line
-from .redact import redact_code, redact_log
+from .redact import redact_code, redact_code_lines, redact_log
 from .timefilter import BOUND_EXAMPLES, default_timezone, parse_bound, utc_stamp
 from .tooloutput import ToolOutput, _err, _hint, _ok
 
@@ -35,6 +39,10 @@ DEFAULT_DIFF_LINES = 300
 MAX_DIFF_LINES = 1000
 MAX_BLAME_LINES = 200
 _DIFF_LINE_CHARS = 400
+# 流式读取 git 输出的上限：超长 diff / 超大文件只读到够用为止，不整体进内存
+_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+_MAX_LINE_BYTES = 64 * 1024
+_MAX_BLOB_BYTES = 5 * 1024 * 1024
 
 _REF = re.compile(r"^[\w./~^@{}+-]{1,200}$")
 _RELATIVE = re.compile(r"^\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago$", re.IGNORECASE)
@@ -57,7 +65,14 @@ class _Repo:
         return f"{self.top.name}/{self.base.relative_to(self.top).as_posix()}"
 
 
-def _run(base: Path, *args: str) -> str:
+# 这些配置都可能让只读命令去执行外部程序，统一在命令行上关掉（命令行 -c 优先于仓库配置）
+_SAFE_CONFIG = (
+    "core.quotepath=off", "color.ui=never", "core.fsmonitor=false", "core.untrackedCache=false",
+    "log.showSignature=false", "diff.external=", "core.pager=cat",
+)
+
+
+def _command(base: Path, args: tuple[str, ...]) -> tuple[list[str], dict[str, str]]:
     env = {
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
@@ -65,7 +80,14 @@ def _run(base: Path, *args: str) -> str:
         "GIT_PAGER": "cat",
         "LC_ALL": "C",
     }
-    cmd = ["git", "-c", "core.quotepath=off", "-c", "color.ui=never", "--no-pager", "-C", str(base), *args]
+    cmd = ["git", "--no-pager"]
+    for item in _SAFE_CONFIG:
+        cmd += ["-c", item]
+    return [*cmd, "-C", str(base), *args], env
+
+
+def _run(base: Path, *args: str) -> str:
+    cmd, env = _command(base, args)
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=GIT_TIMEOUT, env=env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as exc:
@@ -76,6 +98,53 @@ def _run(base: Path, *args: str) -> str:
         message = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
         raise _GitError(message[-1] if message else f"git 退出码 {proc.returncode}")
     return proc.stdout.decode("utf-8", errors="replace")
+
+
+def _run_limited(base: Path, *args: str, max_lines: int, max_bytes: int = _MAX_OUTPUT_BYTES) -> tuple[list[str], bool]:
+    """流式读取 git 输出，最多 max_lines 行 / max_bytes 字节，超出即停止并结束进程。
+
+    返回 (行列表, 是否被截断)。单行超过 _MAX_LINE_BYTES 时只保留开头。
+    """
+    cmd, env = _command(base, args)
+    with tempfile.TemporaryFile() as err:
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, env=env)
+        except OSError as exc:
+            raise _GitError(f"无法执行 git：{exc}") from exc
+        timer = threading.Timer(GIT_TIMEOUT, proc.kill)
+        timer.start()
+        lines: list[str] = []
+        size = 0
+        truncated = False
+        try:
+            assert proc.stdout is not None
+            while True:
+                raw = proc.stdout.readline(_MAX_LINE_BYTES)
+                if not raw:
+                    break
+                if not raw.endswith(b"\n") and len(raw) == _MAX_LINE_BYTES:
+                    while True:  # 丢弃超长行的剩余部分
+                        rest = proc.stdout.readline(_MAX_LINE_BYTES)
+                        if not rest or rest.endswith(b"\n"):
+                            break
+                size += len(raw)
+                if len(lines) >= max_lines or size > max_bytes:
+                    truncated = True
+                    break
+                lines.append(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        finally:
+            if truncated:
+                proc.kill()
+            proc.stdout.close()
+            proc.wait()
+            timer.cancel()
+        if not truncated and proc.returncode != 0:
+            err.seek(0)
+            message = err.read().decode("utf-8", errors="replace").strip().splitlines()
+            if proc.returncode < 0:
+                raise _GitError(f"git 执行超时（{GIT_TIMEOUT}s）")
+            raise _GitError(message[-1] if message else f"git 退出码 {proc.returncode}")
+    return lines, truncated
 
 
 def _open_repo(code_dir: str) -> tuple[_Repo | None, ToolOutput | None]:
@@ -123,16 +192,25 @@ def _git_time(text: str, *, upper: bool) -> str | None:
 
 
 def _pathspec(repo: _Repo, path: str) -> list[str]:
-    path = (path or "").strip()
+    """把 path 参数转成 pathspec，并保证只落在 code_dir 之内。
+
+    code_dir 是仓库子目录时，git 的 `--relative` 只影响显示，不限制范围；不传 path 时也要显式
+    限定为 `.`，否则会把子目录之外的提交和 diff 返回给模型。
+
+    Raises:
+        ValueError: 路径越出 code_dir，或使用了 `:(top)` 之类的 pathspec 魔法。
+    """
+    path = (path or "").strip().replace("\\", "/")
     if not path:
-        # --relative 只裁剪输出，不能代替对子目录的查询范围限制。
         return ["--", "."] if repo.base != repo.top else []
-    # 不接受 Git 的 top/exclude 等魔法路径，也不允许通配路径借 .. 跳出目录。
-    if (path.startswith(":") or Path(path).is_absolute() or ".." in Path(path).parts
-            or not (repo.base / path).resolve().is_relative_to(repo.base)):
-        raise ValueError(f"非法路径（必须位于 code_dir 内）: {path}")
+    if path.startswith(":") or Path(path).is_absolute():
+        raise ValueError(f"path 需要是相对 code_dir 的路径: {path}")
+    literal = re.split(r"[*?\[]", path, maxsplit=1)[0]
+    anchor = (repo.base / literal).resolve() if literal else repo.base
+    if not anchor.is_relative_to(repo.base) or ".." in Path(path).parts:
+        raise ValueError(f"非法路径（越界）: {path}")
     # `**` 等通配需要 glob 魔法前缀；普通路径原样传入
-    return ["--", f":(glob){path}" if any(ch in path for ch in "*?[") else path]
+    return ["--", f":(glob){path}" if literal != path else path]
 
 
 def _check_ref(repo: _Repo, ref: str) -> str:
@@ -152,16 +230,6 @@ def _head_line(repo: _Repo) -> str:
     except _GitError:
         return "当前没有提交"
     return f"当前 {branch} @ {head}" if branch != "HEAD" else f"当前处于游离 HEAD @ {head}"
-
-
-def _dirty_note(repo: _Repo, spec: list[str]) -> str:
-    try:
-        changed = [ln for ln in _run(repo.base, "status", "--porcelain=v1", "-uno", *spec).splitlines() if ln.strip()]
-    except _GitError:
-        return ""
-    if not changed:
-        return ""
-    return f"注意：工作区另有 {len(changed)} 个已跟踪文件存在未提交的修改，线上运行的代码可能与工作区不同。"
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +278,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
         code_dir: 源码目录（需在 git 仓库内，可以是仓库的子目录）。
         since: 起始时间，如 `2026-06-09 14:00`、`2026-06-09`，或 `3 days ago`；空字符串表示不限。
         until: 结束时间，写法同 since；空字符串表示不限。
-        path: 只看某个文件或目录的提交（相对 code_dir，支持通配，如 `src/**/*.java`）；空字符串表示 code_dir 内全部。
+        path: 只看某个文件或目录的提交（相对 code_dir，支持通配，如 `src/**/*.java`）；空字符串表示全部。
         max_commits: 最多返回多少个提交，默认 20，上限 100。
     """
     repo, error = _open_repo(code_dir)
@@ -232,11 +300,12 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
     args += [f"--since={lower}"] if lower else []
     args += [f"--until={upper}"] if upper else []
     try:
-        commits = _parse_log(_run(repo.base, *args, *spec))
+        lines, _ = _run_limited(repo.base, *args, *spec, max_lines=(limit + 1) * 400)
     except _GitError as exc:
         if "does not have any commits" in str(exc):
             return _hint("仓库还没有任何提交。", "empty_repo")
         return _err(f"读取提交历史失败：{exc}")
+    commits = _parse_log("\n".join(lines))
 
     truncated = len(commits) > limit
     commits = commits[:limit]
@@ -244,11 +313,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
     target = f" · {path}" if path else ""
     header = f"--- {repo.label}{target} · {scope} · {_head_line(repo)} · 时区 {_tz_label()} ---"
     if not commits:
-        dirty = _dirty_note(repo, spec)
-        return _hint(
-            f"{header}\n该范围内没有提交。可以放宽 since / until 或去掉 path 再查。" + (f"\n{dirty}" if dirty else ""),
-            "no_commits", commits=0,
-        )
+        return _hint(f"{header}\n该范围内没有提交。可以放宽 since / until 或去掉 path 再查。", "no_commits", commits=0)
 
     out = [header]
     total_files = 0
@@ -263,9 +328,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
             out.append(f"    … 另有 {len(commit.files) - MAX_FILES_PER_COMMIT} 个文件")
     if truncated:
         out.append(f"... 还有更早的提交未显示，可缩小时间范围或调大 max_commits（上限 {MAX_COMMITS}）。")
-    dirty = _dirty_note(repo, spec)
-    if dirty:
-        out.append(dirty)
+    out.append("（只含已提交的历史；工作区未提交的修改不在其中。）")
     return _ok("\n".join(out), commits=len(commits), truncated=truncated, files=total_files,
                newest=commits[0].when, oldest=commits[-1].when)
 
@@ -283,14 +346,13 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
     Args:
         code_dir: 源码目录（需在 git 仓库内）。
         commit: 提交号（recent_changes / blame_lines 返回的短 SHA 即可），也可以是分支名或 tag。
-        path: 只看该提交里某个文件或目录的改动（相对 code_dir，支持通配）；空字符串表示 code_dir 内全部。
+        path: 只看该提交里某个文件或目录的改动（相对 code_dir，支持通配）；空字符串表示全部。
         max_lines: diff 最多返回的行数，默认 300，上限 1000。
     """
     repo, error = _open_repo(code_dir)
     if error:
         return error
     try:
-        spec = _pathspec(repo, path)
         sha = _check_ref(repo, commit)
     except ValueError as exc:
         return _err(str(exc))
@@ -302,36 +364,49 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
     except _GitError as exc:
         return _err(f"读取提交失败：{exc}")
     short, epoch, author, parents, body = (info.split(_US, 4) + [""] * 5)[:5]
-    base_args = ["show", "--format=", "--relative", "--no-ext-diff", "--no-textconv", "--stat=120", "--patch"]
     try:
-        diff = _run(repo.base, *base_args, "--diff-merges=first-parent", sha, *spec)
-    except _GitError:
-        try:  # 旧版 git 不认识 --diff-merges
-            diff = _run(repo.base, *base_args, "-m", "--first-parent", sha, *spec)
-        except _GitError as exc:
-            return _err(f"读取提交改动失败：{exc}")
-
+        spec = _pathspec(repo, path)
+    except ValueError as exc:
+        return _err(str(exc))
     limit = max(20, min(int(max_lines or DEFAULT_DIFF_LINES), MAX_DIFF_LINES))
-    lines = diff.rstrip("\n").splitlines()
-    added = sum(1 for ln in lines if ln.startswith("+") and not ln.startswith("+++"))
-    deleted = sum(1 for ln in lines if ln.startswith("-") and not ln.startswith("---"))
-    files = sum(1 for ln in lines if ln.startswith("diff --git "))
-    shown = [clip_line(ln, _DIFF_LINE_CHARS) for ln in lines[:limit]]
+    common = ["show", "--format=", "--relative", "--no-ext-diff", "--no-textconv"]
+
+    def run(*extra: str, max_lines: int) -> tuple[list[str], bool]:
+        try:
+            return _run_limited(repo.base, *common, *extra, "--diff-merges=first-parent", sha, *spec,
+                                max_lines=max_lines)
+        except _GitError:  # 旧版 git 不认识 --diff-merges
+            return _run_limited(repo.base, *common, *extra, "-m", "--first-parent", sha, *spec, max_lines=max_lines)
+
+    try:
+        stats, _ = run("--numstat", max_lines=20_000)
+        # 只读到 limit 行就停：截断处落在私钥块中间时，mask_private_keys 会把缺 END 的正文一并遮住
+        diff, cut = run("--patch", max_lines=limit)
+    except _GitError as exc:
+        return _err(f"读取提交改动失败：{exc}")
+
+    files = added = deleted = 0
+    for row in stats:
+        cols = row.split("\t")
+        if len(cols) == 3:
+            files += 1
+            added += int(cols[0]) if cols[0].isdigit() else 0
+            deleted += int(cols[1]) if cols[1].isdigit() else 0
 
     merge = "（合并提交，显示相对第一父提交的改动）" if len(parents.split()) > 1 else ""
     header = [
-        f"--- 提交 {short} · {_stamp(epoch)} · {author}{merge} ---",
+        f"--- 提交 {short} · {_stamp(epoch)} · {author}{merge} · {files} 个文件 +{added} -{deleted} ---",
         redact_log(body.strip()) or "（无提交说明）",
         "",
     ]
-    if not lines:
+    if not diff:
         scope = f"在 {path} 下" if path else ""
         return _hint("\n".join(header) + f"该提交{scope}没有文本改动。", "empty_diff", files=0)
-    tail = []
-    if len(lines) > limit:
-        tail.append(f"... diff 共 {len(lines):,} 行，已显示前 {limit} 行；可用 path 只看某个文件，或调大 max_lines。")
-    text = "\n".join(header) + redact_code("\n".join(shown)) + ("\n" + "\n".join(tail) if tail else "")
-    return _ok(text, commit=short, files=files, additions=added, deletions=deleted, truncated=len(lines) > limit)
+    # 先脱敏再截断单行：mask_private_keys 能处理被截断 / 只含半个块的私钥
+    shown = [clip_line(line, _DIFF_LINE_CHARS) for line in redact_code("\n".join(diff)).split("\n")]
+    tail = f"\n... diff 超过 {limit} 行，已截断；可用 path 只看某个文件，或调大 max_lines（上限 {MAX_DIFF_LINES}）。" if cut else ""
+    return _ok("\n".join(header) + "\n".join(shown) + tail, commit=short, files=files, additions=added,
+               deletions=deleted, truncated=cut)
 
 
 # ---------------------------------------------------------------------------
@@ -390,64 +465,73 @@ def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0
     end = int(end_line or 0)
     end = start if end < start else min(end, start + MAX_BLAME_LINES - 1)
     rel = target.relative_to(repo.base).as_posix()
+    top_rel = target.relative_to(repo.top).as_posix()
     try:
-        text = _run(repo.base, "blame", "--porcelain", f"-L{start},{end}", "--", rel)
+        # 针对 HEAD 而不是工作区：blame 工作区文件会触发仓库配置的 clean 过滤器（可执行任意命令）
+        text = _run(repo.base, "blame", "--porcelain", "--no-textconv", f"-L{start},{end}", "HEAD", "--", rel)
     except _GitError as exc:
         message = str(exc)
-        if "no such path" in message or "no such ref" in message:
-            return _hint(f"{rel_path} 没有被 git 跟踪（可能是新文件或被忽略），无法追溯。", "untracked")
+        if "no such path" in message or "no such ref" in message or "bad revision" in message:
+            return _hint(f"{rel_path} 在 HEAD 中不存在（可能是未提交的新文件或被忽略），无法追溯。", "untracked")
         if "has only" in message:
-            return _hint(f"第 {start} 行超出文件范围（{message}）。", "eof")
+            return _hint(f"第 {start} 行超出 HEAD 版本的文件范围（{message}）。", "eof")
         return _err(f"git blame 失败：{message}")
 
     lines, info = _parse_blame(text)
     if not lines:
         return _hint(f"{rel_path} 第 {start}-{end} 行没有可追溯的内容。", "empty")
 
-    # 先整段脱敏，防止跨行私钥被行边界或提交分组拆开；保留行号与提交归属。
-    scrubbed = redact_code("\n".join(ln.text for ln in lines), preserve_lines=True).split("\n")
-    for line, text in zip(lines, scrubbed, strict=True):
-        line.text = text
+    # 整份文件脱敏后再按行号取：只 blame 私钥块中间几行时也要遮住
+    try:
+        blob, too_big = _run_limited(repo.base, "cat-file", "blob", f"HEAD:{top_rel}", max_lines=10**7,
+                                     max_bytes=_MAX_BLOB_BYTES)
+    except _GitError:
+        blob, too_big = [], True
+    masked = redact_code_lines(blob)
+    try:
+        drifted = not too_big and target.read_bytes().decode("utf-8", errors="replace").splitlines() != blob
+    except OSError:
+        drifted = False
 
-    out = [f"--- {rel} 第 {start}-{lines[-1].number} 行的最近修改（时区 {_tz_label()}）---"]
+    out = [f"--- {rel} 第 {start}-{lines[-1].number} 行的最近修改（HEAD 版本，时区 {_tz_label()}）---"]
     newest: tuple[int, str] | None = None
     group: list[_BlameLine] = []
+    width = len(str(lines[-1].number))
+
+    def shown(line: _BlameLine) -> str:
+        # 只展示整份脱敏后的内容；拿不到整份文件（过大 / 读取失败）时宁可不展示
+        return masked[line.number - 1] if line.number <= len(masked) else "[内容未显示：文件过大或读取失败]"
 
     def flush() -> None:
         if not group:
             return
         meta = info.get(group[0].sha, {})
         span = f"L{group[0].number}" + (f"-{group[-1].number}" if len(group) > 1 else "")
-        if set(group[0].sha) == {"0"}:
-            out.append(f"{span}  （未提交的本地修改）")
-        else:
-            when = _stamp(meta.get("committer-time", "0"))
-            summary = redact_log(meta.get("summary", ""))
-            out.append(f"{span}  {group[0].sha[:8]}  {when}  {meta.get('author', '?')}  {summary}")
-        width = len(str(lines[-1].number))
-        out.extend(f"  {ln.number:>{width}} | {clip_line(ln.text, 200)}" for ln in group)
+        when = _stamp(meta.get("committer-time", "0"))
+        summary = redact_log(meta.get("summary", ""))
+        out.append(f"{span}  {group[0].sha[:8]}  {when}  {meta.get('author', '?')}  {summary}")
+        out.extend(f"  {ln.number:>{width}} | {clip_line(shown(ln), 200)}" for ln in group)
 
     for line in lines:
         if group and line.sha != group[-1].sha:
             flush()
             group = []
         group.append(line)
-        if set(line.sha) != {"0"}:
-            epoch = int(info.get(line.sha, {}).get("committer-time", "0"))
-            if newest is None or epoch > newest[0]:
-                newest = (epoch, line.sha[:8])
+        epoch = int(info.get(line.sha, {}).get("committer-time", "0"))
+        if newest is None or epoch > newest[0]:
+            newest = (epoch, line.sha[:8])
     flush()
 
-    commits = {ln.sha for ln in lines if set(ln.sha) != {"0"}}
-    uncommitted = any(set(ln.sha) == {"0"} for ln in lines)
+    commits = {ln.sha for ln in lines}
     summary = f"涉及 {len(commits)} 个提交"
     if newest:
         summary += f"，最近一次修改 {_stamp(newest[0])}（{newest[1]}）"
-    if uncommitted:
-        summary += "；含未提交的本地修改"
     out.append(summary)
+    if drifted:
+        out.append("注意：工作区文件与 HEAD 版本不同（有未提交的修改），这里的行号按 HEAD 版本，"
+                   "可能与 read_code_file 的行号对不上。")
     return _ok("\n".join(out), start=start, end=lines[-1].number, commits=len(commits),
-               newest=_stamp(newest[0]) if newest else "", uncommitted=uncommitted)
+               newest=_stamp(newest[0]) if newest else "", drifted=drifted)
 
 
 GIT_TOOLS = [recent_changes, show_commit, blame_lines]

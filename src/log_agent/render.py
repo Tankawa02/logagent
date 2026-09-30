@@ -457,7 +457,7 @@ def _summarize_meta(name: str, meta: dict[str, Any]) -> str:
     if name == "blame_lines":
         newest = str(meta.get("newest", ""))[:16]
         text = f"{meta.get('commits', 0)} 个提交" + (f"{sep}最近 {newest}" if newest else "")
-        return text + (f"{sep}含未提交修改" if meta.get("uncommitted") else "")
+        return text + (f"{sep}工作区与 HEAD 不同" if meta.get("drifted") else "")
     if name == "grep_code":
         more = "+" if meta.get("truncated") else ""
         return f"命中 {meta.get('hits', 0)}{more} 处{sep}{meta.get('files', 0)} 个文件"
@@ -1160,6 +1160,10 @@ class StreamRenderer:
         elif self.linker is not None:
             from .evidence import check_analysis
 
-            result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
-            print_evidence_check(result.evidence_check)
+            try:
+                result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
+            except Exception as exc:  # noqa: BLE001 — 核对是附加信息，失败不能丢掉已经生成的报告
+                console.print(Text(f"{glyphs.notice} 证据核对失败，已跳过：{type(exc).__name__}: {exc}", style="muted"))
+            else:
+                print_evidence_check(result.evidence_check)
         return result

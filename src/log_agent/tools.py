@@ -23,7 +23,7 @@ from .gittools import GIT_TOOLS
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
 from .logformat import level_and_body
 from .redact import is_enabled as redact_enabled
-from .redact import redact_code, redact_log
+from .redact import redact_code, redact_code_lines, redact_log
 from .timefilter import (
     TimeWindow,
     WindowTracker,
@@ -807,13 +807,15 @@ def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: 
     end = min(total, end if end >= start else start + MAX_CODE_LINES - 1)
     end = min(end, start + MAX_CODE_LINES * 2 - 1)
 
+    # 整份文件脱敏后再取区间：只读私钥块中间几行时也能遮住（见 redact_code_lines）
+    shown = redact_code_lines(all_lines)
     width = len(str(end))
     body = "\n".join(
-        f"{no:>{width}} | {clip_line(all_lines[no - 1], MAX_LINE_CHARS)}" for no in range(start, end + 1)
+        f"{no:>{width}} | {clip_line(shown[no - 1], MAX_LINE_CHARS)}" for no in range(start, end + 1)
     )
     header = f"--- {rel_path} 第 {start}-{end} 行，共 {total} 行 ---"
     tail = f"\n... 还有 {total - end} 行未显示，用 start_line={end + 1} 继续读取。" if end < total else ""
-    return _ok(header + "\n" + redact_code(body) + tail, start=start, end=end, total_lines=total)
+    return _ok(header + "\n" + body + tail, start=start, end=end, total_lines=total)
 
 
 def _grep_with_rg(base: Path, compiled_src: str, literal: bool, ignore_case: bool, path_glob: str, max_results: int) -> list[str] | None:

@@ -490,7 +490,7 @@ JSON `schema_version: 2` 保留原有 `report`、`logs`、`code`、`settings`、
 | 工具 | 作用 |
 | --- | --- |
 | `recent_changes` | 某段时间内的提交（`git log`），附改动文件与增删行数，可按路径过滤 |
-| `blame_lines` | 源码某几行最后一次由哪个提交修改（`git blame`），会标出未提交的本地修改 |
+| `blame_lines` | 源码某几行最后一次由哪个提交修改（`git blame`，针对 HEAD 版本；工作区与 HEAD 不同时会提示行号可能对不上） |
 | `show_commit` | 某个提交的说明与 diff（`git show`），合并提交显示相对第一父提交的改动 |
 
 典型链路：日志确定问题从 14:02 开始 → `recent_changes` 查之前 1～3 天的提交 → 对栈帧指向的行 `blame_lines`
@@ -540,7 +540,10 @@ log-agent analyze -l app.log -c ./repo --timezone +08:00 -q "14:02 之后开始�
 ## 安全说明
 
 - 所有工具均为**只读**，agent 不会修改你的日志或源码。
-- git 工具只执行 `log` / `show` / `blame` / `status` / `rev-parse`，关闭分页器、外部 diff、textconv 与交互提示，不会改动仓库。
+- git 工具只执行 `log` / `show` / `blame` / `cat-file` / `rev-parse`，只读对象库、不读工作区：关闭分页器、外部 diff、textconv、
+  fsmonitor、签名校验与交互提示，避免不可信仓库通过配置（fsmonitor、clean 过滤器、`gpg.program` 等）执行命令；
+  `path` 参数不能越出 `-c` 指定的目录，大 diff 流式读取、到上限即停止。
+- 私钥块按整份文件定位后逐行遮盖（保持行号），只读取 / blame 私钥中间几行或 diff 被截断时也不会漏出正文。
 - 日志/源码内容会发送给模型服务。工具输出默认先脱敏：日志中的 token / 密码 / 手机号 / 身份证（带校验位校验，
   不会误伤订单号）/ 邮箱 / IP（同一 IP 映射为同一代号，仍能区分机器）会被打码；源码只打明确的密钥
   （`sk-`、AccessKey、JWT、Bearer），不改动代码本身。规则无法覆盖所有业务字段，高敏数据建议改用本地模型。

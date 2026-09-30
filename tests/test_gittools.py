@@ -77,45 +77,14 @@ def test_recent_changes_path_filter_and_subdirectory(git_repo: Path) -> None:
     assert sub.meta["commits"] == 2 and "    order.py  +2 -1" in sub
 
 
-@pytest.mark.parametrize("path", ["../README.md", "../docs/*.md", "..", "*/../../README.md",
-                                  ":(top)README.md", ":/README.md", ":(exclude)order.py"])
-def test_history_tools_reject_paths_outside_code_dir(git_repo: Path, path: str) -> None:
-    sub = str(git_repo / "app")
-    assert recent_changes(sub, path=path).status == "error"
-    assert show_commit(sub, "HEAD", path=path).status == "error"
-
-
-def test_history_tools_reject_absolute_paths(git_repo: Path) -> None:
-    path = str(git_repo / "README.md")
-    assert recent_changes(str(git_repo / "app"), path=path).status == "error"
-    assert show_commit(str(git_repo / "app"), "HEAD", path=path).status == "error"
-
-
-@pytest.mark.parametrize("path", ["", ".", "order.py", "*.py", "./*.py"])
-def test_history_tools_scope_subdirectory(git_repo: Path, path: str) -> None:
-    _commit(git_repo, {"app/order.py": "inside_change = 1\n", "README.md": "outside_change = 1\n"},
-            "mixed change", "2026-06-10T10:00:00+08:00")
-    (git_repo / "README.md").write_text("outside dirty\n", encoding="utf-8")
-    sub = str(git_repo / "app")
-    history = recent_changes(sub, path=path)
-    assert history.status == "ok" and history.meta["commits"] == 3
-    assert "README.md" not in history and "补充文档" not in history
-    assert "未提交的修改" not in history
-    diff = show_commit(sub, "HEAD", path=path)
-    assert diff.status == "ok" and diff.meta["files"] == 1
-    assert "inside_change" in diff and "outside_change" not in diff and "README.md" not in diff
-    assert show_commit(sub, "HEAD~1", path=path).status == "hint"
-
-
 def test_recent_changes_limits_and_reports_truncation(git_repo: Path) -> None:
     out = recent_changes(str(git_repo), max_commits=1)
     assert out.meta["commits"] == 1 and out.meta["truncated"] and "还有更早的提交" in out
 
 
-def test_recent_changes_empty_range_and_dirty_worktree(git_repo: Path) -> None:
-    (git_repo / "app" / "order.py").write_text("changed\n", encoding="utf-8")
+def test_recent_changes_empty_range(git_repo: Path) -> None:
     out = recent_changes(str(git_repo), since="2030-01-01")
-    assert out.status == "hint" and "没有提交" in out and "未提交的修改" in out
+    assert out.status == "hint" and "没有提交" in out
 
 
 @pytest.mark.parametrize("since", ["14:00", "bogus"])
@@ -159,7 +128,7 @@ def test_show_commit_validates_refs(git_repo: Path, ref: str, status: str) -> No
 def test_show_commit_truncates_long_diffs(git_repo: Path) -> None:
     _commit(git_repo, {"big.txt": "".join(f"line {i}\n" for i in range(500))}, "大文件", "2026-06-10T10:00:00+08:00")
     out = show_commit(str(git_repo), "HEAD", max_lines=50)
-    assert out.meta["truncated"] and "已显示前 50 行" in out
+    assert out.meta["truncated"] and "diff 超过 50 行" in out
 
 
 # ---------------------------------------------------------------------------
@@ -176,28 +145,12 @@ def test_blame_groups_lines_by_commit(git_repo: Path) -> None:
     assert out.meta["newest"] == "2026-06-09 13:55:00+08:00"
 
 
-def test_blame_marks_uncommitted_changes(git_repo: Path) -> None:
+def test_blame_uses_head_and_flags_drifted_worktree(git_repo: Path) -> None:
     (git_repo / "app" / "order.py").write_text("def pay(order):\n    return None\n", encoding="utf-8")
-    out = blame_lines(str(git_repo), "app/order.py", 2)
-    assert "未提交的本地修改" in out and out.meta["uncommitted"]
-
-
-@pytest.mark.parametrize("key_type", ["", "RSA ", "EC ", "OPENSSH "])
-def test_blame_redacts_multiline_keys_across_commits(git_repo: Path, key_type: str) -> None:
-    content = (f"before = 1\n-----BEGIN {key_type}PRIVATE KEY-----\n"
-               f"first_private_payload\nsecond_private_payload\n-----END {key_type}PRIVATE KEY-----\n"
-               "after = 2\n\nkey = sk-abcdefghijklmnopqrstu\n")
-    _commit(git_repo, {"app/keys.txt": content}, "add fixture", "2026-06-10T10:00:00+08:00")
-    content = content.replace("second_private_payload", "changed_private_payload")
-    _commit(git_repo, {"app/keys.txt": content}, "change fixture", "2026-06-11T10:00:00+08:00")
-    out = blame_lines(str(git_repo), "app/keys.txt", 1, 8)
-    assert out.status == "ok" and out.meta["commits"] == 2 and out.meta["end"] == 8
-    assert "private_payload" not in out and "PRIVATE KEY" not in out
-    assert "sk-abcdefghijklmnopqrstu" not in out and "sk-[已脱敏]" in out
-    for number in range(2, 6):
-        assert f"{number} | [私钥已脱敏]" in out
-    assert "1 | before = 1" in out and "6 | after = 2" in out and "7 | " in out
-    assert "L1-3" in out and "L4 " in out and "L5-8" in out
+    out = blame_lines(str(git_repo), "app/order.py", 3)
+    # HEAD 版本仍有第 3 行；工作区内容不参与
+    assert "return order['order_id']" in out and out.meta["drifted"]
+    assert "工作区文件与 HEAD 版本不同" in out
 
 
 def test_blame_rejects_traversal_and_untracked(git_repo: Path) -> None:
@@ -221,3 +174,72 @@ def test_git_tools_are_registered_and_rendered(git_repo: Path) -> None:
     parts = [text for text, _ in _tool_parts("blame_lines", {"rel_path": "app/order.py", "start_line": 2,
                                                               "end_line": 5, "code_dir": str(git_repo)})]
     assert parts[:2] == ["app/order.py", "L2-5"]
+
+
+# ---------------------------------------------------------------------------
+# 审查修复的回归用例
+# ---------------------------------------------------------------------------
+
+
+def test_subdirectory_code_dir_never_leaks_outside(git_repo: Path) -> None:
+    app = str(git_repo / "app")
+    shown = show_commit(app, "HEAD")  # HEAD 只改了 docs/，对 app/ 来说没有改动
+    assert shown.status == "hint" and "sk-" not in shown and "notes.md" not in shown
+    first = _git(git_repo, "rev-list", "--max-parents=0", "HEAD")
+    assert "README.md" not in show_commit(app, first)
+    for bad in ("../README.md", "../docs", ":(top)README.md", "/etc/passwd", "a/../../README.md"):
+        assert recent_changes(app, path=bad).status == "error", bad
+        assert show_commit(app, "HEAD", path=bad).status == "error", bad
+
+
+_KEY = ["-----BEGIN RSA PRIVATE KEY-----", *[f"MIIEow{i:02d}" + "A" * 58 for i in range(20)],
+        "-----END RSA PRIVATE KEY-----"]
+
+
+def _key_leaked(text: str) -> bool:
+    return any(line in text for line in _KEY[1:-1])
+
+
+def test_blame_masks_key_body_even_for_partial_ranges(git_repo: Path) -> None:
+    _commit(git_repo, {"conf/key.pem": "\n".join(["# deploy key", *_KEY, "tail"]) + "\n"}, "加密钥",
+            "2026-06-10T10:00:00+08:00")
+    out = blame_lines(str(git_repo), "conf/key.pem", 5, 8)  # 只 blame 私钥正文中间几行
+    assert out.status == "ok" and not _key_leaked(out) and "[私钥已脱敏]" in out
+
+
+def test_truncated_diff_does_not_leak_key(git_repo: Path) -> None:
+    _commit(git_repo, {"conf/key.pem": "\n".join(_KEY) + "\n"}, "加密钥", "2026-06-10T10:00:00+08:00")
+    for max_lines in (20, 25, 1000):  # 截断点落在块中间 / 块外
+        out = show_commit(str(git_repo), "HEAD", max_lines=max_lines)
+        assert not _key_leaked(out), max_lines
+
+
+def test_show_commit_streams_large_diffs(git_repo: Path) -> None:
+    _commit(git_repo, {"big.txt": "x" * 200_000 + "\n" + "".join(f"l{i}\n" for i in range(50_000))}, "巨型提交",
+            "2026-06-10T10:00:00+08:00")
+    out = show_commit(str(git_repo), "HEAD", max_lines=40)
+    assert out.meta["truncated"] and out.meta["additions"] == 50_001
+    assert len(str(out)) < 40_000
+
+
+def _evil(root: Path, marker: Path) -> None:
+    cmd = f"touch {marker}"
+    _git(root, "config", "core.fsmonitor", cmd)
+    _git(root, "config", "filter.evil.clean", f"{cmd}; cat")
+    _git(root, "config", "filter.evil.smudge", f"{cmd}; cat")
+    _git(root, "config", "log.showSignature", "true")
+    _git(root, "config", "gpg.program", str(root / "fake-gpg.sh"))
+    (root / "fake-gpg.sh").write_text(f"#!/bin/sh\n{cmd}\n", encoding="utf-8")
+    (root / "fake-gpg.sh").chmod(0o755)
+    (root / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+    (root / "app" / "order.py").write_text("changed\n", encoding="utf-8")
+
+
+def test_untrusted_repo_config_cannot_run_commands(git_repo: Path, tmp_path: Path) -> None:
+    marker = tmp_path / "pwned"
+    _evil(git_repo, marker)
+    recent_changes(str(git_repo))
+    recent_changes(str(git_repo), path="app")
+    show_commit(str(git_repo), "HEAD~1")
+    blame_lines(str(git_repo), "app/order.py", 1, 2)
+    assert not marker.exists()

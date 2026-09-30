@@ -347,10 +347,11 @@ def _finding_exit_code(result, fail_on: FailOn) -> int:
         return 0
     rank = _CONFIDENCE_RANK.get(result.confidence, 1)
     check = getattr(result, "evidence_check", None) or {}
+    if check and not check.get("verified") and not check.get("shifted"):
+        # 没有任何一条证据能对上原文（不符或无法核对）：结论缺少可核实的依据，不驱动自动化
+        console.print(Text(f"{glyphs.notice} 报告的证据均未能与原文核对一致，无法据此判定发现问题（退出码 4）。", style="warn"))
+        return EXIT_UNDECIDED
     if check.get("mismatch"):
-        if not check.get("verified") and not check.get("shifted"):
-            console.print(Text(f"{glyphs.notice} 报告的证据均未通过原文核对，无法据此判定发现问题（退出码 4）。", style="warn"))
-            return EXIT_UNDECIDED
         # 有证据与原文不符：自动化门槛按降一级的可信度判断，报告本身的可信度不改
         rank -= 1
         console.print(Text(f"{glyphs.notice} 有 {check['mismatch']} 条证据与原文不符，--fail-on 按降一级的可信度判断。", style="warn"))

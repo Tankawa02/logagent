@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,12 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from log_agent import config, logfile, redact, timefilter, tools
+# FORCE_COLOR / TTY_COMPATIBLE 会让 Rich 在非终端里也输出 ANSI 控制符，按文本断言的用例会失败。
+# Rich 在创建全局 console（导入 log_agent 时）就读取它们，所以必须在导入之前清掉。
+for _name in ("FORCE_COLOR", "TTY_COMPATIBLE", "CLICOLOR_FORCE"):
+    os.environ.pop(_name, None)
+
+from log_agent import config, logfile, redact, timefilter, tools  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
