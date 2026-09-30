@@ -183,3 +183,122 @@ def test_bad_log_settings_fail_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     out = runner.invoke(cli.app, ["inspect", "-l", str(log)])
     assert out.exit_code == 2
     assert "自定义日志格式有误" in out.output or "app_packages" in out.output
+
+
+# ---------------------------------------------------------------------------
+# review findings (#43 / #44)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("30-Sep-2026 14:00:00.123 SEVERE [main] Catalina.start failed", "FATAL"),
+    ("SEVERE: deployment failed", "FATAL"),
+    ("FINE: pool warmed", "DEBUG"),
+    ("2026-09-30 14:00:00 FINER entering", "TRACE"),
+    ("2026-09-30 14:00:00 FINEST detail", "TRACE"),
+    # 普通文本里的 fine / alert / panic 不是级别
+    ("everything is fine", None),
+    ("[alert-dispatcher] INFO sent", "INFO"),
+    ("2026-09-30 14:00:00 [alert.sender] DEBUG queued", "DEBUG"),
+    ("recovered from panic in handler", None),
+    ("2026-09-30 14:00:00 notice board updated", None),
+    # 独立的大写 token、方括号里的小写、Go 的行首 panic: 仍然识别
+    ("2026-09-30 14:00:00 ALERT disk almost full", "FATAL"),
+    ("2026-09-30 14:00:00 NOTICE config reloaded", "INFO"),
+    ("[Wed Sep 30 14:00:00 2026] [core:notice] AH00094: started", "INFO"),
+    ("2026/09/30 14:00:00 [emerg] 1#0: bind() failed", "FATAL"),
+    ("panic: runtime error: index out of range", "FATAL"),
+])
+def test_text_levels(line: str, expected: str | None) -> None:
+    parsed = level_and_body(line)
+    assert (parsed[0] if parsed else None) == expected
+
+
+@pytest.mark.parametrize("value", ["1e999", "-1e999", "1e309", "30.5", '"\u00b2"', '"99999999999999999999999"'])
+def test_bad_numeric_levels_do_not_abort_scans(tmp_path: Path, value: str) -> None:
+    line = f'{{"level": {value}, "msg": "x"}}'
+    assert level_and_body(line) is None
+    log = tmp_path / "x.log"
+    log.write_text(line + '\n{"level": 50, "msg": "boom"}\n', encoding="utf-8")
+    out = tools.log_overview(str(log))
+    assert out.status == "ok" and "ERROR" in out
+
+
+def test_app_line_with_quoted_request_is_not_an_access_log() -> None:
+    line = '2026-06-09 14:02:03 WARN [t] "GET /x HTTP/1.1" 200 12ms'
+    assert level_and_body(line) == ("WARN", '[t] "GET /x HTTP/1.1" 200 12ms')
+    assert detect_format(line) != "nginx / Apache 访问日志"
+
+
+def test_structured_record_with_log_field_is_not_docker() -> None:
+    line = '{"@t":"2026-09-30T06:00:00Z","@m":"Order failed","log":"business value"}'
+    assert level_and_body(line) == ("INFO", "Order failed")
+    assert find_timestamp(line)[1] == datetime(2026, 9, 30, 6, 0, tzinfo=UTC)
+    assert detect_format(line) == "JSON（Serilog CLEF）"
+    # 真正的 Docker 行仍然拆包
+    assert level_and_body(_docker("2026-09-30 14:00:00 ERROR inner"))[0] == "ERROR"
+    assert level_and_body(json.dumps({"log": "WARN only log"}))[0] == "WARN"
+
+
+def test_time_only_custom_format_keeps_builtin_levels() -> None:
+    logformat.set_custom_formats([{"pattern": r"^(?P<time>\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}) (?P<message>.*)$",
+                                   "time_format": "%d.%m.%Y %H:%M:%S"}])
+    line = "30.09.2026 14:00:05 ERROR upstream reset"
+    assert level_and_body(line) == ("ERROR", "upstream reset")
+    assert find_timestamp(line)[1] == datetime(2026, 9, 30, 14, 0, 5)
+
+
+def test_level_only_custom_format_keeps_builtin_timestamps(tmp_path: Path) -> None:
+    logformat.set_custom_formats([{"pattern": r"^\S+ \S+ \|(?P<level>\w)\| (?P<message>.*)$",
+                                   "levels": {"E": "ERROR", "I": "INFO"}}])
+    line = "2026-09-30 14:00:05 |E| upstream reset"
+    assert level_and_body(line) == ("ERROR", "upstream reset")
+    assert find_timestamp(line)[1] == datetime(2026, 9, 30, 14, 0, 5)
+    log = tmp_path / "gw.log"
+    log.write_text("2026-09-30 13:00:00 |E| old failure\n" + line + "\n", encoding="utf-8")
+    out = tools.log_overview(str(log), since="2026-09-30 14:00", until="2026-09-30 14:10")
+    assert "upstream reset" in out and "old failure" not in out
+
+
+def test_custom_time_format_without_date_is_a_time_of_day() -> None:
+    logformat.set_custom_formats([{"pattern": r"^(?P<time>\d{2}:\d{2}:\d{2}) (?P<level>\w+) (?P<message>.*)$",
+                                   "time_format": "%H:%M:%S", "sample": "14:00:05 ERROR x"}])
+    assert find_timestamp("14:00:05 ERROR x")[1] == time(14, 0, 5)
+
+
+def test_custom_yearless_date_accepts_feb_29() -> None:
+    logformat.set_custom_formats([{"pattern": r"^(?P<time>\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<level>\w+) (?P<message>.*)$",
+                                   "time_format": "%m-%d %H:%M:%S"}])
+    found = find_timestamp("02-29 10:00:00 ERROR leap")
+    assert found is not None and (found[1].month, found[1].day) == (2, 29) and found[1].year % 4 == 0
+    assert find_timestamp("09-30 10:00:00 ERROR x")[1] == datetime(2026, 9, 30, 10, 0)
+
+
+def test_project_log_format_table_overrides_user_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent.config import load_config
+
+    user = Path.home() / ".log-agent" / "config.toml"
+    user.parent.mkdir(parents=True, exist_ok=True)
+    user.write_text("[log_formats]\nname = 'user'\npattern = '^(?P<level>[A-Z]+): (?P<message>.*)$'\n",
+                    encoding="utf-8")
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / ".log-agent.toml").write_text(
+        "[log_formats]\nname = 'project'\npattern = '^(?P<level>[A-Z]+): (?P<msg>.*)$'\n", encoding="utf-8")
+    monkeypatch.delenv("LOG_AGENT_CONFIG", raising=False)
+    formats = load_config(project).shared["log_formats"]
+    assert [f["name"] for f in formats] == ["project"]
+
+
+def test_format_breakdown_counts_unrecognized_records(tmp_path: Path) -> None:
+    from log_agent.diagnostics import _format_breakdown
+    from log_agent.logfile import open_log
+
+    log = tmp_path / "mixed.log"
+    lines = ["2026-09-30 14:00:00 INFO start"] + [f"random record {i} without format" for i in range(9)]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    breakdown = _format_breakdown(open_log(str(log)))
+    assert breakdown[0].startswith("未识别 90%"), breakdown
+    # 缩进的续行仍然算上一条的一部分
+    log.write_text("2026-09-30 14:00:00 INFO start\n  SELECT *\n  FROM t\n", encoding="utf-8")
+    assert _format_breakdown(open_log(str(log))) == ["文本 100%"]

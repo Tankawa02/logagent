@@ -170,7 +170,9 @@ def _fuzzy_contains(piece: str, line: str) -> bool:
     if len(piece) < 12:  # 短片段不做模糊匹配，避免误判为命中
         return False
     # 数字（id、行号、状态码、耗时）必须原样出现：编造的引用往往就是改了数字，不能被“相似度够高”放过
-    if any(number not in line for number in _DIGITS.findall(piece)):
+    # 必须是完整的数字 token：子串判断会让 order=1009 匹配上原文的 order=10090
+    numbers = set(_DIGITS.findall(line))
+    if any(number not in numbers for number in _DIGITS.findall(piece)):
         return False
     line = line[:_FUZZY_LINE_CHARS]
     matcher = SequenceMatcher(None, piece, line, autojunk=False)
@@ -178,11 +180,28 @@ def _fuzzy_contains(piece: str, line: str) -> bool:
     return matched / len(piece) >= _FUZZY_RATIO
 
 
+def _contains(piece: str, line: str) -> bool:
+    """子串包含，但片段首尾的数字不能是原文更长数字的一部分（order=100 不算包含在 order=1001 里）。"""
+    start = line.find(piece)
+    if start < 0:
+        return False
+    head_digit, tail_digit = piece[0].isdigit(), piece[-1].isdigit()
+    if not head_digit and not tail_digit:
+        return True
+    while start >= 0:
+        end = start + len(piece)
+        if not (head_digit and start > 0 and line[start - 1].isdigit()) and \
+                not (tail_digit and end < len(line) and line[end].isdigit()):
+            return True
+        start = line.find(piece, start + 1)
+    return False
+
+
 def _line_satisfies(variants: list[list[str]], line: str, fuzzy: bool) -> bool:
     for pieces in variants:
-        if all(p in line for p in pieces):
+        if all(_contains(p, line) for p in pieces):
             return True
-        if fuzzy and all(p in line or _fuzzy_contains(p, line) for p in pieces):
+        if fuzzy and all(_contains(p, line) or _fuzzy_contains(p, line) for p in pieces):
             return True
     return False
 

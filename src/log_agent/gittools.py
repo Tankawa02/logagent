@@ -47,6 +47,8 @@ _MAX_BLOB_BYTES = 5 * 1024 * 1024
 _REF = re.compile(r"^[\w./~^@{}+-]{1,200}$")
 _RELATIVE = re.compile(r"^\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago$", re.IGNORECASE)
 _RS, _US = "\x1e", "\x1f"
+# LC_ALL=C 下 git --shortstat 的输出：` 3 files changed, 10 insertions(+), 2 deletions(-)`
+_SHORTSTAT = re.compile(r"(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?")
 
 
 class _GitError(Exception):
@@ -69,6 +71,9 @@ class _Repo:
 _SAFE_CONFIG = (
     "core.quotepath=off", "color.ui=never", "core.fsmonitor=false", "core.untrackedCache=false",
     "log.showSignature=false", "diff.external=", "core.pager=cat",
+    # partial clone 缺对象时 git 会自动从 promisor remote 拉取，可能执行仓库自己配置的
+    # core.sshCommand / ext:: URL；只读分析不需要任何网络传输协议
+    "protocol.allow=never",
 )
 
 
@@ -78,6 +83,7 @@ def _command(base: Path, args: tuple[str, ...]) -> tuple[list[str], dict[str, st
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_OPTIONAL_LOCKS": "0",
         "GIT_PAGER": "cat",
+        "GIT_NO_LAZY_FETCH": "1",
         "LC_ALL": "C",
     }
     cmd = ["git", "--no-pager"]
@@ -246,6 +252,7 @@ class _Commit:
     merge: bool
     subject: str
     files: list[tuple[str, str, str]] = field(default_factory=list)
+    partial: bool = False  # 输出在这个提交中间被截断，文件列表不完整
 
 
 def _parse_log(text: str) -> list[_Commit]:
@@ -300,14 +307,16 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
     args += [f"--since={lower}"] if lower else []
     args += [f"--until={upper}"] if upper else []
     try:
-        lines, _ = _run_limited(repo.base, *args, *spec, max_lines=(limit + 1) * 400)
+        lines, cut = _run_limited(repo.base, *args, *spec, max_lines=(limit + 1) * 400)
     except _GitError as exc:
         if "does not have any commits" in str(exc):
             return _hint("仓库还没有任何提交。", "empty_repo")
         return _err(f"读取提交历史失败：{exc}")
     commits = _parse_log("\n".join(lines))
-
-    truncated = len(commits) > limit
+    # 行数预算也计入 --numstat 行：被截断时最后一个提交的文件列表可能不全，更早的提交也没读到
+    if cut and commits and len(commits) <= limit:
+        commits[-1].partial = True
+    truncated = cut or len(commits) > limit
     commits = commits[:limit]
     scope = f"{since or '最早'} → {until or '现在'}" if since or until else "最近"
     target = f" · {path}" if path else ""
@@ -325,11 +334,15 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
             delta = "二进制" if added == "-" else f"+{added} -{deleted}"
             out.append(f"    {name}  {delta}")
         if len(commit.files) > MAX_FILES_PER_COMMIT:
-            out.append(f"    … 另有 {len(commit.files) - MAX_FILES_PER_COMMIT} 个文件")
+            more = "至少" if commit.partial else ""
+            out.append(f"    … 另有{more} {len(commit.files) - MAX_FILES_PER_COMMIT} 个文件")
+        if commit.partial:
+            out.append("    （输出超出上限，该提交的文件列表不完整，可用 show_commit 查看）")
     if truncated:
         out.append(f"... 还有更早的提交未显示，可缩小时间范围或调大 max_commits（上限 {MAX_COMMITS}）。")
     out.append("（仅含已提交的历史，不反映工作区里的改动。）")
     return _ok("\n".join(out), commits=len(commits), truncated=truncated, files=total_files,
+               partial=any(c.partial for c in commits),
                newest=commits[0].when, oldest=commits[-1].when)
 
 
@@ -379,7 +392,8 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
             return _run_limited(repo.base, *common, *extra, "-m", "--first-parent", sha, *spec, max_lines=max_lines)
 
     try:
-        stats, _ = run("--numstat", max_lines=20_000)
+        # --shortstat 只输出一行汇总，总数始终完整；--numstat 逐文件输出，超大提交会被行数上限截掉
+        stats, _ = run("--shortstat", max_lines=50)
         # 只读到 limit 行就停：截断处落在私钥块中间时，mask_private_keys 会把缺 END 的正文一并遮住
         diff, cut = run("--patch", max_lines=limit)
     except _GitError as exc:
@@ -387,11 +401,11 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
 
     files = added = deleted = 0
     for row in stats:
-        cols = row.split("\t")
-        if len(cols) == 3:
-            files += 1
-            added += int(cols[0]) if cols[0].isdigit() else 0
-            deleted += int(cols[1]) if cols[1].isdigit() else 0
+        match = _SHORTSTAT.search(row)
+        if match:
+            files += int(match.group(1))
+            added += int(match.group(2) or 0)
+            deleted += int(match.group(3) or 0)
 
     merge = "（合并提交，显示相对第一父提交的改动）" if len(parents.split()) > 1 else ""
     header = [
@@ -442,6 +456,28 @@ def _parse_blame(text: str) -> tuple[list[_BlameLine], dict[str, dict[str, str]]
     return lines, info
 
 
+def _split_like_git(data: bytes) -> list[str]:
+    """按 _run_limited 的规则切行：只按 \\n 切、去掉行尾 \\r\\n、每行最多 _MAX_LINE_BYTES 字节。"""
+    rows = data.split(b"\n")
+    if rows and rows[-1] == b"":
+        rows.pop()
+    return [row[:_MAX_LINE_BYTES].decode("utf-8", errors="replace").rstrip("\r\n") for row in rows]
+
+
+def _worktree_differs(target: Path, blob: list[str]) -> bool:
+    """工作区文件是否和 HEAD 版本不同。文件太大或读不了时不下结论（返回 False），不整个读进内存。"""
+    try:
+        if target.stat().st_size > _MAX_BLOB_BYTES:
+            return False
+        with target.open("rb") as fh:
+            data = fh.read(_MAX_BLOB_BYTES + 1)
+    except OSError:
+        return False
+    if len(data) > _MAX_BLOB_BYTES:  # 读的过程中被写大了
+        return False
+    return _split_like_git(data) != blob
+
+
 def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0) -> ToolOutput:
     """查看源码某几行最后一次是被哪个提交修改的（git blame），判断报错位置是不是最近改过。
 
@@ -489,10 +525,7 @@ def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0
     except _GitError:
         blob, too_big = [], True
     masked = redact_code_lines(blob)
-    try:
-        drifted = not too_big and target.read_bytes().decode("utf-8", errors="replace").splitlines() != blob
-    except OSError:
-        drifted = False
+    drifted = False if too_big else _worktree_differs(target, blob)
 
     out = [f"--- {rel} 第 {start}-{lines[-1].number} 行的最近修改（HEAD 版本，时区 {_tz_label()}）---"]
     newest: tuple[int, str] | None = None

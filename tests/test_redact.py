@@ -74,3 +74,23 @@ def test_code_redaction_preserves_lines_for_multiple_private_keys() -> None:
     assert redact_code(block) == "[私钥已脱敏]"
     redact.set_enabled(False)
     assert redact_code(code, preserve_lines=True) == code
+
+
+def test_long_private_key_masks_every_line_including_short_tail() -> None:
+    # 超过旧版 400 行前瞻的密钥，最后一行 base64 很短，也必须整块遮住且行数不变
+    body = ["QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0123456789ab"] * 450
+    lines = ["log start", "-----BEGIN RSA PRIVATE KEY-----", *body, "tAil", "-----END RSA PRIVATE KEY-----", "log end"]
+    text = "\n".join(lines)
+    for out in (redact_log(text), redact_code(text, preserve_lines=True)):
+        rows = out.split("\n")
+        assert len(rows) == len(lines)
+        assert "tAil" not in out and "QUJD" not in out
+        assert rows[0] == "log start" and rows[-1] == "log end"
+        assert all(row == redact.KEY_MASK for row in rows[1:-1])
+
+
+def test_truncated_private_key_masks_short_padded_tail() -> None:
+    text = "-----BEGIN PRIVATE KEY-----\nQUJDREVGR0hJSktMTU5P\nZw==\nnext log line here"
+    rows = redact_log(text).split("\n")
+    assert rows[:3] == [redact.KEY_MASK] * 3
+    assert rows[3] == "next log line here"

@@ -56,6 +56,15 @@ def inspect_log(path: str, window) -> str:
     return "\n".join(lines)
 
 
+_MAX_CONTINUATION = 50
+
+
+def _looks_like_continuation(line: str) -> bool:
+    from .stacktrace import starts_block
+
+    return line[:1] in " \t" or line.lstrip()[:1] in ")]}," or starts_block(line)
+
+
 def _format_breakdown(log, sample: int = 2000) -> list[str]:
     from collections import Counter
     from contextlib import closing
@@ -65,6 +74,7 @@ def _format_breakdown(log, sample: int = 2000) -> list[str]:
     counts: Counter[str] = Counter()
     seen = 0
     previous_known = False
+    run = 0  # 已经连续当成续行跳过的行数
     with closing(log.iter_lines(1)) as lines:
         for lineno, line in lines:
             if lineno > sample:
@@ -72,9 +82,12 @@ def _format_breakdown(log, sample: int = 2000) -> list[str]:
             if not line.strip() or is_stack_line(line):
                 continue
             kind = detect_format(line)
-            # 紧跟在已识别日志之后、自己认不出的行（异常头、多行 SQL 等）是上一条的续行，不算“未识别”
-            if kind is None and previous_known:
+            # 只把“像续行”的行当成上一条的一部分（异常头、缩进的多行 SQL / JSON），并且有长度上限；
+            # 否则一条识别成功的行后面跟着的所有未识别记录都会被吞掉，覆盖率虚高到 100%
+            if kind is None and previous_known and run < _MAX_CONTINUATION and _looks_like_continuation(line):
+                run += 1
                 continue
+            run = 0
             previous_known = kind is not None
             seen += 1
             counts[kind or "未识别"] += 1
