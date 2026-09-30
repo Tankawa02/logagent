@@ -499,3 +499,96 @@ def test_candidate_cleanup_failure_rolls_back_saved_memory(store: MemoryStore, o
             store.add('老通道指 Nexmo', 'term', None, replace_id=original.id if original else None)
     assert store.memories(all_projects=True) == ([original] if original else [])
     assert store._candidate(candidate.id) == candidate
+
+
+@pytest.mark.parametrize('choice', ['a', 'r 1'])
+def test_edited_current_candidate_honors_review_choice(store: MemoryStore, monkeypatch: pytest.MonkeyPatch, choice: str) -> None:
+    from log_agent import memory_cli
+
+    saved, _ = store.add('老通道指 Nexmo', 'term', '/repo')
+    candidate = store.record_candidate('老通道指 Twilio', 'term', '/repo', 'correction', 's1')
+    edited = '老通道指的是 Nexmo'
+    answers = iter(['e', edited, choice])
+    monkeypatch.setattr(memory_cli.console, 'input', lambda *_a, **_k: next(answers))
+    memory_cli.confirm(_session(store), [candidate])
+    memories = store.memories('/repo')
+    if choice == 'a':
+        assert len(memories) == 2
+        assert store.get(saved.id) == saved
+        assert next(m for m in memories if m.id != saved.id).text == edited
+    else:
+        assert len(memories) == 1
+        assert store.get(saved.id).text == edited
+    assert store._candidate(candidate.id) is None
+
+
+def test_edited_current_candidate_validates_replacement(store: MemoryStore) -> None:
+    saved, _ = store.add('老通道指 Nexmo', 'term', None)
+    candidate = store.record_candidate('老通道指 Twilio', 'term', '/repo', 'correction', 's1')
+    with pytest.raises(ValueError, match='范围不匹配'):
+        store.accept(candidate, '老通道指的是 Nexmo', replace_id=saved.id)
+    assert store.get(saved.id) == saved
+    assert store._candidate(candidate.id) == candidate
+
+
+def test_global_cleanup_uses_index_across_many_scopes(store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent import memory as module
+
+    for i in range(200):
+        store.record_candidate(f'无关服务编号 {i}', 'term', f'/scope-{i}', 'correction', 's1')
+    targets = [
+        store.record_candidate('老通道指的是 Nexmo', 'term', scope, 'correction', 's1')
+        for scope in (None, '/scope-0', '/scope-199')
+    ]
+    original = module.equivalent
+    comparisons = []
+
+    def counted(left: str, right: str) -> bool:
+        comparisons.append((left, right))
+        return original(left, right)
+
+    monkeypatch.setattr(module, 'equivalent', counted)
+    store.add('老通道指 Nexmo', 'term', None)
+    assert len(comparisons) == len(targets)
+    assert all(store._candidate(c.id) is None for c in targets)
+    assert len(store.pending(all_projects=True)) == 200
+    plan = store.conn.execute(
+        'EXPLAIN QUERY PLAN SELECT id, text FROM memory_candidates WHERE kind = ? AND equivalence_key = ?',
+        ('term', module._equivalence_key('老通道指 Nexmo')),
+    ).fetchall()
+    assert any('SEARCH' in row[3] and 'memory_candidates_equivalence' in row[3] for row in plan)
+
+
+def test_cleanup_prefilter_still_checks_equivalence(store: MemoryStore) -> None:
+    candidate = store.record_candidate('的a是b就c指', 'term', '/repo', 'correction', 's1')
+    store.add('abc', 'term', None)
+    assert store._candidate(candidate.id) == candidate
+
+
+def test_old_candidate_database_migrates_and_cleans_paraphrases(tmp_path: Path) -> None:
+    path = tmp_path / 'legacy.db'
+    conn = sqlite3.connect(path)
+    conn.execute('''CREATE TABLE memory_candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, project TEXT, text TEXT NOT NULL,
+        signal TEXT NOT NULL, occurrences INTEGER NOT NULL DEFAULT 1, sessions TEXT NOT NULL DEFAULT '[]',
+        first_seen TEXT NOT NULL, last_seen TEXT NOT NULL
+    )''')
+    conn.execute(
+        'INSERT INTO memory_candidates (kind, project, text, signal, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)',
+        ('term', '/legacy', '老通道指的是 Nexmo', 'correction', '2026-09-30', '2026-09-30'),
+    )
+    conn.commit()
+    conn.close()
+    store = MemoryStore(path)
+    try:
+        assert len(store.pending('/legacy')) == 1
+        store.add('老通道指 Nexmo', 'term', None)
+        assert store.pending('/legacy') == []
+    finally:
+        store.close()
+    reopened = MemoryStore(path)
+    try:
+        assert len(reopened.memories()) == 1
+        assert reopened.pending('/legacy') == []
+    finally:
+        reopened.close()

@@ -45,6 +45,7 @@ MAX_CANDIDATES_PER_SCOPE = 50
 REJECT_COOLDOWN = timedelta(days=90)
 FEATURE_HINT_AFTER_SESSIONS = 3
 _SIMILARITY = 0.7
+_EQUIVALENCE_FILLER = frozenset("的是就指")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS memory_candidates (
     project TEXT,
     text TEXT NOT NULL,
     signal TEXT NOT NULL,
+    equivalence_key TEXT NOT NULL DEFAULT '',
     occurrences INTEGER NOT NULL DEFAULT 1,
     sessions TEXT NOT NULL DEFAULT '[]',
     first_seen TEXT NOT NULL,
@@ -141,6 +143,11 @@ def similar(a: str, b: str) -> bool:
     return 2 * len(left & right) / (len(left) + len(right)) >= _SIMILARITY
 
 
+def _equivalence_key(text: str) -> str:
+    """等价的必要条件：只去除 equivalent 允许变化的空白和解释措辞。"""
+    return "".join(char for char in text if not char.isspace() and char not in _EQUIVALENCE_FILLER)
+
+
 def equivalent(a: str, b: str) -> bool:
     """保守合并：相似度达标且差异仅为常见中文解释措辞。
 
@@ -152,9 +159,8 @@ def equivalent(a: str, b: str) -> bool:
     if not similar(a, b):
         return False
     left, right = "".join(a.split()), "".join(b.split())
-    filler = set("的是就指")
     return all(
-        tag == "equal" or set(left[a_start:a_end] + right[b_start:b_end]) <= filler
+        tag == "equal" or set(left[a_start:a_end] + right[b_start:b_end]) <= _EQUIVALENCE_FILLER
         for tag, a_start, a_end, b_start, b_end in SequenceMatcher(None, left, right, autojunk=False).get_opcodes()
     )
 
@@ -218,7 +224,25 @@ class MemoryStore:
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         with self.conn:
             self.conn.executescript(_SCHEMA)
+        self._migrate_candidate_index()
         self._purge()
+
+    def _migrate_candidate_index(self) -> None:
+        """旧库一次性回填预筛选键；串行迁移，避免两个 CLI 同时加列。"""
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(memory_candidates)")}
+            if "equivalence_key" not in columns:
+                self.conn.execute("ALTER TABLE memory_candidates ADD COLUMN equivalence_key TEXT NOT NULL DEFAULT ''")
+                rows = self.conn.execute("SELECT id, text FROM memory_candidates").fetchall()
+                self.conn.executemany(
+                    "UPDATE memory_candidates SET equivalence_key = ? WHERE id = ?",
+                    [(_equivalence_key(text), cid) for cid, text in rows],
+                )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS memory_candidates_equivalence "
+                "ON memory_candidates(kind, equivalence_key, project)"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -329,15 +353,15 @@ class MemoryStore:
             with self.conn:
                 self.conn.execute(
                     "UPDATE memory_candidates SET text = ?, kind = ?, signal = ?, occurrences = occurrences + 1, "
-                    "sessions = ?, last_seen = ? WHERE id = ?",
-                    (new_text, kind, strongest, json.dumps(sessions), now, candidate.id),
+                    "sessions = ?, last_seen = ?, equivalence_key = ? WHERE id = ?",
+                    (new_text, kind, strongest, json.dumps(sessions), now, _equivalence_key(new_text), candidate.id),
                 )
             return self._candidate(candidate.id)
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO memory_candidates (kind, project, text, signal, sessions, first_seen, last_seen) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (kind, project, text, signal, json.dumps([session]), now, now),
+                "INSERT INTO memory_candidates (kind, project, text, signal, sessions, first_seen, last_seen, equivalence_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (kind, project, text, signal, json.dumps([session]), now, now, _equivalence_key(text)),
             )
         self._cap_candidates(project)
         return self._candidate(int(cur.lastrowid))
@@ -350,12 +374,16 @@ class MemoryStore:
         with self.conn:
             # 先取得写锁，再复核已保存记忆；旧 review 列表或其他进程可能已保存了等价内容。
             # 后续失败会连同候选删除一起回滚。
-            self.conn.execute("DELETE FROM memory_candidates WHERE id = ?", (candidate.id,))
+            removed = self.conn.execute("DELETE FROM memory_candidates WHERE id = ?", (candidate.id,))
             saved_text = clean_text(text or candidate.text)
-            for existing in self.memories(candidate.project):
-                if existing.kind == candidate.kind and equivalent(existing.text, saved_text):
-                    self._drop_duplicate_candidates(existing.project, existing.kind, existing.text)
-                    return existing
+            # 当前候选的编辑文本已经过用户新增/替换确认，应尊重选择。
+            # 已被其他保存操作清理的旧候选仍走防重复检查，不能因编辑绕过。
+            reviewed_edit = removed.rowcount > 0 and text is not None and saved_text != candidate.text
+            if not reviewed_edit:
+                for existing in self.memories(candidate.project):
+                    if existing.kind == candidate.kind and equivalent(existing.text, saved_text):
+                        self._drop_duplicate_candidates(existing.project, existing.kind, existing.text)
+                        return existing
             memory, _ = self._write_memory(
                 saved_text, candidate.kind, candidate.project, "suggested", replace_id=replace_id
             )
@@ -391,10 +419,12 @@ class MemoryStore:
 
     def _drop_duplicate_candidates(self, project: str | None, kind: str, text: str) -> None:
         """清理能看到这条记忆的等价候选：全局记忆覆盖所有范围，项目记忆只覆盖本项目。"""
-        rows = self.conn.execute(
-            "SELECT id, text FROM memory_candidates WHERE kind = ? AND (? IS NULL OR project = ?)",
-            (kind, project, project),
-        ).fetchall()
+        sql = "SELECT id, text FROM memory_candidates WHERE kind = ? AND equivalence_key = ?"
+        params = (kind, _equivalence_key(text))
+        if project is not None:
+            sql += " AND project = ?"
+            params = (*params, project)
+        rows = self.conn.execute(sql, params).fetchall()
         self.conn.executemany(
             "DELETE FROM memory_candidates WHERE id = ?",
             [(candidate_id,) for candidate_id, candidate_text in rows if equivalent(candidate_text, text)],
