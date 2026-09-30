@@ -114,6 +114,28 @@ def _candidate_line(candidate: Candidate) -> Text:
     )
 
 
+def _replacement_choice(store: MemoryStore, text: str, kind: str, project: str | None) -> tuple[bool, int | None]:
+    matches = store.similar_memories(text, kind, project)
+    if not matches:
+        return True, None
+    console.print(Text("  发现相似记忆，请选择新增或替换：", style="warn"))
+    for memory in matches:
+        console.print(Text(f"  #{memory.id} {memory.text}"))
+    try:
+        answer = console.input(Text("  [a] 新增  [r 编号] 替换指定记忆  [s] 稍后（默认） ", style="muted")).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False, None
+    if answer == "a":
+        return True, None
+    command, _, target = answer.partition(" ")
+    if command == "r" and target.lstrip("#").isdigit():
+        memory_id = int(target.lstrip("#"))
+        if any(m.id == memory_id for m in matches):
+            return True, memory_id
+    console.print(Text("  未保存；替换时请指定上面列出的编号。", style="muted"))
+    return False, None
+
+
 def confirm(mem: MemorySession, candidates: list[Candidate], *, force: bool = False) -> None:
     """逐条请用户确认。force=False 时跳过本会话已经问过的候选。Ctrl+C / 输入结束视为"稍后"。"""
     todo = [c for c in candidates if force or c.id not in mem.asked]
@@ -145,10 +167,14 @@ def confirm(mem: MemorySession, candidates: list[Candidate], *, force: bool = Fa
                 store.reject(candidate, permanent=True)
                 console.print(Text("  好的，以后不再提示这条。", style="muted"))
             elif answer in ("y", "yes", "是"):
-                _saved(store.accept(candidate))
+                proceed, replace_id = _replacement_choice(store, candidate.text, candidate.kind, candidate.project)
+                if proceed:
+                    _saved(store.accept(candidate, replace_id=replace_id), updated=replace_id is not None)
             elif answer == "e":
                 if edited:
-                    _saved(store.accept(candidate, edited))
+                    proceed, replace_id = _replacement_choice(store, edited, candidate.kind, candidate.project)
+                    if proceed:
+                        _saved(store.accept(candidate, edited, replace_id=replace_id), updated=replace_id is not None)
                 else:
                     console.print(Text("  内容为空，已跳过。", style="muted"))
             elif answer in ("n", "no", "否"):
@@ -156,7 +182,7 @@ def confirm(mem: MemorySession, candidates: list[Candidate], *, force: bool = Fa
                 console.print(Text("  好的，不保存。", style="muted"))
             else:
                 console.print(Text("  稍后可以用 /memory review 处理。", style="muted"))
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, ValueError) as exc:
             console.print(Text(f"  {glyphs.fail} 保存失败：{exc}", style="err"))
 
 
@@ -207,7 +233,7 @@ def handle_slash(mem: MemorySession | None, command: str, arg: str) -> bool:
                 _remember(mem.store, rest, mem.project)
             else:
                 console.print(Text(_MEMORY_USAGE, style="warn"))
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, ValueError) as exc:
         console.print(Text(f"{glyphs.fail} 记忆库操作失败：{exc}", style="err"))
     return True
 
@@ -223,7 +249,10 @@ def _remember(store: MemoryStore, arg: str, project: str | None, kind: str | Non
         return
     kind = kind or guess_kind(text)
     scope = None if force_global else default_scope(kind, project)
-    memory, updated = store.add(text, kind, scope, origin="explicit")
+    proceed, replace_id = _replacement_choice(store, text, kind, scope)
+    if not proceed:
+        return
+    memory, updated = store.add(text, kind, scope, origin="explicit", replace_id=replace_id)
     _saved(memory, updated)
 
 
@@ -337,6 +366,9 @@ def memory_add(
     store = _open_store()
     try:
         _remember(store, ("-g " if global_ else "") + text, _project_of(code), kind)
+    except (sqlite3.Error, ValueError) as exc:
+        console.print(Text(f"{glyphs.fail} 保存失败：{exc}", style="err"))
+        raise typer.Exit(code=1) from exc
     finally:
         store.close()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from log_agent.memory import (
     FEATURE_HINT_AFTER_SESSIONS,
     MemorySession,
     MemoryStore,
+    clean_text,
     default_memory_path,
     project_key,
     similar,
@@ -53,8 +55,8 @@ def test_scopes_and_dedupe(store: MemoryStore) -> None:
     store.add("prod 走 gateway-b", "fact", "/other")
     assert [m.text for m in store.memories("/repo")] == ["以后先写结论", "老通道指 Nexmo"]
 
-    memory, updated = store.add("老通道指的是 Nexmo", "term", "/repo")
-    assert updated and memory.text == "老通道指的是 Nexmo"
+    memory, updated = store.add("老通道指 Nexmo", "term", "/repo")
+    assert not updated and memory.text == "老通道指 Nexmo"
     assert len(store.memories("/repo")) == 2
 
 
@@ -62,12 +64,12 @@ def test_single_mention_waits_until_second_session(store: MemoryStore) -> None:
     first = _session(store, "s1")
     first.suggest("老通道指 Nexmo", "term", "mention")
     assert first.finish_turn("老通道那边怎么了") == []
-    first.suggest("老通道指的是 Nexmo", "term", "mention")
+    first.suggest("老通道指 Nexmo", "term", "mention")
     first.finish_turn("再看看老通道")
     assert first.session_due() == [], "同一会话里重复出现不算"
 
     second = _session(store, "s2")
-    second.suggest("老通道就是 Nexmo", "term", "mention")
+    second.suggest("老通道指 Nexmo", "term", "mention")
     assert second.finish_turn("老通道又出问题了") == [], "重复出现的候选攒到会话结束再问"
     due = second.session_due()
     assert len(due) == 1 and due[0].sessions == ["s1", "s2"]
@@ -262,3 +264,129 @@ def test_memory_commands_and_feature_hint(sample_log: Path, monkeypatch: pytest.
     assert "log-agent memory add" in shown.output
     again = runner.invoke(cli.app, ["analyze", "-l", str(sample_log)])
     assert "log-agent memory add" not in again.output, "功能提示只出现一次"
+
+
+def test_similar_facts_require_explicit_replacement(store: MemoryStore) -> None:
+    old, _ = store.add("生产环境短信统一走 gateway-a", "fact", "/repo")
+    new_text = "生产环境短信统一走 gateway-b"
+    candidate = store.record_candidate(new_text, "fact", "/repo", "correction", "s1")
+    assert candidate is not None
+    other, updated = store.add("测试环境短信统一走 gateway-a", "fact", "/repo")
+    assert not updated and other.id != old.id
+    assert store.get(old.id).text.endswith("gateway-a")
+    replaced = store.accept(candidate, replace_id=old.id)
+    assert replaced.id == old.id and replaced.text == new_text
+    assert store.get(other.id).text.startswith("测试环境")
+    assert store._candidate(candidate.id) is None
+
+
+def test_candidates_keep_distinct_facts_and_scopes(store: MemoryStore) -> None:
+    text = "生产环境短信统一走 gateway-a"
+    global_candidate = store.record_candidate(text, "fact", None, "mention", "s1")
+    local = store.record_candidate(text, "fact", "/repo", "mention", "s1")
+    other = store.record_candidate(text.replace("生产", "测试"), "fact", "/repo", "mention", "s2")
+    assert len({global_candidate.id, local.id, other.id}) == 3
+    store.add(text, "fact", "/repo")
+    assert store._candidate(global_candidate.id) is not None
+    assert store._candidate(other.id) is not None
+    assert store._candidate(local.id) is None
+
+
+def test_redact_before_truncation() -> None:
+    assert "sk-ABCDEFGH" not in clean_text("说明 " + "a" * 285 + " sk-ABCDEFGHIJKLMNOPQRSTUV")
+    key = "-----BEGIN PRIVATE KEY-----\n" + "A" * 400 + "\n-----END PRIVATE KEY-----"
+    assert clean_text(key) == "[私钥已脱敏]"
+
+
+@pytest.mark.parametrize("operation", ["accept", "replace", "reject", "remove"])
+def test_memory_mutations_rollback(store: MemoryStore, operation: str) -> None:
+    old, _ = store.add("生产环境短信统一走 gateway-a", "fact", "/repo")
+    candidate = store.record_candidate("生产环境短信统一走 gateway-b", "fact", "/repo", "correction", "s1")
+    # 让第二步失败，验证第一步也会回滚。
+    table = "memory_candidates" if operation in ("accept", "replace") else "memory_rejections"
+    event = "DELETE" if table == "memory_candidates" else "INSERT"
+    store.conn.execute(
+        f"CREATE TRIGGER fail_write BEFORE {event} ON {table} "
+        "BEGIN SELECT RAISE(ABORT, 'simulated failure'); END"
+    )
+    store.conn.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="simulated failure"):
+        if operation == "accept":
+            store.accept(candidate)
+        elif operation == "replace":
+            store.accept(candidate, replace_id=old.id)
+        elif operation == "reject":
+            store.reject(candidate, permanent=True)
+        else:
+            store.remove(old.id)
+    assert store.memories("/repo") == [old]
+    assert store._candidate(candidate.id) == candidate
+    assert store.conn.execute("SELECT count(*) FROM memory_rejections").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("target_scope", ["/other", None])
+def test_replacement_cannot_cross_scope(store: MemoryStore, target_scope: str | None) -> None:
+    old, _ = store.add("相似项目事实", "fact", target_scope)
+    candidate = store.record_candidate("相似项目事实更新", "fact", "/repo", "correction", "s1")
+    with pytest.raises(ValueError):
+        store.accept(candidate, replace_id=old.id)
+    assert store.get(old.id) == old and store._candidate(candidate.id) == candidate
+
+
+@pytest.mark.parametrize("choice", ["a", "r 1", "s", "r 999"])
+def test_confirm_similar_candidate(store: MemoryStore, monkeypatch: pytest.MonkeyPatch, choice: str) -> None:
+    from log_agent import memory_cli
+
+    old, _ = store.add("生产环境短信统一走 gateway-a", "fact", "/repo")
+    candidate = store.record_candidate("生产环境短信统一走 gateway-b", "fact", "/repo", "correction", "s1")
+    answers = iter(["y", choice])
+    monkeypatch.setattr(memory_cli.console, "input", lambda *_a, **_k: next(answers))
+    memory_cli.confirm(_session(store), [candidate])
+    if choice == "r 1":
+        assert store.get(old.id).text.endswith("gateway-b")
+        assert len(store.memories("/repo")) == 1
+    else:
+        assert store.get(old.id) == old
+        assert len(store.memories("/repo")) == (2 if choice == "a" else 1)
+    assert (store._candidate(candidate.id) is None) == (choice in ("a", "r 1"))
+
+
+def test_manual_add_prompts_before_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner.invoke(cli.app, ["memory", "add", "生产环境短信统一走 gateway-a"])
+    result = runner.invoke(cli.app, ["memory", "add", "测试环境短信统一走 gateway-a"], input="a\n")
+    assert result.exit_code == 0 and "新增或替换" in result.output
+    store = MemoryStore(default_memory_path())
+    try:
+        assert len(store.memories()) == 2
+    finally:
+        store.close()
+
+
+def test_add_code_updates_memory_scope(sample_log: Path, code_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent import agent as agent_module
+
+    project = project_key([str(code_repo)])
+    store = MemoryStore(default_memory_path())
+    store.add("本项目使用 gateway-b", "fact", project)
+    store.close()
+    real_build = agent_module.build_agent
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setattr(
+        agent_module, "build_agent",
+        lambda **kw: real_build(model=_RecordingModel(script=[AIMessage(content="ok")]),
+                                checkpointer=kw.get("checkpointer"), memory=kw.get("memory")),
+    )
+    _seen_prompts.clear()
+    result = runner.invoke(
+        cli.app, ["chat", "-l", str(sample_log), "--db", str(tmp_path / "sessions.db")],
+        input=f"/add-code {code_repo}\n/remember 服务部署在华东\n分析错误\nexit\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "本项目使用 gateway-b" in _seen_prompts[-1]
+    store = MemoryStore(default_memory_path())
+    try:
+        saved = next(m for m in store.memories(project) if m.text == "服务部署在华东")
+        assert saved.project == project
+        assert store.memories() == []
+    finally:
+        store.close()

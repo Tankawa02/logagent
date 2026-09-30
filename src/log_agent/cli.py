@@ -840,6 +840,10 @@ def chat(
                         log_paths = log_paths + added
                     else:
                         code_paths = code_paths + added
+                        if mem is not None:
+                            from .memory import project_key
+
+                            mem.project = project_key(code_paths)
                     suggestions = []
                     linker = CitationLinker(log_paths, code_paths)
                     store.touch(session, log_paths, code_paths, model, settings)
