@@ -17,8 +17,9 @@ import time
 from collections import Counter, deque
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+from .gittools import GIT_TOOLS
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
 from .logformat import level_and_body
 from .redact import is_enabled as redact_enabled
@@ -33,36 +34,8 @@ from .timefilter import (
     utc_stamp,
 )
 
-Status = Literal["ok", "hint", "error"]
-
-
-class ToolOutput(str):
-    """工具结果：字符串内容 + 结构化状态。继承 str，直接调用工具函数时用法与普通字符串一致。"""
-
-    status: Status
-    meta: dict[str, Any]
-
-    def __new__(cls, text: str, status: Status = "ok", **meta: Any) -> ToolOutput:
-        obj = super().__new__(cls, text)
-        obj.status = status
-        obj.meta = meta
-        return obj
-
-    @property
-    def artifact(self) -> dict[str, Any]:
-        return {"status": self.status, **self.meta}
-
-
-def _ok(text: str, **meta: Any) -> ToolOutput:
-    return ToolOutput(text, "ok", **meta)
-
-
-def _hint(message: str, kind: str, **meta: Any) -> ToolOutput:
-    return ToolOutput(f"[提示] {message}", "hint", kind=kind, message=message, **meta)
-
-
-def _err(message: str) -> ToolOutput:
-    return ToolOutput(f"[错误] {message}", "error", message=message)
+# ToolOutput 定义在 tooloutput.py，这里重新导出，保持 `tools.ToolOutput` 等用法不变
+from .tooloutput import Status, ToolOutput, _err, _hint, _ok  # noqa: F401
 
 # 搜索时跳过的目录
 SKIP_DIRS = {
@@ -968,6 +941,7 @@ ALL_TOOLS: list[Callable[..., ToolOutput]] = [
     list_code_files,
     read_code_file,
     grep_code,
+    *GIT_TOOLS,
 ]
 
 

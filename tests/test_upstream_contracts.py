@@ -102,7 +102,9 @@ def test_subagents_are_patched_too() -> None:
     assert len(model.calls) == 3
     sub = model.calls[1]
     names = {_tool_name(t) for t in sub["tools"]}
-    assert names == {"list_code_files", "grep_code", "read_code_file", "read_file"}, f"code-investigator 的工具不对：{names}"
+    expected = {"list_code_files", "grep_code", "read_code_file", "recent_changes", "show_commit", "blame_lines",
+                "read_file"}
+    assert names == expected, f"code-investigator 的工具不对：{names}"
     assert sub["system"] == _SUBAGENT_PROMPT, "deepagents 又往子代理系统提示词里追加了内容"
 
 

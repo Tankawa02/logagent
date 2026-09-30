@@ -108,8 +108,8 @@ def report_body(payload: dict, view: str = "detailed") -> str:
         for i, issue in enumerate(analysis["issues"], 1):
             lines.append(f"## 问题 {i}：{issue['title']}\n\n现象：{issue['symptoms']}\n\n影响：{issue['impact']}")
             section("复现条件（未验证的条件仍需确认）", issue["reproduction_conditions"])
-            section("证据", [f"{e['source']}:{e['line_start']}-{e['line_end']}\n\n    "
-                           + e["excerpt"].replace("\n", "\n    ") for e in issue["evidence"]])
+            section("证据", [_evidence_entry(payload.get("evidence_check"), i, j, e)
+                           for j, e in enumerate(issue["evidence"], 1)])
             section("根因假设", [f"{h['explanation']}（{h['confidence']}）：{h['reasoning']}"
                                  for h in issue["root_cause_hypotheses"]])
             section("待确认项", issue["open_questions"])
@@ -119,6 +119,16 @@ def report_body(payload: dict, view: str = "detailed") -> str:
     if view == "detailed":
         lines.append("## 完整分析与推导\n\n" + payload.get("report", ""))
     return "\n\n".join(lines)
+
+
+def _evidence_entry(check: dict | None, issue: int, index: int, evidence: dict) -> str:
+    from .evidence import item_for, item_label
+
+    head = f"{evidence['source']}:{evidence['line_start']}-{evidence['line_end']}"
+    item = item_for(check, issue, index)
+    if item:
+        head += f"（{item_label(item)}）"
+    return head + "\n\n    " + evidence["excerpt"].replace("\n", "\n    ")
 
 
 REPORT_INSTRUCTIONS = """
@@ -131,6 +141,8 @@ confidence 使用 high/medium/low；结论措辞不作为自动判定依据。�
 每个问题写明现象、影响、证据、根因假设及推导、待确认项、处理建议、复现条件、验证步骤。
 只写取证支持的信息：影响未知写“待确认”；列表无信息用 []；不得编造复现步骤、行号或日志原文。
 证据 source 使用工具返回的路径，line_start/line_end 使用真实行号，excerpt 保留脱敏内容。
+程序会按 source 和行号回查原文核对 excerpt：excerpt 必须逐字摘自工具输出（可去掉行号前缀、用 … 省略中间部分），
+不要改写、翻译或概括；核对不通过的证据会在报告里标为“与原文不符”。git 提交不作为 evidence 条目，写在根因假设的 reasoning 里。
 根因是待验证的假设时明确标注，不能包装成已证实事实。不要自行填写运行时间、时区或来源清单，程序会记录。
 Schema：
 """ + json.dumps(Analysis.model_json_schema(), ensure_ascii=False)
