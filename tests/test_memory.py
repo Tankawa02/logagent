@@ -303,8 +303,8 @@ def test_memory_mutations_rollback(store: MemoryStore, operation: str) -> None:
     old, _ = store.add("生产环境短信统一走 gateway-a", "fact", "/repo")
     candidate = store.record_candidate("生产环境短信统一走 gateway-b", "fact", "/repo", "correction", "s1")
     # 让第二步失败，验证第一步也会回滚。
-    table = "memory_candidates" if operation in ("accept", "replace") else "memory_rejections"
-    event = "DELETE" if table == "memory_candidates" else "INSERT"
+    table = "memories" if operation in ("accept", "replace") else "memory_rejections"
+    event = "UPDATE" if operation == "replace" else "INSERT"
     store.conn.execute(
         f"CREATE TRIGGER fail_write BEFORE {event} ON {table} "
         "BEGIN SELECT RAISE(ABORT, 'simulated failure'); END"
@@ -431,3 +431,71 @@ def test_candidate_paraphrases_do_not_cross_kind_or_scope(store: MemoryStore) ->
     other_scope = store.record_candidate('老通道指的是 Nexmo', 'term', None, 'mention', 's2')
     assert len({first.id, other_kind.id, other_scope.id}) == 3
     assert store.pending('/repo') == []
+
+
+@pytest.mark.parametrize('scope', [None, '/repo'])
+@pytest.mark.parametrize('operation', ['add', 'replace', 'edit'])
+def test_saving_clears_visible_equivalent_candidates(store: MemoryStore, scope: str | None, operation: str) -> None:
+    original = None
+    if operation != 'add':
+        original, _ = store.add('旧术语定义', 'term', scope)
+    candidates = [
+        store.record_candidate('老通道指的是 Nexmo', 'term', project, 'correction', 's1')
+        for project in (None, '/repo', '/other')
+    ]
+    different_kind = store.record_candidate('老通道指的是 Nexmo', 'fact', '/repo', 'correction', 's1')
+    different_fact = store.record_candidate('老通道指 Twilio', 'term', '/repo', 'correction', 's1')
+    if operation == 'edit':
+        store.update(original.id, '老通道指 Nexmo')
+    else:
+        store.add('老通道指 Nexmo', 'term', scope, replace_id=original.id if original else None)
+    for candidate in candidates:
+        visible = scope is None or candidate.project == scope
+        assert (store._candidate(candidate.id) is None) == visible
+    assert store._candidate(different_kind.id) is not None
+    assert store._candidate(different_fact.id) is not None
+
+
+@pytest.mark.parametrize('scope', [None, '/repo'])
+@pytest.mark.parametrize('edited', [None, '老通道就是 Nexmo'])
+def test_stale_review_reuses_visible_saved_memory(store: MemoryStore, scope: str | None, edited: str | None) -> None:
+    candidate = store.record_candidate('老通道指的是 Nexmo', 'term', '/repo', 'correction', 's1')
+    old_review = store.pending('/repo')
+    saved, _ = store.add('老通道指 Nexmo', 'term', scope)
+    assert store._candidate(candidate.id) is None
+    assert store.accept(old_review[0], edited) == saved
+    assert store.memories(all_projects=True) == [saved]
+    assert store.pending('/repo') == []
+
+
+def test_accept_checks_other_connections_and_preserves_replace_target(store: MemoryStore) -> None:
+    candidate = store.record_candidate('老通道指的是 Nexmo', 'term', '/repo', 'correction', 's1')
+    target, _ = store.add('老通道指 Twilio', 'term', '/repo')
+    other = MemoryStore(store.path)
+    try:
+        saved, _ = other.add('老通道指 Nexmo', 'term', None)
+        assert store.accept(candidate, replace_id=target.id) == saved
+        assert store.get(target.id) == target
+        assert len(store.memories(all_projects=True)) == 2
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize('operation', ['add', 'replace', 'edit'])
+def test_candidate_cleanup_failure_rolls_back_saved_memory(store: MemoryStore, operation: str) -> None:
+    original = None
+    if operation != 'add':
+        original, _ = store.add('旧术语定义', 'term', None)
+    candidate = store.record_candidate('老通道指的是 Nexmo', 'term', '/repo', 'correction', 's1')
+    store.conn.execute(
+        "CREATE TRIGGER fail_cleanup BEFORE DELETE ON memory_candidates "
+        "BEGIN SELECT RAISE(ABORT, 'cleanup failure'); END"
+    )
+    store.conn.commit()
+    with pytest.raises(sqlite3.IntegrityError, match='cleanup failure'):
+        if operation == 'edit':
+            store.update(original.id, '老通道指 Nexmo')
+        else:
+            store.add('老通道指 Nexmo', 'term', None, replace_id=original.id if original else None)
+    assert store.memories(all_projects=True) == ([original] if original else [])
+    assert store._candidate(candidate.id) == candidate
