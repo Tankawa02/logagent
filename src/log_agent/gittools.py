@@ -328,7 +328,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
             out.append(f"    … 另有 {len(commit.files) - MAX_FILES_PER_COMMIT} 个文件")
     if truncated:
         out.append(f"... 还有更早的提交未显示，可缩小时间范围或调大 max_commits（上限 {MAX_COMMITS}）。")
-    out.append("（只含已提交的历史；工作区未提交的修改不在其中。）")
+    out.append("（仅含已提交的历史，不反映工作区里的改动。）")
     return _ok("\n".join(out), commits=len(commits), truncated=truncated, files=total_files,
                newest=commits[0].when, oldest=commits[-1].when)
 
@@ -403,7 +403,8 @@ def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300
         scope = f"在 {path} 下" if path else ""
         return _hint("\n".join(header) + f"该提交{scope}没有文本改动。", "empty_diff", files=0)
     # 先脱敏再截断单行：mask_private_keys 能处理被截断 / 只含半个块的私钥
-    shown = [clip_line(line, _DIFF_LINE_CHARS) for line in redact_code("\n".join(diff)).split("\n")]
+    shown = [clip_line(line, _DIFF_LINE_CHARS)
+             for line in redact_code("\n".join(diff), preserve_lines=True).split("\n")]
     tail = f"\n... diff 超过 {limit} 行，已截断；可用 path 只看某个文件，或调大 max_lines（上限 {MAX_DIFF_LINES}）。" if cut else ""
     return _ok("\n".join(header) + "\n".join(shown) + tail, commit=short, files=files, additions=added,
                deletions=deleted, truncated=cut)

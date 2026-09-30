@@ -102,35 +102,49 @@ def _split_prefix(line: str) -> tuple[str, str]:
     return line[:end], line[end:]
 
 
+_KEY_LOOKAHEAD = 400  # BEGIN 之后最多往后找这么多行的 END（私钥一般几十行）
+
+
 def mask_private_keys(text: str) -> str:
     """逐行遮盖私钥块，行数保持不变，行号前缀原样保留。
 
-    - BEGIN 到 END 之间每一行都换成占位符（含 BEGIN / END 行本身）
+    - 有 BEGIN 且后面能找到 END：两者之间每一行（含空行、BEGIN / END 行本身）都换成占位符
     - 缺 END（被截断或 diff hunk 只含前半段）：正文行一直遮到第一条不像私钥正文的行
     - 缺 BEGIN（只含后半段）：遇到 END 时回头把紧挨着的正文行一并遮住
     """
     if "PRIVATE KEY-----" not in text:
         return text
     lines = text.split("\n")
-    in_block = False
-    for i, line in enumerate(lines):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         # 起止标记在整行里找：`-----BEGIN` 本身以 `-` 开头，不能先当 diff 前缀剥掉
         begin, end = _KEY_BEGIN.search(line), _KEY_END.search(line)
-        if not in_block and begin:
-            closes = end is not None and end.start() > begin.start()
-            lines[i] = line[:begin.start()] + KEY_MASK + (line[end.end():] if closes else "")
-            in_block = not closes
-        elif in_block and end:
-            prefix, _ = _split_prefix(line[:end.start()])
-            lines[i] = prefix + KEY_MASK + line[end.end():]
-            in_block = False
-        elif in_block:
-            prefix, body = _split_prefix(line)
-            if not _KEY_BODY.match(body):
-                in_block = False
-            elif body.strip():
-                lines[i] = prefix + KEY_MASK
-        elif end:
+        if begin:
+            if end and end.start() > begin.start():
+                lines[i] = line[:begin.start()] + KEY_MASK + line[end.end():]
+                i += 1
+                continue
+            lines[i] = line[:begin.start()] + KEY_MASK
+            close = next((j for j in range(i + 1, min(len(lines), i + 1 + _KEY_LOOKAHEAD))
+                          if _KEY_END.search(lines[j])), None)
+            j = i + 1
+            if close is not None:
+                for j in range(i + 1, close):
+                    lines[j] = _split_prefix(lines[j])[0] + KEY_MASK
+                marker = _KEY_END.search(lines[close])
+                lines[close] = _split_prefix(lines[close][:marker.start()])[0] + KEY_MASK + lines[close][marker.end():]
+                i = close + 1
+                continue
+            while j < len(lines):
+                prefix, body = _split_prefix(lines[j])
+                if not _KEY_BODY.match(body):
+                    break
+                lines[j] = prefix + KEY_MASK
+                j += 1
+            i = j
+            continue
+        if end:
             j = i - 1
             while j >= 0:
                 p, b = _split_prefix(lines[j])
@@ -139,10 +153,17 @@ def mask_private_keys(text: str) -> str:
                 lines[j] = p + KEY_MASK
                 j -= 1
             lines[i] = line[:end.start()] + KEY_MASK + line[end.end():]
+        i += 1
     return "\n".join(lines)
 
 
-def _apply_secrets(text: str) -> str:
+# 旧行为：完整的私钥块整体换成一个占位符（不关心行号的场景，如存进记忆的一行文本）
+_PEM_BLOCK = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
+
+
+def _apply_secrets(text: str, *, preserve_lines: bool = True) -> str:
+    if not preserve_lines:
+        text = _PEM_BLOCK.sub(KEY_MASK, text)
     text = mask_private_keys(text)
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
@@ -161,10 +182,11 @@ def redact_log(text: str) -> str:
     return text
 
 
-def redact_code(text: str) -> str:
+def redact_code(text: str, *, preserve_lines: bool = False) -> str:
+    """源码脱敏。preserve_lines=True 时私钥逐行遮盖、保持行数（带行号的输出必须用它）。"""
     if not _enabled or not text:
         return text
-    return _apply_secrets(text)
+    return _apply_secrets(text, preserve_lines=preserve_lines)
 
 
 def redact_code_lines(lines: list[str]) -> list[str]:

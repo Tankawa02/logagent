@@ -927,7 +927,7 @@ def grep_code(
     tail = f"\n... 命中超过 {max_results} 条，仅显示前 {max_results} 条（可用 path_glob 缩小范围）。" if truncated else ""
     files = {line.split(":", 1)[0] for line in shown}
     return _ok(
-        (f"{note}\n" if note else "") + redact_code("\n".join(shown)) + tail,
+        (f"{note}\n" if note else "") + redact_code("\n".join(shown), preserve_lines=True) + tail,
         hits=len(shown),
         files=len(files),
         truncated=truncated,
