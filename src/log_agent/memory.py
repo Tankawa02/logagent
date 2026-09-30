@@ -20,6 +20,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal
 
@@ -138,6 +139,24 @@ def similar(a: str, b: str) -> bool:
     if not left or not right:
         return False
     return 2 * len(left & right) / (len(left) + len(right)) >= _SIMILARITY
+
+
+def equivalent(a: str, b: str) -> bool:
+    """保守合并：相似度达标且差异仅为常见中文解释措辞。
+
+    不把环境名、数字、标识符或否定词的变化当作同义改写。
+    无法确认的改写保留为独立候选，交由用户决定。
+    """
+    if a == b:
+        return True
+    if not similar(a, b):
+        return False
+    left, right = "".join(a.split()), "".join(b.split())
+    filler = set("的是就指")
+    return all(
+        tag == "equal" or set(left[a_start:a_end] + right[b_start:b_end]) <= filler
+        for tag, a_start, a_end, b_start, b_end in SequenceMatcher(None, left, right, autojunk=False).get_opcodes()
+    )
 
 
 def clean_text(text: str) -> str:
@@ -292,13 +311,13 @@ class MemoryStore:
         text = clean_text(text)
         if not _normalize(text):
             return None
-        if any(m.kind == kind and m.text == text for m in self._same_scope(project)):
+        if any(m.kind == kind and equivalent(m.text, text) for m in self.memories(project)):
             return None
         if self._is_rejected(project, text):
             return None
         now = _ts(_now())
         for candidate in self._candidates(project):
-            if candidate.project != project or candidate.kind != kind or candidate.text != text:
+            if candidate.project != project or candidate.kind != kind or not equivalent(candidate.text, text):
                 continue
             sessions = candidate.sessions if session in candidate.sessions else [*candidate.sessions, session][-10:]
             strongest = max(candidate.signal, signal, key=lambda s: _SIGNAL_RANK.get(s, 0))

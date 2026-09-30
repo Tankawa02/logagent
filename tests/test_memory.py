@@ -64,12 +64,12 @@ def test_single_mention_waits_until_second_session(store: MemoryStore) -> None:
     first = _session(store, "s1")
     first.suggest("老通道指 Nexmo", "term", "mention")
     assert first.finish_turn("老通道那边怎么了") == []
-    first.suggest("老通道指 Nexmo", "term", "mention")
+    first.suggest("老通道指的是 Nexmo", "term", "mention")
     first.finish_turn("再看看老通道")
     assert first.session_due() == [], "同一会话里重复出现不算"
 
     second = _session(store, "s2")
-    second.suggest("老通道指 Nexmo", "term", "mention")
+    second.suggest("老通道就是 Nexmo", "term", "mention")
     assert second.finish_turn("老通道又出问题了") == [], "重复出现的候选攒到会话结束再问"
     due = second.session_due()
     assert len(due) == 1 and due[0].sessions == ["s1", "s2"]
@@ -390,3 +390,44 @@ def test_add_code_updates_memory_scope(sample_log: Path, code_repo: Path, tmp_pa
         assert store.memories() == []
     finally:
         store.close()
+
+
+@pytest.mark.parametrize('answer', ['', 's\n', 'r 999\n'])
+def test_memory_add_unsaved_exits_nonzero(answer: str) -> None:
+    first = runner.invoke(cli.app, ['memory', 'add', '生产环境短信统一走 gateway-a'])
+    assert first.exit_code == 0
+    result = runner.invoke(cli.app, ['memory', 'add', '生产环境短信统一走 gateway-b'], input=answer)
+    assert result.exit_code == 1 and '未保存' in result.output
+    store = MemoryStore(default_memory_path())
+    try:
+        assert [m.text for m in store.memories()] == ['生产环境短信统一走 gateway-a']
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('scope', [None, '/repo'])
+@pytest.mark.parametrize('signal', ['mention', 'correction', 'explicit'])
+def test_saved_paraphrases_are_suppressed(store: MemoryStore, scope: str | None, signal: str) -> None:
+    old, _ = store.add('老通道指 Nexmo', 'term', scope)
+    assert store.record_candidate('老通道指的是 Nexmo', 'term', '/repo', signal, 's2') is None
+    assert store.get(old.id) == old
+
+
+@pytest.mark.parametrize('changed', [
+    '测试环境短信统一走 gateway-a',
+    '生产环境短信统一走 gateway-b',
+    '生产环境短信不统一走 gateway-a',
+])
+def test_candidate_similarity_preserves_fact_changes(store: MemoryStore, changed: str) -> None:
+    first = store.record_candidate('生产环境短信统一走 gateway-a', 'fact', '/repo', 'mention', 's1')
+    second = store.record_candidate(changed, 'fact', '/repo', 'mention', 's2')
+    assert first.id != second.id
+    assert store.pending('/repo') == []
+
+
+def test_candidate_paraphrases_do_not_cross_kind_or_scope(store: MemoryStore) -> None:
+    first = store.record_candidate('老通道指 Nexmo', 'term', '/repo', 'mention', 's1')
+    other_kind = store.record_candidate('老通道指的是 Nexmo', 'fact', '/repo', 'mention', 's2')
+    other_scope = store.record_candidate('老通道指的是 Nexmo', 'term', None, 'mention', 's2')
+    assert len({first.id, other_kind.id, other_scope.id}) == 3
+    assert store.pending('/repo') == []

@@ -124,6 +124,7 @@ def _replacement_choice(store: MemoryStore, text: str, kind: str, project: str |
     try:
         answer = console.input(Text("  [a] 新增  [r 编号] 替换指定记忆  [s] 稍后（默认） ", style="muted")).strip().lower()
     except (EOFError, KeyboardInterrupt):
+        console.print(Text("  未保存：输入已结束或操作已取消。", style="muted"))
         return False, None
     if answer == "a":
         return True, None
@@ -238,7 +239,7 @@ def handle_slash(mem: MemorySession | None, command: str, arg: str) -> bool:
     return True
 
 
-def _remember(store: MemoryStore, arg: str, project: str | None, kind: str | None = None) -> None:
+def _remember(store: MemoryStore, arg: str, project: str | None, kind: str | None = None) -> bool:
     text = arg.strip()
     force_global = False
     for flag in ("-g ", "--global "):
@@ -246,14 +247,15 @@ def _remember(store: MemoryStore, arg: str, project: str | None, kind: str | Non
             force_global, text = True, text[len(flag):].strip()
     if not text:
         console.print(Text(_REMEMBER_USAGE, style="warn"))
-        return
+        return False
     kind = kind or guess_kind(text)
     scope = None if force_global else default_scope(kind, project)
     proceed, replace_id = _replacement_choice(store, text, kind, scope)
     if not proceed:
-        return
+        return False
     memory, updated = store.add(text, kind, scope, origin="explicit", replace_id=replace_id)
     _saved(memory, updated)
+    return True
 
 
 def _parse_ids(items: list[str]) -> list[int] | None:
@@ -365,7 +367,8 @@ def memory_add(
         raise typer.Exit(code=2)
     store = _open_store()
     try:
-        _remember(store, ("-g " if global_ else "") + text, _project_of(code), kind)
+        if not _remember(store, ("-g " if global_ else "") + text, _project_of(code), kind):
+            raise typer.Exit(code=1)
     except (sqlite3.Error, ValueError) as exc:
         console.print(Text(f"{glyphs.fail} 保存失败：{exc}", style="err"))
         raise typer.Exit(code=1) from exc
