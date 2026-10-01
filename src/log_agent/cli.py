@@ -138,13 +138,12 @@ def _load_config(ctx: typer.Context) -> None:
 
 
 def _check_api_key() -> None:
-    from .onboarding import key_hints
+    from .onboarding import print_key_hints
 
     if os.environ.get("OPENAI_API_KEY"):
         return
     console.print(Text("缺少 OPENAI_API_KEY 环境变量。", style="bold err"))
-    for label, command in key_hints():
-        console.print(Text.assemble(("  ", ""), (f"{label}: ", "muted"), (command, "accent")))
+    print_key_hints()
     console.print(Text.assemble(("  或运行 ", "muted"), ("log-agent init", "accent"), (" 按步骤引导配置。", "muted")))
     raise typer.Exit(code=1)
 
