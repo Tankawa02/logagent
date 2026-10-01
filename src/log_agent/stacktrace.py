@@ -143,6 +143,11 @@ _NODE_FRAME = re.compile(
 _NODE_UNLOCATED = re.compile(
     r"^\s*at\s+(?:[^()]+\s+\((?:<anonymous>|native|index \d+)\)|<anonymous>|native)\s*$"
 )
+# V8 eval 条目同时包含 eval 来源位置与动态代码位置；仅用于前瞻，不推断业务源码位置。
+_NODE_EVAL = re.compile(
+    r"^\s*at\s+[^()]+\s+\(eval at [^()]+\s+\("
+    r"[^\s()]+:\d+:\d+\),\s+[^\s()]+:\d+:\d+\)\s*$"
+)
 _NODE_HEADER = re.compile(r"^(?:Uncaught\s+)?(?P<type>(?:[A-Z]\w*)?(?:Error|Exception))(?:\s+\[[\w_]+\])?:\s*(?P<msg>.*)$")
 _NODE_CAUSE = re.compile(r"^\s*\[cause\]:\s*(?P<type>[A-Z]\w*(?:Error|Exception)?)(?::\s*(?P<msg>.*))?")
 _PY_START = "Traceback (most recent call last):"
@@ -249,11 +254,11 @@ def _link_from_header(text: str) -> Link | None:
 
 
 def _has_node_frame(lines: Sequence[str]) -> bool:
-    """只允许空行和已识别的无位置栈条目，遇到其它文本即停止。"""
+    """只允许空行、无位置或结构化 eval 栈条目，遇到其它文本即停止。"""
     for line in lines:
         if _NODE_FRAME.match(line):
             return True
-        if line.strip() and not _NODE_UNLOCATED.match(line):
+        if line.strip() and not (_NODE_UNLOCATED.match(line) or _NODE_EVAL.match(line)):
             return False
     return False
 
