@@ -321,11 +321,21 @@ def display_path(path: str | Path, base: Path) -> str:
 
 
 def quote_arg(text: str, windows: bool | None = None) -> str:
-    """只在需要时加引号：Windows 用双引号，POSIX 用 shlex 规则。"""
+    """交互式路径输入的引号；不用于生成 shell 命令。"""
     windows = IS_WINDOWS if windows is None else windows
     if text and not any(ch.isspace() or ch in "\"'`$&|;<>()" for ch in text):
         return text
     return f'"{text}"' if windows else shlex.quote(text)
+
+
+def shell_arg(text: str, windows: bool | None = None) -> str | None:
+    """只输出能同时安全用于 cmd 和 PowerShell 的参数，否则不生成命令。"""
+    windows = IS_WINDOWS if windows is None else windows
+    if windows:
+        if any(ch in text for ch in '$`%!"\r\n'):
+            return None
+        return f'"{text}"'
+    return shlex.quote(text)
 
 
 def split_args(answer: str, windows: bool | None = None) -> list[str]:
@@ -453,22 +463,20 @@ def _config_target(cwd: Path) -> tuple[Path, bool]:
 
 def _base_layer(target: Path) -> dict:
     """除了要生成的文件之外，运行时还会读到的配置（用户级 ~/.log-agent/config.toml）。"""
-    from .config import ConfigError, LoadedConfig, _read, user_config_path
+    from .config import LoadedConfig, _read, user_config_path
 
     user = user_config_path()
     if not user.is_file() or user.resolve() == target.resolve():
         return {}
     loaded = LoadedConfig()
-    try:
-        _read(user, loaded)
-    except ConfigError:
-        return {}
+    _read(user, loaded)
     return loaded.for_command("analyze")
 
 
 def _runtime_value(env: str, written: str | None, base: dict, key: str) -> tuple[str | None, bool]:
     """按运行时的优先级（环境变量 > 本文件 > 用户级配置）算出实际会用的值；第二项表示是否被环境变量覆盖。"""
-    override = os.environ.get(env, "").strip()
+    # Match cli_defaults / analyze: nonempty overrides are used verbatim, including whitespace.
+    override = os.environ.get(env, "")
     if override:
         return override, bool(written) and override != written
     return written or base.get(key), False
@@ -505,13 +513,17 @@ def run_init(
         if not typer.confirm(f"{target} 已存在，覆盖？", default=False):
             return 2
     try:
-        existing = load_config(cwd).for_command("analyze")
+        base = _base_layer(target)
+    except ConfigError as exc:
+        _warn(f"现有配置读取失败：{exc}。请先修复用户级配置，再运行 init。")
+        return 2
+    try:
+        existing = base if explicit_target and not target.exists() else load_config(cwd).for_command("analyze")
     except ConfigError as exc:
         _warn(f"现有配置读取失败，忽略：{exc}")
         existing = {}
-    base = _base_layer(target)
-    current_model = os.environ.get("LOG_AGENT_MODEL") or existing.get("model") or DEFAULT_MODEL
-    current_url = os.environ.get("OPENAI_BASE_URL") or existing.get("base_url")
+    current_model = os.environ.get("LOG_AGENT_MODEL") or existing.get("model") or base.get("model") or DEFAULT_MODEL
+    current_url = os.environ.get("OPENAI_BASE_URL") or existing.get("base_url") or base.get("base_url")
 
     _step(1, "检查 API Key")
     has_key = _check_key(ask)
@@ -522,7 +534,7 @@ def run_init(
     if url_overridden:
         _warn(f"环境变量 OPENAI_BASE_URL 会覆盖配置里的 base_url，运行时实际连 {endpoint_label(runtime_url)}。")
     elif runtime_url != chosen_url:
-        source = "环境变量 OPENAI_BASE_URL" if os.environ.get("OPENAI_BASE_URL", "").strip() else "用户级配置"
+        source = "环境变量 OPENAI_BASE_URL" if os.environ.get("OPENAI_BASE_URL", "") else "用户级配置"
         _note(f"运行时实际连 {endpoint_label(runtime_url)}（来自{source}）。")
     elif not runtime_url:
         _note("运行时使用官方接口。")
@@ -577,6 +589,9 @@ def run_init(
     if not pinged:
         console.print(Text.assemble(("  log-agent doctor --ping", "accent"), ("      验证 Key 和模型接口", "muted")))
     best = min(samples, key=lambda s: s.unknown_ratio) if samples else None
-    sample = quote_arg(display_path(best.path, cwd)) if best else "app.log"
-    console.print(Text.assemble((f"  log-agent analyze -l {sample}", "accent"), ("      开始分析", "muted")))
+    sample = shell_arg(display_path(best.path, cwd)) if best else "app.log"
+    if sample is None:
+        _note("日志文件名包含 shell 特殊字符，请先重命名文件，再使用 log-agent analyze -l 指定日志。")
+    else:
+        console.print(Text.assemble((f"  log-agent analyze -l {sample}", "accent"), ("      开始分析", "muted")))
     return 1 if ping and pinged is False else 0

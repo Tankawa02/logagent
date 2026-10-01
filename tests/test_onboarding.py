@@ -182,7 +182,9 @@ def test_init_yes_generates_loadable_config_without_secrets(project: Path, gatew
     assert data["code"] == ["."] and data["timezone"] == "+08:00"
     assert GOOD_KEY not in text and "hunter2" not in text  # Key 不落盘，抽样行先脱敏
     assert "# [[log_formats]]" in text and "GW|30.09.2026|start" in text  # 未识别的日志附上模板
-    assert "模型接口可用" in out.output and "log-agent analyze -l logs/app.log" in out.output
+    assert "模型接口可用" in out.output
+    sample_arg = '"logs/app.log"' if onboarding.IS_WINDOWS else "logs/app.log"
+    assert f"log-agent analyze -l {sample_arg}" in out.output
     config = load_config(project).for_command("analyze")
     assert config["code"] == [str(project.resolve())] and config["timezone"] == "+08:00"
 
@@ -410,3 +412,152 @@ def test_ping_is_bounded_even_if_the_client_hangs() -> None:
     result = probe.ping("openai:x", None, timeout=0.5, chat_model=Hangs())
     assert not result.ok and "没有响应" in result.message
     assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize("name", ["logs/$(whoami).log", "logs/`whoami`.log", "logs/%PATH%.log", "logs/!PATH!.log"])
+def test_shell_command_omits_unsafe_windows_paths(name: str) -> None:
+    assert onboarding.shell_arg(name, windows=True) is None
+    assert onboarding.split_args(onboarding.quote_arg(name, True), True) == [name]
+
+
+def test_init_does_not_print_substitution_command(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (project / "logs" / "app.log").rename(project / "logs" / "$(whoami).log")
+    monkeypatch.setattr(onboarding, "IS_WINDOWS", True)
+    out = runner.invoke(cli.app, ["init", "--yes", "--no-ping"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert 'log-agent analyze -l "logs/$(whoami).log"' not in out.output
+    assert "请先重命名文件" in out.output
+
+
+def test_init_new_explicit_config_inherits_user_defaults(project: Path, tmp_path: Path,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent.config import user_config_path
+
+    user = user_config_path()
+    user.parent.mkdir(parents=True)
+    user.write_text('model = "openai:custom"\nbase_url = "https://gateway.example/v1"\n', encoding="utf-8")
+    target = tmp_path / "new.toml"
+    monkeypatch.setenv("LOG_AGENT_CONFIG", str(target))
+    out = runner.invoke(cli.app, ["init", "--yes", "--no-ping"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert "现有配置读取失败" not in out.output
+    data = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert data["model"] == "openai:custom"
+    assert data["base_url"] == "https://gateway.example/v1"
+
+
+@pytest.mark.parametrize("model,url", [(" openai:custom ", " https://gateway.example/v1 "), ("   ", "   ")])
+def test_init_probe_preserves_runtime_environment_values(project: Path, monkeypatch: pytest.MonkeyPatch,
+                                                        model: str, url: str) -> None:
+    monkeypatch.setenv("LOG_AGENT_MODEL", model)
+    monkeypatch.setenv("OPENAI_BASE_URL", url)
+    monkeypatch.setenv("OPENAI_API_KEY", GOOD_KEY)
+    calls = []
+    monkeypatch.setattr(onboarding, "_ping", lambda m, u: calls.append((m, u)) or True)
+    out = runner.invoke(cli.app, ["init", "--yes", "--ping", "-m", "openai:saved",
+                                  "--base-url", "https://saved.example/v1"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert calls == [(model, url)]
+    assert cli._resolve_model(None) == model
+
+
+@pytest.mark.parametrize("elapsed", [0.75, 1.25])
+def test_ping_fallback_shares_deadline(monkeypatch: pytest.MonkeyPatch, elapsed: float) -> None:
+    now = [100.0]
+    monkeypatch.setattr(probe.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(probe, "_GRACE_SECONDS", 0)
+    waits = []
+
+    def bounded(call, deadline):
+        waits.append(deadline)
+        if len(waits) == 1:
+            now[0] += elapsed
+            raise ValueError("max_tokens unsupported")
+        assert deadline == pytest.approx(1 - elapsed)
+        raise probe.FutureTimeout
+
+    monkeypatch.setattr(probe, "_bounded", bounded)
+    result = probe.ping("openai:x", None, timeout=1, chat_model=object())
+    assert not result.ok and "没有响应" in result.message
+    assert waits == [1, 1 - elapsed]
+
+
+def test_bounded_does_not_start_after_deadline() -> None:
+    with pytest.raises(probe.FutureTimeout):
+        probe._bounded(lambda: pytest.fail("expired invocation started"), 0)
+
+
+@pytest.mark.parametrize("error", [ValueError("unknown provider"), ValueError("malformed model"),
+                                   TypeError("invalid model name")])
+def test_ping_reports_model_creation_errors(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    import langchain.chat_models
+
+    def invalid(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(langchain.chat_models, "init_chat_model", invalid)
+    result = probe.ping("invalid:model", None)
+    assert not result.ok and "无法创建模型客户端" in result.message
+    assert "不支持设置超时" not in result.message
+
+
+def test_doctor_process_exits_when_invocation_never_returns(project: Path) -> None:
+    import subprocess
+    import sys
+    import textwrap
+    import time
+
+    started_file = project / "ping-started"
+    code = textwrap.dedent('''
+        import os
+        import threading
+        import sys
+        from pathlib import Path
+        from log_agent import agent, cli, probe
+        class Hangs:
+            def invoke(self, *args, **kwargs):
+                Path(sys.argv[1]).touch()
+                threading.Event().wait()
+        agent._resolve_chat_model = lambda *args, **kwargs: Hangs()
+        probe._GRACE_SECONDS = 0
+        os.environ["OPENAI_API_KEY"] = "test"
+        cli.app(args=["doctor", "--ping", "--ping-timeout", "1"])
+    ''')
+    # Cold imports and doctor's dependency checks are not part of the request timeout.
+    # Keep a separate startup bound, then require the actual CLI process to exit promptly.
+    with subprocess.Popen([sys.executable, "-c", code, str(started_file)], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, encoding="utf-8") as process:
+        try:
+            startup_deadline = time.monotonic() + 60
+            while not started_file.exists() and process.poll() is None and time.monotonic() < startup_deadline:
+                time.sleep(0.02)
+            if not started_file.exists():
+                process.kill()
+                stdout, stderr = process.communicate(timeout=5)
+                pytest.fail(f"CLI did not reach model invocation: {stdout}\n{stderr}")
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+    assert process.returncode == 1, stdout + stderr
+    assert "没有响应" in stdout
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("contents", ['model = [', 'code = [42]'])
+def test_init_refuses_broken_user_config(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       explicit: bool, contents: str) -> None:
+    from log_agent.config import user_config_path
+
+    user = user_config_path()
+    user.parent.mkdir(parents=True)
+    user.write_text(contents, encoding="utf-8")
+    target = tmp_path / "new.toml" if explicit else project / ".log-agent.toml"
+    if explicit:
+        monkeypatch.setenv("LOG_AGENT_CONFIG", str(target))
+    out = runner.invoke(cli.app, ["init", "--yes", "--no-ping"], env=WIDE)
+    assert out.exit_code == 2, out.output
+    assert "现有配置读取失败" in out.output and "请先修复用户级配置" in out.output
+    assert not target.exists()
+    assert user.read_text(encoding="utf-8") == contents
