@@ -294,7 +294,7 @@ def _subagents(tools: list) -> list[dict]:
 
 
 def _resolve_chat_model(model: Any, base_url: str | None, *, timeout: float | None = None,
-                        retries: int | None = None) -> Any:
+                        retries: int | None = None, strict: bool = False) -> Any:
     """字符串模型统一带上超时与自动重试；测试等场景直接传入的模型实例原样使用。"""
     if not isinstance(model, str):
         return model
@@ -318,6 +318,8 @@ def _resolve_chat_model(model: Any, base_url: str | None, *, timeout: float | No
     try:
         return init_chat_model(model, **options)
     except (TypeError, ValueError):
+        if strict:  # 调用方（doctor --ping）必须保证超时 / 重试生效，不能悄悄丢掉
+            raise
         # 个别 provider 不认这两个参数时退回默认构造，至少保证能用
         return model
 

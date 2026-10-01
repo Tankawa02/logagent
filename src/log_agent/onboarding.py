@@ -81,6 +81,8 @@ def unsafe_url_reason(url: str) -> str | None:
         return "地址里带了用户名 / 密码"
     if parts.query:
         return "地址里带了查询参数（可能是 token）"
+    if parts.fragment or "#" in url:
+        return "地址里带了 # 片段（可能是 token）"
     return None
 
 
@@ -193,13 +195,26 @@ def _note(message: str) -> None:
 
 
 def key_hints() -> list[tuple[str, str]]:
+    """可以直接复制执行的命令；说明文字放在 key_hint_note()，不要拼进命令里。"""
     if IS_WINDOWS:
         return [
             ("PowerShell", '$env:OPENAI_API_KEY="sk-..."'),
             ("CMD", "set OPENAI_API_KEY=sk-..."),
-            ("永久生效", 'setx OPENAI_API_KEY "sk-..."（需重开终端）'),
+            ("永久生效", 'setx OPENAI_API_KEY "sk-..."'),
         ]
-    return [("Shell", 'export OPENAI_API_KEY="sk-..."（写进 ~/.bashrc / ~/.zshrc 永久生效）')]
+    return [("Shell", 'export OPENAI_API_KEY="sk-..."')]
+
+
+def key_hint_note() -> str:
+    if IS_WINDOWS:
+        return "前两条只对当前终端生效；setx 写入用户环境变量，需要重开终端。"
+    return "只对当前终端生效；写进 ~/.bashrc 或 ~/.zshrc 可以永久生效。"
+
+
+def print_key_hints(indent: str = "  ") -> None:
+    for label, command in key_hints():
+        console.print(Text.assemble((indent, ""), (f"{label}: ", "muted"), (command, "accent")))
+    console.print(Text(indent + key_hint_note(), style="muted"))
 
 
 def _check_key(ask: bool) -> bool:
@@ -210,8 +225,7 @@ def _check_key(ask: bool) -> bool:
         _ok(f"OPENAI_API_KEY 已设置（{mask_key(key)}）")
         return True
     _warn("没有设置 OPENAI_API_KEY")
-    for label, command in key_hints():
-        console.print(Text.assemble(("    ", ""), (f"{label}: ", "muted"), (command, "accent")))
+    print_key_hints("    ")
     if ask:
         entered = typer.prompt("  现在粘贴 Key 做一次验证（只用于本次检查，不会保存；回车跳过）",
                                default="", show_default=False, hide_input=True).strip()
@@ -223,20 +237,29 @@ def _check_key(ask: bool) -> bool:
     return False
 
 
-def _choose_base_url(default: str | None, given: str | None, ask: bool) -> str | None:
+def _choose_base_url(default: str | None, given: str | None, ask: bool) -> tuple[str | None, bool]:
+    """返回 (写进配置的网关地址, 显式给出的地址是否因为不安全被拒绝)。
+
+    带凭据的地址既不写进文件，也不作为提示的默认值显示出来。
+    """
+    if default and unsafe_url_reason(default):
+        _note("当前网关地址带凭据，保留在环境变量里（运行时仍会使用），不写入配置。")
+        default = None
     value = given if given is not None else default
+    explicit = given is not None
     if ask and given is None:
         value = typer.prompt("  OpenAI 兼容网关地址（回车使用官方接口）", default=default or "",
                              show_default=bool(default)).strip() or None
+        explicit = bool(value) and value != default
     if not value:
-        _ok("使用官方接口")
-        return None
+        _ok("配置里不写 base_url")
+        return None, False
     reason = unsafe_url_reason(value)
     if reason:
         _warn(f"不把网关地址写进配置：{reason}。请放在环境变量 OPENAI_BASE_URL 里。")
-        return None
+        return None, explicit
     _ok(f"网关：{value}")
-    return value
+    return value, False
 
 
 def _available_models(base_url: str | None, has_key: bool) -> list[str] | None:
@@ -288,16 +311,45 @@ def _choose_model(current: str, given: str | None, listed: list[str] | None, ask
     return model
 
 
+def display_path(path: str | Path, base: Path) -> str:
+    """给用户看 / 复制的路径：能相对就相对，统一用 /（Windows 上 Path 和 glob 也认 /）。"""
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(base.resolve()).as_posix() or "."
+    except ValueError:
+        return resolved.as_posix()
+
+
+def quote_arg(text: str, windows: bool | None = None) -> str:
+    """只在需要时加引号：Windows 用双引号，POSIX 用 shlex 规则。"""
+    windows = IS_WINDOWS if windows is None else windows
+    if text and not any(ch.isspace() or ch in "\"'`$&|;<>()" for ch in text):
+        return text
+    return f'"{text}"' if windows else shlex.quote(text)
+
+
+def split_args(answer: str, windows: bool | None = None) -> list[str]:
+    """拆分用户输入的多个路径。Windows 不按 POSIX 规则处理反斜杠，但要去掉包裹用的引号。"""
+    windows = IS_WINDOWS if windows is None else windows
+    try:
+        tokens = shlex.split(answer, posix=not windows)
+    except ValueError:  # 引号不成对：退回按空白拆
+        tokens = answer.split()
+    if windows:
+        tokens = [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'" else t for t in tokens]
+    return [t for t in tokens if t]
+
+
 def _choose_logs(given: list[str] | None, cwd: Path, ask: bool) -> list[str]:
     from .inputs import LogInputError, resolve_log_inputs
 
-    found = [str(p.relative_to(cwd)) for p in discover_logs(cwd)]
+    found = [display_path(p, cwd) for p in discover_logs(cwd)]
     raw = list(given or [])
     if not raw:
         if ask:
             answer = typer.prompt("  用来抽样的日志文件（多个用空格分隔，支持通配符；回车跳过）",
-                                  default=" ".join(shlex.quote(p) for p in found), show_default=bool(found))
-            raw = shlex.split(answer, posix=not IS_WINDOWS)
+                                  default=" ".join(quote_arg(p) for p in found), show_default=bool(found))
+            raw = split_args(answer)
         else:
             raw = found
     raw = [item for item in raw if item and item != "-"]
@@ -359,15 +411,10 @@ def _choose_timezone(samples: list, given: str | None, ask: bool) -> str | None:
     return value
 
 
-def _choose_code(given: list[Path] | None, cwd: Path, ask: bool) -> list[str]:
+def _choose_code(given: list[Path] | None, cwd: Path, ask: bool, base: Path) -> list[str]:
+    """base：配置文件所在目录。配置里的相对路径以它为准，而不是当前目录。"""
     if given:
-        code = []
-        for path in given:
-            resolved = path.expanduser().resolve()
-            try:
-                code.append(resolved.relative_to(cwd).as_posix() or ".")
-            except ValueError:
-                code.append(str(resolved))
+        code = [display_path(path.expanduser(), base) for path in given]
         _ok("源码目录：" + "、".join(code))
         return code
     if not looks_like_project(cwd):
@@ -375,8 +422,9 @@ def _choose_code(given: list[Path] | None, cwd: Path, ask: bool) -> list[str]:
         return []
     if ask and not typer.confirm("  把当前目录作为源码目录（code）？分析时会结合源码定位根因", default=True):
         return []
-    _ok("源码目录：.（当前目录）")
-    return ["."]
+    value = display_path(cwd, base)
+    _ok("源码目录：" + ("（当前目录）" if value == "." else value))
+    return [value]
 
 
 def _ping(model: str, base_url: str | None) -> bool:
@@ -386,10 +434,44 @@ def _ping(model: str, base_url: str | None) -> bool:
         result = ping(model, base_url)
     if result.ok:
         served = f" · 实际模型 {result.served_model}" if result.served_model else ""
-        _ok(f"模型接口可用：{endpoint_label(base_url)} · {result.latency:.2f}s{served} · {result.message}")
+        _ok(f"模型接口可用：{model} @ {endpoint_label(base_url)} · {result.latency:.2f}s{served} · {result.message}")
     else:
         _warn(f"模型接口检查失败：{result.message}")
     return result.ok
+
+
+def _config_target(cwd: Path) -> tuple[Path, bool]:
+    """运行时会读的那份配置文件。LOG_AGENT_CONFIG 设置时运行时只读它，写项目里的 .log-agent.toml 会被忽略。"""
+    from .config import PROJECT_FILE
+
+    explicit = os.environ.get("LOG_AGENT_CONFIG", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        return (path if path.is_absolute() else cwd / path).resolve(), True
+    return cwd / PROJECT_FILE, False
+
+
+def _base_layer(target: Path) -> dict:
+    """除了要生成的文件之外，运行时还会读到的配置（用户级 ~/.log-agent/config.toml）。"""
+    from .config import ConfigError, LoadedConfig, _read, user_config_path
+
+    user = user_config_path()
+    if not user.is_file() or user.resolve() == target.resolve():
+        return {}
+    loaded = LoadedConfig()
+    try:
+        _read(user, loaded)
+    except ConfigError:
+        return {}
+    return loaded.for_command("analyze")
+
+
+def _runtime_value(env: str, written: str | None, base: dict, key: str) -> tuple[str | None, bool]:
+    """按运行时的优先级（环境变量 > 本文件 > 用户级配置）算出实际会用的值；第二项表示是否被环境变量覆盖。"""
+    override = os.environ.get(env, "").strip()
+    if override:
+        return override, bool(written) and override != written
+    return written or base.get(key), False
 
 
 def run_init(
@@ -406,12 +488,16 @@ def run_init(
 ) -> int:
     """返回退出码：0 成功；1 生成了配置但显式要求的 --ping 失败；2 没有生成配置。"""
     from .cli import DEFAULT_MODEL
-    from .config import PROJECT_FILE, ConfigError, load_config
+    from .config import ConfigError, load_config
+    from .probe import endpoint_label
 
     cwd = (cwd or Path.cwd()).resolve()
     ask = not yes
-    target = cwd / PROJECT_FILE
-    console.print(Text("log-agent init · 生成项目配置 " + str(target), style="muted"))
+    target, explicit_target = _config_target(cwd)
+    console.print(Text("log-agent init · 生成配置 " + str(target), style="muted"))
+    if explicit_target:
+        _note(f"LOG_AGENT_CONFIG 已设置：运行时只读 {target}（以及用户级配置），不会读项目里的 .log-agent.toml，"
+              "所以配置写到这个文件。不想这样的话先 unset LOG_AGENT_CONFIG 再运行 init。")
     if target.exists() and not force:
         if not ask:
             console.print(Text(f"{glyphs.fail} {target} 已存在；加 --force 覆盖。", style="err"))
@@ -423,6 +509,7 @@ def run_init(
     except ConfigError as exc:
         _warn(f"现有配置读取失败，忽略：{exc}")
         existing = {}
+    base = _base_layer(target)
     current_model = os.environ.get("LOG_AGENT_MODEL") or existing.get("model") or DEFAULT_MODEL
     current_url = os.environ.get("OPENAI_BASE_URL") or existing.get("base_url")
 
@@ -430,14 +517,31 @@ def run_init(
     has_key = _check_key(ask)
 
     _step(2, "选择模型")
-    chosen_url = _choose_base_url(current_url, base_url, ask)
-    listed = _available_models(chosen_url or current_url, has_key) if ask and not model else None
+    chosen_url, rejected = _choose_base_url(current_url, base_url, ask)
+    runtime_url, url_overridden = _runtime_value("OPENAI_BASE_URL", chosen_url, base, "base_url")
+    if url_overridden:
+        _warn(f"环境变量 OPENAI_BASE_URL 会覆盖配置里的 base_url，运行时实际连 {endpoint_label(runtime_url)}。")
+    elif runtime_url != chosen_url:
+        source = "环境变量 OPENAI_BASE_URL" if os.environ.get("OPENAI_BASE_URL", "").strip() else "用户级配置"
+        _note(f"运行时实际连 {endpoint_label(runtime_url)}（来自{source}）。")
+    elif not runtime_url:
+        _note("运行时使用官方接口。")
+    if rejected:
+        # 用户要的是刚才那个地址；不能拿 Key 去请求旧配置 / 官方接口这类别的地方
+        _note("刚才的网关地址没有生效，跳过模型列表和连通性验证（不会把 Key 发到其它地址）。")
+    probe_ok = has_key and not rejected
+    listed = _available_models(runtime_url, probe_ok) if ask and not model else None
     chosen_model = _choose_model(current_model, model, listed, ask)
+    runtime_model, model_overridden = _runtime_value("LOG_AGENT_MODEL", chosen_model, base, "model")
+    runtime_model = runtime_model or chosen_model
+    if model_overridden:
+        _warn(f"环境变量 LOG_AGENT_MODEL={runtime_model} 会覆盖配置里的 model，运行时实际用 {runtime_model}。")
+
     pinged: bool | None = None
-    if has_key and (ping or (ping is None and ask and typer.confirm("  发一次最小请求验证 Key 和模型？", default=True))):
-        pinged = _ping(chosen_model, chosen_url or current_url)
+    if probe_ok and (ping or (ping is None and ask and typer.confirm("  发一次最小请求验证 Key 和模型？", default=True))):
+        pinged = _ping(runtime_model, runtime_url)  # 验证运行时真正会用的模型和网关
     elif ping:
-        _warn("没有 Key，跳过 --ping")
+        _warn("没有 Key，跳过 --ping" if not has_key else "网关地址未生效，跳过 --ping")
         pinged = False
 
     _step(3, "抽样日志识别格式")
@@ -445,7 +549,7 @@ def run_init(
     chosen_tz = _choose_timezone(samples, timezone, ask)
 
     _step(4, "源码目录")
-    chosen_code = _choose_code(code, cwd, ask)
+    chosen_code = _choose_code(code, cwd, ask, target.parent)
 
     choices = InitChoices(chosen_model, chosen_url, chosen_code, chosen_tz, samples)
     text = render_config(choices)
@@ -457,11 +561,12 @@ def run_init(
     for warning in warnings:
         _warn(warning)
 
-    _step(5, f"写入 {PROJECT_FILE}")
+    _step(5, f"写入 {target.name}")
     console.print(Syntax(text, "toml", theme="ansi_dark", background_color="default", word_wrap=True))
     if ask and not typer.confirm(f"写入 {target}？", default=True):
         _note("已取消，没有写入任何文件。")
         return 2
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     console.print(Text.assemble((f"{glyphs.ok} 已生成 ", "ok"), (str(target), "accent")))
 
@@ -472,6 +577,6 @@ def run_init(
     if not pinged:
         console.print(Text.assemble(("  log-agent doctor --ping", "accent"), ("      验证 Key 和模型接口", "muted")))
     best = min(samples, key=lambda s: s.unknown_ratio) if samples else None
-    sample = os.path.relpath(best.path, cwd) if best else "app.log"
+    sample = quote_arg(display_path(best.path, cwd)) if best else "app.log"
     console.print(Text.assemble((f"  log-agent analyze -l {sample}", "accent"), ("      开始分析", "muted")))
     return 1 if ping and pinged is False else 0

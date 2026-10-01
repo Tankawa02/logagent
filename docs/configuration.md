@@ -30,6 +30,16 @@ log-agent init -y -l 'logs/*.log' -m openai:qwen-max --base-url https://gw.examp
 | `--force` | 覆盖已有的 `.log-agent.toml`（否则拒绝覆盖） |
 
 退出码：0 已生成；1 已生成但显式要求的 `--ping` 失败；2 没有生成（取消、文件已存在等）。
+几点细节：
+
+- 设置了 `LOG_AGENT_CONFIG` 时，运行时只读它指向的文件（加上用户级配置），所以 `init` 会写到那个文件而不是项目里的
+  `.log-agent.toml`；`code` 等相对路径也按那个文件所在目录计算。不想这样的话先 `unset LOG_AGENT_CONFIG`。
+- 验证（ping）和拉取模型列表用的是**运行时实际会用的**模型和网关：环境变量 `LOG_AGENT_MODEL` / `OPENAI_BASE_URL`
+  会覆盖配置文件，init 会明确提示覆盖关系。显式给出的网关地址因为带凭据被拒绝时，直接跳过验证和模型列表，
+  不会把 Key 发到其它地址。
+- 带用户名密码、查询参数或 `#` 片段的网关地址不会写进文件，也不会作为提示的默认值显示出来。
+- 提示里的路径一律用 `/`（Windows 上也能直接用），含空格时 Windows 用双引号、macOS / Linux 用 shell 引号。
+
 只想要一份全是注释的空模板，用 `log-agent config --init`。
 
 ## 配置 API Key

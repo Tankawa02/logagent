@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from log_agent import cli, probe
+from log_agent import cli, onboarding, probe
 from log_agent.config import load_config
 from log_agent.onboarding import InitChoices, render_config, unsafe_url_reason, validate_config_text
 
@@ -268,3 +268,145 @@ def test_rendered_config_round_trips_tricky_values() -> None:
     assert validate_config_text(text) == []
     data = tomllib.loads(text)
     assert data["model"] == 'openai:we"ird\\model' and data["code"] == ["src", "C:\\code"]
+
+
+# ---------------------------------------------------------------------------
+# PR #46 review / Windows CI
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_default_log_answer_round_trips_on_every_platform(windows: bool) -> None:
+    paths = ["logs/app.log", "logs/my app.log", "C:/srv/x y/a.log"]
+    answer = " ".join(onboarding.quote_arg(p, windows) for p in paths)
+    assert onboarding.split_args(answer, windows) == paths
+    if windows:
+        assert "'" not in answer  # cmd / PowerShell 里单引号不是引号
+        assert onboarding.split_args(r'logs\app.log "D:\x y\b.log"', True) == [r"logs\app.log", r"D:\x y\b.log"]
+
+
+def test_display_path_uses_forward_slashes(tmp_path: Path) -> None:
+    (tmp_path / "logs").mkdir()
+    assert onboarding.display_path(tmp_path / "logs" / "a.log", tmp_path) == "logs/a.log"
+    assert onboarding.display_path(tmp_path, tmp_path) == "."
+    assert onboarding.display_path(tmp_path, tmp_path / "logs") == tmp_path.resolve().as_posix()
+
+
+def test_init_interactive_with_windows_style_quoting(project: Path, gateway: str,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    # 回归：Windows 上默认日志答案被单引号包住、路径解析失败，后面的问题全部错位
+    monkeypatch.setattr(onboarding, "IS_WINDOWS", True)
+    (project / "logs" / "app.log").rename(project / "logs" / "my app.log")
+    out = runner.invoke(cli.app, ["init"], input="\n2\ny\n\n+09:00\ny\ny\n", env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert '["logs/my app.log"]' in out.output or '"logs/my app.log"' in out.output
+    data = tomllib.loads((project / ".log-agent.toml").read_text(encoding="utf-8"))
+    assert data["timezone"] == "+09:00" and data["code"] == ["."] and data["model"] == "openai:qwen-max"
+    assert 'log-agent analyze -l "logs/my app.log"' in out.output
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_key_hints_are_copyable_commands(monkeypatch: pytest.MonkeyPatch, windows: bool) -> None:
+    import re
+
+    monkeypatch.setattr(onboarding, "IS_WINDOWS", windows)
+    allowed = re.compile(r'^(export OPENAI_API_KEY="sk-\.\.\."|\$env:OPENAI_API_KEY="sk-\.\.\."'
+                         r'|set OPENAI_API_KEY=sk-\.\.\.|setx OPENAI_API_KEY "sk-\.\.\.")$')
+    for _, command in onboarding.key_hints():
+        assert allowed.match(command), command
+    assert onboarding.key_hint_note()
+
+
+def test_missing_key_hint_in_analyze_is_copyable(monkeypatch: pytest.MonkeyPatch, sample_log: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(onboarding, "IS_WINDOWS", False)
+    out = runner.invoke(cli.app, ["analyze", "-l", str(sample_log)], env=WIDE)
+    assert out.exit_code == 1
+    line = next(row for row in out.output.splitlines() if "export OPENAI_API_KEY" in row)
+    assert line.strip() == 'Shell: export OPENAI_API_KEY="sk-..."'
+
+
+def test_fragment_urls_never_reach_config(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    out = runner.invoke(cli.app, ["init", "--yes", "--base-url", "https://gw.example.com/v1#token=frag-secret"],
+                        env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert "frag-secret" not in (project / ".log-agent.toml").read_text(encoding="utf-8")
+    assert "frag-secret" not in out.output
+
+
+def test_unsafe_env_gateway_is_neither_shown_nor_written(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://u:env-secret@gw.example.com/v1")
+    out = runner.invoke(cli.app, ["init", "-m", "openai:m", "--no-ping"], input="\n\n\nn\ny\n", env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert "env-secret" not in out.output
+    assert "env-secret" not in (project / ".log-agent.toml").read_text(encoding="utf-8")
+    assert "运行时实际连 gw.example.com" in out.output
+
+
+def test_init_writes_the_file_selected_by_log_agent_config(project: Path, tmp_path: Path,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    selected = tmp_path / "shared" / "team.toml"
+    monkeypatch.setenv("LOG_AGENT_CONFIG", str(selected))
+    out = runner.invoke(cli.app, ["init", "--yes", "--timezone", "+08:00"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert selected.is_file() and not (project / ".log-agent.toml").exists()
+    assert "LOG_AGENT_CONFIG" in out.output
+    # 相对路径以配置文件所在目录为准：code 仍然指向刚才的项目目录
+    analyze = load_config(project).for_command("analyze")
+    assert analyze["code"] == [str(project.resolve())] and analyze["timezone"] == "+08:00"
+
+
+def test_init_pings_the_model_that_will_actually_run(project: Path, gateway: str,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_AGENT_MODEL", "openai:qwen-max")
+    out = runner.invoke(cli.app, ["init", "--yes", "--ping", "-m", "openai:gpt-4.1"], env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert [r["model"] for r in _Gateway.requests] == ["qwen-max"]
+    assert "LOG_AGENT_MODEL=openai:qwen-max 会覆盖" in out.output
+    assert tomllib.loads((project / ".log-agent.toml").read_text(encoding="utf-8"))["model"] == "openai:gpt-4.1"
+
+
+def test_init_pings_the_gateway_that_will_actually_run(project: Path, gateway: str) -> None:
+    out = runner.invoke(cli.app, ["init", "--yes", "--ping", "--base-url", "http://127.0.0.1:9/v1"], env=WIDE)
+    assert out.exit_code == 0, out.output  # 环境变量里的网关覆盖配置，验证的也是它
+    assert len(_Gateway.requests) == 1 and "会覆盖配置里的 base_url" in out.output
+
+
+def test_rejected_explicit_gateway_skips_ping_and_listing(project: Path, gateway: str) -> None:
+    out = runner.invoke(cli.app, ["init", "--yes", "--ping", "--base-url", "https://u:p@other.example.com/v1"],
+                        env=WIDE)
+    assert out.exit_code == 1, out.output
+    assert _Gateway.requests == [] and "跳过" in out.output
+    out = runner.invoke(cli.app, ["init", "--force"], input="https://u:p@other.example.com/v1\n\ny\n\n\ny\ny\n",
+                        env=WIDE)
+    assert out.exit_code == 0, out.output
+    assert _Gateway.requests == [] and "接口返回的模型" not in out.output
+
+
+def test_ping_refuses_providers_that_ignore_timeout_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    import langchain.chat_models
+
+    def picky(model, **kwargs):
+        if kwargs:
+            raise TypeError("unexpected keyword argument 'max_retries'")
+        raise AssertionError("must not fall back to a client without limits")
+
+    monkeypatch.setattr(langchain.chat_models, "init_chat_model", picky)
+    result = probe.ping("someprovider:model", None, timeout=1)
+    assert not result.ok and "不支持设置超时和重试" in result.message
+
+
+def test_ping_is_bounded_even_if_the_client_hangs() -> None:
+    import time
+
+    class Hangs:
+        def invoke(self, prompt, **kwargs):
+            time.sleep(10)
+
+    started = time.monotonic()
+    result = probe.ping("openai:x", None, timeout=0.5, chat_model=Hangs())
+    assert not result.ok and "没有响应" in result.message
+    assert time.monotonic() - started < 5

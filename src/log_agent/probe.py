@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -16,6 +19,8 @@ PING_TIMEOUT = 20.0
 API_KEY_ENV = "OPENAI_API_KEY"
 _PING_PROMPT = "ping. Reply with exactly: ok"
 # 有些模型（o 系列、部分网关）不接受 max_tokens，被拒时去掉上限再试一次
+# SDK 自己的超时之外再留一点余量，正常情况下先由 SDK 报超时（信息更具体）
+_GRACE_SECONDS = 2.0
 _MAX_TOKENS_HINTS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
 
 
@@ -66,28 +71,46 @@ def _describe(exc: BaseException, timeout: float) -> str:
     return f"{type(exc).__name__}: {first}"
 
 
+def _bounded(call: Callable[[], Any], deadline: float) -> Any:
+    """在工作线程里执行，最多等 deadline 秒；SDK 自己的超时不生效时也不会卡住命令行。"""
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-agent-ping")
+    future = pool.submit(call)
+    try:
+        return future.result(timeout=deadline)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def ping(model: str, base_url: str | None, *, timeout: float = PING_TIMEOUT, chat_model: Any = None) -> ProbeResult:
-    """发一次最小请求。chat_model 供测试注入；正常使用时按 model / base_url 构造，和 analyze 用同一条路径。"""
+    """发一次最小请求。chat_model 供测试注入；正常使用时按 model / base_url 构造，和 analyze 用同一条路径。
+
+    必须同时做到“不重试”和“按 timeout 超时”：provider 不接受这两个参数时直接报告不支持，
+    不退回到默认构造（那样会用 provider 自己的重试和超时）。另外再用工作线程限定最长等待时间。
+    """
     from .agent import _resolve_chat_model
 
     try:
-        llm = chat_model if chat_model is not None else _resolve_chat_model(model, base_url, timeout=timeout,
-                                                                            retries=0)
-        if isinstance(llm, str):  # init_chat_model 不认识这个 provider
-            from langchain.chat_models import init_chat_model
-
-            llm = init_chat_model(llm)
+        llm = chat_model if chat_model is not None else _resolve_chat_model(
+            model, base_url, timeout=timeout, retries=0, strict=True)
+    except (TypeError, ValueError) as exc:
+        return ProbeResult(False, f"该模型 provider 不支持设置超时和重试次数，无法可靠地执行 --ping：{_describe(exc, timeout)}")
     except Exception as exc:  # noqa: BLE001 — 缺 provider 包、模型名格式不对等，都当成配置错误报给用户
         return ProbeResult(False, f"无法创建模型客户端：{_describe(exc, timeout)}")
 
+    deadline = timeout + _GRACE_SECONDS
     started = time.monotonic()
     try:
         try:
-            reply = llm.invoke(_PING_PROMPT, max_tokens=16)
+            reply = _bounded(lambda: llm.invoke(_PING_PROMPT, max_tokens=16), deadline)
+        except FutureTimeout:
+            raise
         except Exception as exc:  # noqa: BLE001
             if not any(hint in str(exc) for hint in _MAX_TOKENS_HINTS):
                 raise
-            reply = llm.invoke(_PING_PROMPT)
+            reply = _bounded(lambda: llm.invoke(_PING_PROMPT), deadline)
+    except FutureTimeout:
+        return ProbeResult(False, f"模型接口在 {timeout:g}s 内没有响应。可以用 --ping-timeout 调大，或检查网络和网关。",
+                           time.monotonic() - started)
     except Exception as exc:  # noqa: BLE001 — 接口错误统一翻译，不抛到命令行
         return ProbeResult(False, _describe(exc, timeout), time.monotonic() - started)
     latency = time.monotonic() - started
