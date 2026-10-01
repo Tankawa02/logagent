@@ -951,6 +951,106 @@ def sessions_rm(
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# serve：可选的 Web 界面
+# ---------------------------------------------------------------------------
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget):
+    # 调用时再取 build_agent，测试里替换 agent.build_agent 就能换成脚本化模型
+    from . import agent as agent_module
+
+    return agent_module.build_agent(
+        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=[], memory=None, budget=budget,
+    )
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="监听地址；要让同事打开分享链接可用 0.0.0.0（务必保留访问令牌）"),
+    port: int = typer.Option(8765, "--port", "-p", min=1, max=65535, help="监听端口"),
+    db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认与 chat 相同：~/.log-agent/sessions.db）"),
+    base_url: str = _opt_base_url,
+    token: str = typer.Option(
+        None, "--token", envvar="LOG_AGENT_WEB_TOKEN",
+        help="本人访问令牌；默认每次启动随机生成。分享链接不受影响，各自独立",
+    ),
+    no_token: bool = typer.Option(False, "--no-token", help="不校验访问令牌（只允许监听本机地址时使用）"),
+    public_url: str = typer.Option(
+        None, "--public-url", help="生成分享链接用的外部地址，如 https://logs.example.com（经反向代理访问时设置）",
+    ),
+    read_only: bool = typer.Option(False, "--read-only", help="只读：不提供网页续问，不需要 API Key"),
+    no_redact: bool = typer.Option(
+        False, "--no-redact", help="本人视图显示未脱敏的日志原文（分享链接始终脱敏）",
+    ),
+    open_browser: bool = typer.Option(False, "--open", help="启动后自动打开浏览器"),
+) -> None:
+    """启动 Web 界面：错误时间线、报告与证据左右对照、网页续问、会话分享链接。"""
+    try:
+        import uvicorn
+
+        from .web.app import STATIC_DIR, WebConfig, create_app
+    except ImportError:
+        _fail(
+            "Web 界面需要额外依赖：uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'"
+            "（本地开发：uv sync --extra web）"
+        )
+    import secrets
+
+    from .config import ConfigError, apply_log_settings, apply_to_environment, load_config, set_loaded
+    from .sessions import default_db_path
+
+    # serve 读 chat 的配置：自定义日志格式影响时间线解析，db / base_url 默认值与 chat 保持一致
+    try:
+        config = load_config()
+        set_loaded(config)
+        values = config.for_command("chat")
+        apply_log_settings(values)
+        apply_to_environment(values)
+    except ConfigError as exc:
+        _fail(str(exc))
+    for warning in config.warnings:
+        console.print(Text(f"{glyphs.fail} {warning}", style="warn"))
+    if no_token and host not in _LOOPBACK_HOSTS:
+        _fail("--no-token 只能和本机地址一起用：监听其他地址时，任何能访问到端口的人都能读你的日志与源码。")
+
+    db_value = db or (Path(values["db"]) if values.get("db") else None)
+    db_path = db_value.expanduser().resolve() if db_value else default_db_path()
+    base_url = base_url or values.get("base_url") or os.environ.get("OPENAI_BASE_URL")
+    can_chat = not read_only and bool(os.environ.get("OPENAI_API_KEY"))
+    access = None if no_token else (token or secrets.token_urlsafe(18))
+    web = WebConfig(
+        db_path=db_path, token=access, agent_factory=None if read_only else _web_agent_factory,
+        base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
+        redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
+    )
+
+    shown_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    url = f"http://{'[' + shown_host + ']' if ':' in shown_host else shown_host}:{port}/"
+    open_url = url + (f"?token={access}" if access else "")
+    rows = [
+        ("地址", Text(open_url, style="accent")),
+        ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，先用 chat 产生会话)"), style="muted")),
+        ("续问", Text("可用" if can_chat else ("只读模式" if read_only else "不可用：缺少 OPENAI_API_KEY"),
+                      style="ok" if can_chat else "warn")),
+        ("脱敏", Text("本人视图关闭，分享链接仍脱敏" if no_redact else "开启", style="warn" if no_redact else "muted")),
+    ]
+    if not (STATIC_DIR / "index.html").is_file():
+        rows.append(("前端", Text("未找到构建产物：cd web && npm ci && npm run build", style="warn")))
+    footer = [Text("把地址里的令牌当作密码，不要发给别人；交接用页面里的「分享」生成只读链接。", style="muted")]
+    if host not in _LOOPBACK_HOSTS:
+        footer.append(Text(f"{glyphs.notice} 正在监听 {host}，局域网内能访问到该端口的人都能看到登录页。", style="warn"))
+    console.print(info_panel(rows, "log-agent serve", f"Web 界面 {glyphs.sep} v{__version__}", footer))
+
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(open_url)
+    uvicorn.run(create_app(web), host=host, port=port, log_level="warning")
+
+
 def main() -> None:
     app()
 

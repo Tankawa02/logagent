@@ -12,6 +12,7 @@
 | [长期记忆与 Skills](memory-and-skills.md) | 跨会话记忆、排查手册 |
 | [分析能力](analysis.md) | 报告导出、证据回查、关联 git 变更、异常链聚类 |
 | [日志格式](log-formats.md) | 内置格式列表与 `[[log_formats]]` 自定义格式 |
+| [Web 界面](web.md) | `serve`：错误时间线、报告证据对照、网页续问、分享链接与访问控制 |
 | [终端显示](terminal.md) | 流式输出、超链接、Windows 兼容 |
 | [安全说明](security.md) | 只读工具、脱敏、git 沙箱 |
 | [开发](development.md) | 测试、升级依赖、找回历史分析 |

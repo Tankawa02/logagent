@@ -212,8 +212,9 @@ def _apply_secrets(text: str, *, preserve_lines: bool = True) -> str:
     return text
 
 
-def redact_log(text: str) -> str:
-    if not _enabled or not text:
+def redact_log(text: str, *, enabled: bool | None = None) -> str:
+    """enabled 显式传入时不读全局开关：Web 视图按请求决定是否脱敏，不能受正在执行的分析轮次影响。"""
+    if not (_enabled if enabled is None else enabled) or not text:
         return text
     text = _apply_secrets(text)
     text = _KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}[已脱敏]", text)
@@ -231,13 +232,13 @@ def redact_code(text: str, *, preserve_lines: bool = False) -> str:
     return _apply_secrets(text, preserve_lines=preserve_lines)
 
 
-def redact_code_lines(lines: list[str]) -> list[str]:
+def redact_code_lines(lines: list[str], *, enabled: bool | None = None) -> list[str]:
     """按整份文件脱敏源码，逐行返回。
 
     只展示文件中间一段时，单看这段可能既没有 BEGIN 也没有 END，私钥正文会漏掉；
     所以先在整份文件上定位私钥块，再按行号取需要的部分。
     """
-    if not _enabled or not lines:
+    if not (_enabled if enabled is None else enabled) or not lines:
         return list(lines)
     masked = _apply_secrets("\n".join(lines)).split("\n")
     return masked if len(masked) == len(lines) else [_apply_secrets(line) for line in lines]

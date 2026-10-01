@@ -33,6 +33,7 @@ log-agent analyze -l app.log                                   # 分析；配置
 - 默认脱敏：token、密码、手机号、身份证、邮箱、IP 在发给模型前打码
 - 报告可导出为 Markdown / JSON，方便贴进工单或接入自动化
 - 证据回查：报告里每条证据的 `文件:行号` 与摘录都会在本地回读原文核对，编造或记错的引用会被标出来
+- 可选 Web 界面：`log-agent serve` 在浏览器里看错误时间线（点尖峰直接追问）、报告与证据左右对照、生成只读分享链接交接给同事
 - 关联代码变更：源码目录是 git 仓库时，agent 能查问题开始前的提交、报错行的 blame 和可疑提交的 diff
 - 利用 deepagents 的子代理委派与上下文压缩
 - 使用 OpenAI 模型（可切换其他 provider）
@@ -48,6 +49,7 @@ log-agent analyze -l app.log                                   # 分析；配置
 | `log-agent watch -l app.log` | 追踪日志，出现新错误时自动分析 | 要 |
 | `log-agent inspect -l app.log` | 本地检查格式、编码、时间窗口 | 不要 |
 | `log-agent doctor [--ping]` | 检查有效配置和依赖；`--ping` 真正连一次模型服务 | `--ping` 时要 |
+| `log-agent serve` | Web 界面：时间线、证据对照、网页续问、分享链接（需 `log-agent[web]`） | 续问时要 |
 | `log-agent config` | 查看加载了哪些配置文件、各项取值 | 不要 |
 
 ## 文档
@@ -61,6 +63,7 @@ log-agent analyze -l app.log                                   # 分析；配置
 | [长期记忆与 Skills](docs/memory-and-skills.md) | 跨会话记忆、排查手册 |
 | [分析能力](docs/analysis.md) | 报告导出、证据回查、关联 git 变更、异常链聚类 |
 | [日志格式](docs/log-formats.md) | 内置格式列表与 `[[log_formats]]` 自定义格式 |
+| [Web 界面](docs/web.md) | `serve`：错误时间线、报告证据对照、网页续问、分享链接与访问控制 |
 | [终端显示](docs/terminal.md) | 流式输出、超链接、Windows 兼容 |
 | [安全说明](docs/security.md) | 只读工具、脱敏、git 沙箱 |
 | [开发](docs/development.md) | 测试、升级依赖、找回历史分析 |

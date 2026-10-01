@@ -99,6 +99,8 @@ class LogFile:
     # checkpoints[k] = 第 k*INDEX_STEP+1 行的字节偏移（未压缩流中的偏移）
     checkpoints: list[int] = field(default_factory=lambda: [0])
     total_lines: int | None = None
+    # 打开时显式指定的编码（--encoding / Web 会话设置）；None 表示自动探测
+    forced: str | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     # 全文扫描类结果（如日志概览）的缓存。文件一变 open_log 就会换新对象，缓存随之失效。
     scan_cache: dict[Any, Any] = field(default_factory=dict, repr=False)
@@ -161,8 +163,10 @@ _CACHE: dict[str, LogFile] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def open_log(path: str | os.PathLike[str]) -> LogFile:
+def open_log(path: str | os.PathLike[str], encoding: str | None = None) -> LogFile:
     """拿到日志文件句柄（带缓存）。文件被改写（大小或修改时间变化）时自动失效重建。
+
+    encoding 显式指定时优先于全局 --encoding，供 Web 界面按会话设置读取，不改动全局状态。
 
     Raises:
         FileNotFoundError: 文件不存在或不是普通文件。
@@ -171,25 +175,32 @@ def open_log(path: str | os.PathLike[str]) -> LogFile:
     if not p.is_file():
         raise FileNotFoundError(str(path))
     stat = p.stat()
-    key = str(p.resolve())
+    forced = encoding or _forced_encoding
+    if encoding:
+        codecs.lookup(encoding)
+    # 同一文件按不同强制编码打开时互不复用：行索引与扫描结果都依赖解码方式
+    key = f"{p.resolve()}\0{forced or ''}"
+
+    def fresh(cached: LogFile | None) -> bool:
+        return bool(cached and cached.size == stat.st_size and cached.mtime_ns == stat.st_mtime_ns)
 
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
-        if cached and cached.size == stat.st_size and cached.mtime_ns == stat.st_mtime_ns:
+        if fresh(cached):
             return cached
 
     gz = _is_gzip(p)
-    if _forced_encoding:
-        encoding = _forced_encoding
+    if forced:
+        detected = forced
     else:
         with _open_binary(p, gz) as f:
-            encoding = detect_encoding(f.read(_SNIFF_BYTES))
+            detected = detect_encoding(f.read(_SNIFF_BYTES))
 
-    log = LogFile(path=p, gz=gz, encoding=encoding, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+    log = LogFile(path=p, gz=gz, encoding=detected, size=stat.st_size, mtime_ns=stat.st_mtime_ns, forced=forced)
     with _CACHE_LOCK:
         # 并行子代理可能同时打开同一文件：谁先登记就用谁的，索引和扫描缓存才能共享
         cached = _CACHE.get(key)
-        if cached and cached.size == stat.st_size and cached.mtime_ns == stat.st_mtime_ns:
+        if fresh(cached):
             return cached
         _CACHE[key] = log
     return log

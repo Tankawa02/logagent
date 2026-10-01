@@ -14,6 +14,12 @@ uv tool install git+https://github.com/yourorg/log-agent.git
 log-agent --help
 ```
 
+需要 Web 界面（`log-agent serve`）时带上 `web` 额外依赖：
+
+```bash
+uv tool install 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'
+```
+
 ## 方式二：临时运行（不常驻安装）
 
 ```bash
@@ -25,6 +31,6 @@ uvx --from git+https://github.com/yourorg/log-agent.git log-agent analyze --log 
 ```bash
 git clone https://github.com/yourorg/log-agent.git
 cd log-agent
-uv sync
+uv sync                 # 需要 Web 界面时：uv sync --extra web
 uv run log-agent --help
 ```
