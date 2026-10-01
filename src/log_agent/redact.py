@@ -92,7 +92,7 @@ KEY_MASK = "[私钥已脱敏]"
 _KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
 # 工具输出 / diff 的行前缀：`12: `、`12- `、`app.log:12  `、`  12 | `、diff 的 `+` `-` 空格
-_LINE_PREFIX = re.compile(r"^(?:\s*(?:[^\s:|]+:)?\d+(?:\s*\|\s?|[:\-]\s?|\s{2,})|[+\- ](?=\S))?")
+_LINE_PREFIX = re.compile(r"^(?:\s*(?:[^\s:|]+:)?\d+(?:\s*\|\s?|[:\-]\s?|\s{2,})|[+\- ](?=\S|$))?")
 # 私钥正文与 PEM 头部字段。遇到其它内容视为块已结束（截断、只含半个块的 diff hunk）
 _KEY_BODY = re.compile(
     r"^\s*(?:[A-Za-z0-9+/=]{8,}|[A-Za-z0-9+/]+={1,2}|Proc-Type:.*|DEK-Info:.*|)\s*[\"',]?\s*$"
@@ -130,11 +130,15 @@ def mask_private_keys(text: str) -> str:
                 i += 1
                 continue
             lines[i] = line[:begin.start()] + KEY_MASK
-            # 完整的块不限长度地找 END（超长密钥的最后一行可能很短）；中间又出现 BEGIN 说明这块被截断了
+            # 完整的块按正文验证后才接受 END；中间又出现 BEGIN 说明这块被截断了
             k = bisect_right(end_rows, i)
             close = end_rows[k] if k < len(end_rows) else None
             if close is not None and bisect_right(begin_rows, i) < len(begin_rows) \
-                    and begin_rows[bisect_right(begin_rows, i)] < close:
+                    and begin_rows[bisect_right(begin_rows, i)] <= close:
+                close = None
+            if close is not None and any(
+                not _KEY_BODY.match(_split_prefix(row)[1]) for row in lines[i + 1:close]
+            ):
                 close = None
             j = i + 1
             if close is not None:

@@ -21,6 +21,8 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
+from .timefilter import find_timestamp
+
 MAX_BLOCK_LINES = 400
 
 _app_prefixes: tuple[str, ...] = ()
@@ -312,7 +314,10 @@ def _parse_jvm_like(lines: Sequence[str]) -> Chain | None:
                     language = "dotnet"
                 continue
             # 第一行通常是带时间戳的日志行，只认行尾的异常头；是否真是异常由后面有没有堆栈帧决定
-            first_ok = index > 0 or _TRAILING.search(text) or _NODE_TRAILING.search(text)
+            next_line = next((line for line in lines[index + 1:] if line.strip()), "")
+            first_ok = index > 0 or _TRAILING.search(text) or (
+                _NODE_TRAILING.search(text) and _NODE_FRAME.match(next_line)
+            )
             link = _link_from_header(text) if first_ok else None
             if link:
                 links.append(link)
@@ -433,6 +438,11 @@ class ChainCollector:
             return False
         stripped = line.strip()
         if self._py == "tb":
+            if not _PY_FRAME.match(line):
+                found = find_timestamp(stripped)
+                # 时间出现在源码字符串内部时仍是续行；行首的时间戳则开始新记录。
+                if found and stripped.startswith((found[0], "[" + found[0])):
+                    return False
             return True if line[:1] in " \t" or not stripped else bool(_PY_FINAL.match(stripped))
         if not stripped:
             return True

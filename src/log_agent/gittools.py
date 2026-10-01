@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -456,15 +457,7 @@ def _parse_blame(text: str) -> tuple[list[_BlameLine], dict[str, dict[str, str]]
     return lines, info
 
 
-def _split_like_git(data: bytes) -> list[str]:
-    """按 _run_limited 的规则切行：只按 \\n 切、去掉行尾 \\r\\n、每行最多 _MAX_LINE_BYTES 字节。"""
-    rows = data.split(b"\n")
-    if rows and rows[-1] == b"":
-        rows.pop()
-    return [row[:_MAX_LINE_BYTES].decode("utf-8", errors="replace").rstrip("\r\n") for row in rows]
-
-
-def _worktree_differs(target: Path, blob: list[str]) -> bool:
+def _worktree_differs(target: Path, blob_oid: str) -> bool:
     """工作区文件是否和 HEAD 版本不同。文件太大或读不了时不下结论（返回 False），不整个读进内存。"""
     try:
         if target.stat().st_size > _MAX_BLOB_BYTES:
@@ -475,7 +468,12 @@ def _worktree_differs(target: Path, blob: list[str]) -> bool:
         return False
     if len(data) > _MAX_BLOB_BYTES:  # 读的过程中被写大了
         return False
-    return _split_like_git(data) != blob
+    # 按 Git 对象格式比较原始字节，显示用的行截断和解码不参与差异检测。
+    algorithm = "sha256" if len(blob_oid) == 64 else "sha1"
+    digest = hashlib.new(algorithm)
+    digest.update(f"blob {len(data)}\0".encode("ascii"))
+    digest.update(data)
+    return digest.hexdigest() != blob_oid
 
 
 def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0) -> ToolOutput:
@@ -525,7 +523,13 @@ def blame_lines(code_dir: str, rel_path: str, start_line: int, end_line: int = 0
     except _GitError:
         blob, too_big = [], True
     masked = redact_code_lines(blob)
-    drifted = False if too_big else _worktree_differs(target, blob)
+    drifted = False
+    if not too_big:
+        try:
+            blob_oid = _run(repo.base, "rev-parse", "--verify", f"HEAD:{top_rel}").strip()
+            drifted = _worktree_differs(target, blob_oid)
+        except _GitError:
+            pass
 
     out = [f"--- {rel} 第 {start}-{lines[-1].number} 行的最近修改（HEAD 版本，时区 {_tz_label()}）---"]
     newest: tuple[int, str] | None = None

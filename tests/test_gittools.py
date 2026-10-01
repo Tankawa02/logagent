@@ -186,14 +186,14 @@ def test_blame_uses_head_and_flags_drifted_worktree(git_repo: Path) -> None:
 @pytest.mark.parametrize("key_type", ["", "RSA ", "EC ", "OPENSSH "])
 def test_blame_redacts_multiline_keys_across_commits(git_repo: Path, key_type: str) -> None:
     content = (f"before = 1\n-----BEGIN {key_type}PRIVATE KEY-----\n"
-               f"first_private_payload\nsecond_private_payload\n-----END {key_type}PRIVATE KEY-----\n"
+               f"Zmlyc3Rwcml2YXRl\nc2Vjb25kcHJpdmF0ZQ==\n-----END {key_type}PRIVATE KEY-----\n"
                "after = 2\n\nkey = sk-abcdefghijklmnopqrstu\n")
     _commit(git_repo, {"app/keys.txt": content}, "add fixture", "2026-06-10T10:00:00+08:00")
-    content = content.replace("second_private_payload", "changed_private_payload")
+    content = content.replace("c2Vjb25kcHJpdmF0ZQ==", "Y2hhbmdlZHByaXZhdGU=")
     _commit(git_repo, {"app/keys.txt": content}, "change fixture", "2026-06-11T10:00:00+08:00")
     out = blame_lines(str(git_repo), "app/keys.txt", 1, 8)
     assert out.status == "ok" and out.meta["commits"] == 2 and out.meta["end"] == 8
-    assert "private_payload" not in out and "PRIVATE KEY" not in out
+    assert "Zmlyc3Rwcml2YXRl" not in out and "Y2hhbmdlZHByaXZhdGU=" not in out and "PRIVATE KEY" not in out
     assert "sk-abcdefghijklmnopqrstu" not in out and "sk-[已脱敏]" in out
     for number in range(2, 6):
         assert f"{number} | [私钥已脱敏]" in out
@@ -360,3 +360,16 @@ def test_git_never_lazy_fetches_from_promisor_remote(tmp_path: Path) -> None:
     show_commit(str(clone), "HEAD~1")
     recent_changes(str(clone))
     assert not marker.exists()
+
+
+def test_blame_detects_edit_only_beyond_display_line_limit(git_repo: Path) -> None:
+    path = git_repo / "app" / "long.py"
+    content = b"x" * 70_000 + b"a\n"
+    path.write_bytes(content)
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "long line")
+    assert blame_lines(str(git_repo), "app/long.py", 1).meta["drifted"] is False
+    path.write_bytes(content[:-2] + b"b\n")
+    out = blame_lines(str(git_repo), "app/long.py", 1)
+    assert out.status == "ok" and out.meta["drifted"] is True
+    assert "工作区文件与 HEAD 版本不同" in out
