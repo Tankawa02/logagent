@@ -119,5 +119,5 @@ verbose = true
   也可以用环境变量 `LOG_AGENT_CONFIG` 直接指定文件。
 - 优先级：命令行参数 > 环境变量（`LOG_AGENT_MODEL`、`OPENAI_BASE_URL` 等）> 配置文件 > 内置默认值。
 - 支持的键：`model`、`base_url`、`code`、`encoding`、`timezone`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
-  以及 chat 专用的 `db`。写错的键会给出提示并忽略。
+  以及 analyze / chat 使用的 `db`、analyze 专用的 `no_save`。写错的键会给出提示并忽略。
 - **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。

@@ -43,6 +43,7 @@ _KEYS: dict[str, str | None] = {
     "budget": "budget",
     "verbose": "verbose",
     "db": "db",
+    "no_save": "no_save",
     "memory": "memory",
     "timeout": None,
     "max_retries": None,
@@ -59,7 +60,7 @@ _ENV_OVERRIDES = {
     "timeout": "LOG_AGENT_TIMEOUT",
     "max_retries": "LOG_AGENT_MAX_RETRIES",
 }
-_ONLY_FOR = {"db": ("chat",)}
+_ONLY_FOR = {"db": ("chat", "analyze"), "no_save": ("analyze",)}
 _PATH_KEYS = {"code", "skills", "db"}
 _PATH_LIST_KEYS = {"code", "skills"}
 

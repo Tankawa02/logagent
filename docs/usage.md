@@ -32,7 +32,7 @@ log-agent doctor --ping --ping-timeout 60
 
 工具提供两种模式：
 
-- **`analyze`** — 单次一问一答，跑完出一份报告就结束。适合快速排查。
+- **`analyze`** — 单次一问一答，跑完出一份报告就结束。适合快速排查；结果默认存为会话，之后能在网页里看、继续追问。
 - **`chat`** — 多轮对话，agent 记住整段对话和已读过的日志，可以连续追问。适合深入排查。
 
 ## 单次分析（analyze）
@@ -84,8 +84,27 @@ log-agent analyze -l app.log -c ./repo --since 14:00 --until 14:30 --baseline "1
 log-agent analyze -l huge.log -c ./repo --budget 200k
 
 # 接入 CI / 定时巡检：发现问题且可信度不低于 medium 时退出码为 3
-log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json
+log-agent analyze -l app.log -c ./repo --fail-on medium -o result.json --no-save
+
+# 给这次分析起个会话名，方便之后找回 / 续问
+log-agent analyze -l app.log -c ./repo -s incident-0609
 ```
+
+### 分析结果存为会话
+
+每次 `analyze` 默认都会存进和 `chat` 相同的会话库（`~/.log-agent/sessions.db`），结束时会提示会话名：
+
+```text
+✓ 已保存为会话 analyze-20260609-165130  ·  log-agent serve 在网页里查看  ·  log-agent chat -s analyze-20260609-165130 继续追问
+```
+
+- `log-agent serve` 打开网页：错误时间线、报告与证据左右对照、分享链接，见 [Web 界面](web.md)。
+- 想接着问：网页里点「追问」，或在终端 `log-agent chat -s <会话名>`。会话保存了本轮完整对话，
+  续问时 agent 知道刚才查过什么、得出了什么结论，沿用同一批日志、源码和时间窗口。
+- 管道输入（`-l -`）的日志落盘在 `~/.log-agent/stdin/`，存档和续问都能正常读到。
+- 不想留存档（CI、定时巡检）：加 `--no-save`，或设环境变量 `LOG_AGENT_NO_SAVE=1`，或在配置的 `[analyze]` 段写 `no_save = true`。
+  会话库打不开（只读目录等）时只提示、不影响分析结果与退出码。
+- 清理：`log-agent sessions list` 查看，`log-agent sessions rm <会话名>` 删除（分享链接随之失效）。
 
 退出码：`0` 成功，`1` 失败（如达到 `--max-steps` 上限），`2` 参数错误，`130` 被 Ctrl+C 中断。
 加了 `--fail-on` 时另有：`3` 发现问题且可信度达到门槛，`4` 结构化报告缺失、校验失败或判定为 `unknown`。

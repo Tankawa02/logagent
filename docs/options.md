@@ -18,6 +18,9 @@
 | `--max-steps` | | 单轮最大推理步数，默认 120 |
 | `--budget` | | 单轮 tokens 上限，如 `200k`、`1.5m`；用到 80% 时自动收尾出报告（也可写进配置文件） |
 | `--baseline` | | 正常时段，如 `13:00~13:30`（带日期时用 `~` 分隔），让 agent 先做前后对比（analyze / chat） |
+| `--session` | `-s` | 会话名：analyze 存档用的名称（默认自动生成），chat 续上已有会话 |
+| `--no-save` | | analyze 不保存为会话；也可用 `LOG_AGENT_NO_SAVE=1` 或配置 `no_save = true` |
+| `--db` | | 会话库路径，默认 `~/.log-agent/sessions.db`（analyze / chat / serve） |
 | `--fail-on` | | `high` / `medium` / `low`：发现问题且可信度不低于该级别时退出码为 3（analyze） |
 | `--verbose` | `-v` | 保留每一步工具调用（含结果摘要、耗时）的完整记录 |
 | `--memory` | | 长期记忆：`suggest`（默认）/ `explicit` / `off`，见[长期记忆](memory-and-skills.md#长期记忆) |

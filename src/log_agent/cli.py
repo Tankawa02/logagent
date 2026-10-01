@@ -285,8 +285,17 @@ def analyze(
     verbose: bool = _opt_verbose,
     skills: list[Path] = _opt_skills,
     memory: MemoryMode = _opt_memory,
+    session: str = typer.Option(
+        None, "--session", "-s",
+        help="保存成的会话名；默认自动生成（形如 analyze-20260609-165130）。之后可用 chat -s 或 log-agent serve 继续追问",
+    ),
+    no_save: bool = typer.Option(
+        False, "--no-save", envvar="LOG_AGENT_NO_SAVE",
+        help="不把本次分析保存为会话（默认会保存，供 log-agent serve 查看、chat -s 续问）",
+    ),
+    db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认 ~/.log-agent/sessions.db）"),
 ) -> None:
-    """单次分析日志，结合源码定位根因（一问一答）。"""
+    """单次分析日志，结合源码定位根因（一问一答）。结果默认保存为会话，可在网页里查看或继续追问。"""
     _check_api_key()
     _configure_timezone(timezone)
     token_budget = _make_budget(budget)
@@ -301,7 +310,11 @@ def analyze(
     from .agent import build_agent
     from .memory_cli import after_turn, end_session, open_session, status_row
 
-    mem = open_session(memory.value, code_paths, "analyze-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    settings = {"since": since, "until": until, "timezone": timezone, "baseline": baseline,
+                "encoding": encoding, "budget": budget, "max_steps": max_steps}
+    saved_session = None if no_save else _open_analyze_session(db, session)
+    session_name = saved_session.name if saved_session else (session or _analyze_session_name())
+    mem = open_session(memory.value, code_paths, session_name)
     # 管道运行或输出到文件时不弹确认，候选留到下次 chat / log-agent memory review 再处理
     can_ask = sys.stdin.isatty() and sys.stdout.isatty() and output is None and "-" not in log
     try:
@@ -315,32 +328,40 @@ def analyze(
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
             agent = build_agent(
                 model=model, base_url=base_url, skill_dirs=skills or [], memory=mem, budget=token_budget,
+                checkpointer=saved_session.checkpointer if saved_session else None,
             )
+        if saved_session:
+            saved_session.register(log_paths, code_paths, model, settings)
 
         content = _build_context_message(log_paths, code_paths, question, baseline_window)
         payload = {"messages": [{"role": "user", "content": content}]}
         from .citations import CitationLinker
+        from .export import build_payload
 
         linker = CitationLinker(log_paths, code_paths)
+        # 保存会话时按会话名记录对话 checkpoint：之后 chat -s / 网页续问能带着本轮的完整上下文接着问
         result = StreamRenderer(verbose=verbose, linker=linker, budget=token_budget).run(
-            agent, payload, config=_run_config(max_steps)
+            agent, payload, config=_run_config(max_steps, session_name if saved_session else None)
+        )
+        data = build_payload(
+            result, question=question, logs=log_paths, code=code_paths, model=model,
+            settings={**settings, "no_redact": no_redact},
         )
 
         if output:
-            from .export import build_payload, infer_format, write_report
+            from .export import infer_format, write_report
 
-            data = build_payload(
-                result, question=question, logs=log_paths, code=code_paths, model=model,
-                settings={"since": since, "until": until, "timezone": timezone, "baseline": baseline,
-                          "encoding": encoding, "budget": budget, "max_steps": max_steps, "no_redact": no_redact},
-            )
             saved = write_report(output, data, infer_format(output, fmt.value if fmt else None), view.value)
             console.print(Text.assemble((f"{glyphs.ok} 报告已保存 ", "ok"), (str(saved), "accent")))
+        if saved_session:
+            saved_session.record(question, result.usage.get("total", 0), data)
 
         after_turn(mem, question, ask=False)
         if can_ask:
             end_session(mem)
     finally:
+        if saved_session:
+            saved_session.close()
         if mem is not None:
             mem.store.close()
 
@@ -352,6 +373,80 @@ def analyze(
         code = _finding_exit_code(result, fail_on)
         if code:
             raise typer.Exit(code=code)
+
+
+def _analyze_session_name() -> str:
+    return "analyze-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+class _AnalyzeSession:
+    """analyze 的会话存档：和 chat 共用会话库，保存失败只提示、不影响分析结果与退出码。"""
+
+    def __init__(self, conn, name: str, db_path: Path) -> None:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        from .sessions import SessionStore
+
+        self.conn = conn
+        self.name = name
+        self.db_path = db_path
+        self.store = SessionStore(conn)
+        self.checkpointer = SqliteSaver(conn)
+        self.ok = True
+
+    def _guard(self, action) -> None:
+        import sqlite3
+
+        if not self.ok:
+            return
+        try:
+            action()
+        except sqlite3.Error as exc:
+            self.ok = False
+            console.print(Text(f"{glyphs.notice} 会话保存失败（不影响本次分析）：{exc}", style="warn"))
+
+    def register(self, logs: list[str], code: list[str], model: str, settings: dict) -> None:
+        # 先登记再分析：中断或出错的一轮也能在会话里看到
+        self._guard(lambda: self.store.touch(self.name, logs, code, model, {**settings, "origin": "analyze"}))
+
+    def record(self, question: str, tokens: int, payload: dict) -> None:
+        self._guard(lambda: self.store.record_turn(self.name, question, tokens, payload))
+        if self.ok:
+            console.print(Text.assemble(
+                (f"{glyphs.ok} 已保存为会话 ", "ok"), (self.name, "accent"),
+                (f"  {glyphs.sep}  ", "muted"), ("log-agent serve", "accent"), (" 在网页里查看", "muted"),
+                (f"  {glyphs.sep}  ", "muted"), (f"log-agent chat -s {self.name}", "accent"), (" 继续追问", "muted"),
+            ))
+
+    def close(self) -> None:
+        self.conn.close()
+
+
+def _open_analyze_session(db: Path | None, name: str | None) -> _AnalyzeSession | None:
+    import sqlite3
+
+    from .sessions import SessionStore, default_db_path
+
+    db_path = db.expanduser().resolve() if db else default_db_path()
+    try:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        store = SessionStore(conn)
+        if name:
+            if store.get(name) is not None:
+                conn.close()
+                _fail(f"会话 '{name}' 已存在：继续追问请用 log-agent chat -s {name}，或换一个 --session 名称。")
+            final = name
+        else:
+            # 同一秒内连续运行（脚本循环、CI）时追加序号，不覆盖已有会话
+            base = final = _analyze_session_name()
+            suffix = 2
+            while store.get(final) is not None:
+                final, suffix = f"{base}-{suffix}", suffix + 1
+        return _AnalyzeSession(conn, final, db_path)
+    except (sqlite3.Error, OSError) as exc:
+        console.print(Text(f"{glyphs.notice} 无法打开会话库 {db_path}，本次分析不保存为会话：{exc}", style="warn"))
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -971,7 +1066,7 @@ def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="监听地址；要让同事打开分享链接可用 0.0.0.0（务必保留访问令牌）"),
     port: int = typer.Option(8765, "--port", "-p", min=1, max=65535, help="监听端口"),
-    db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认与 chat 相同：~/.log-agent/sessions.db）"),
+    db: Path = typer.Option(None, "--db", help="会话数据库文件路径（默认与 analyze / chat 相同：~/.log-agent/sessions.db）"),
     base_url: str = _opt_base_url,
     token: str = typer.Option(
         None, "--token", envvar="LOG_AGENT_WEB_TOKEN",
@@ -1032,7 +1127,7 @@ def serve(
     open_url = url + (f"?token={access}" if access else "")
     rows = [
         ("地址", Text(open_url, style="accent")),
-        ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，先用 chat 产生会话)"), style="muted")),
+        ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，先用 analyze / chat 产生会话)"), style="muted")),
         ("续问", Text("可用" if can_chat else ("只读模式" if read_only else "不可用：缺少 OPENAI_API_KEY"),
                       style="ok" if can_chat else "warn")),
         ("脱敏", Text("本人视图关闭，分享链接仍脱敏" if no_redact else "开启", style="warn" if no_redact else "muted")),
