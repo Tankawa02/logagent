@@ -67,7 +67,36 @@ jobs:
       - name: Install newest allowed versions
         run: uv sync --upgrade
       - name: Upstream contracts + smoke
-        run: uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py -v
+        # test_web.py 覆盖 Web 续问：依赖 langgraph stream_events v3 与 FastAPI / Starlette 的流式响应
+        run: uv run pytest tests/test_upstream_contracts.py tests/test_smoke.py tests/test_web.py -v
+
+  web:
+    # 前端构建产物提交在 src/log_agent/web/static/（安装时不需要 Node），这里确认它和 web/ 源码一致
+    name: web frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck + build
+        run: npm run build
+      - name: Built assets are committed
+        shell: bash
+        run: |
+          changes="$(git status --porcelain -- ../src/log_agent/web/static)"
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            echo "::error::src/log_agent/web/static 与 web/ 源码不一致：请运行 cd web && npm ci && npm run build 并提交构建产物"
+            exit 1
+          fi
 
   sqlite-compatibility:
     name: SQLite 3.37 / session history

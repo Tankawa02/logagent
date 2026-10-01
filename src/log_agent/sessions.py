@@ -191,6 +191,11 @@ class SessionStore:
             deleted = cur.rowcount > 0
             for table in ("log_agent_session_settings", "log_agent_turns"):
                 self.conn.execute(f"DELETE FROM {table} WHERE name = ?", (name,))
+            # Web 分享链接随会话一起失效；从没开过 serve 的库里没有这张表
+            try:
+                self.conn.execute("DELETE FROM log_agent_shares WHERE name = ?", (name,))
+            except sqlite3.OperationalError:
+                pass
             # 同时清掉 langgraph 存的对话内容；表不存在（从未对话过）时忽略
             for table in ("checkpoints", "writes"):
                 try:

@@ -1,0 +1,39 @@
+@import 'tailwindcss';
+
+:root {
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    sans-serif;
+  color-scheme: light dark;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* 报告正文（react-markdown 输出）的排版 */
+.markdown {
+  @apply space-y-3 text-sm leading-relaxed text-gray-800 dark:text-gray-200;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  @apply mt-4 font-semibold text-gray-900 dark:text-gray-50;
+}
+.markdown h1 { @apply text-lg; }
+.markdown h2 { @apply text-base; }
+.markdown h3,
+.markdown h4 { @apply text-sm; }
+.markdown ul { @apply list-disc space-y-1 pl-5; }
+.markdown ol { @apply list-decimal space-y-1 pl-5; }
+.markdown a { @apply text-sky-700 underline dark:text-sky-300; }
+.markdown blockquote { @apply border-l-2 border-gray-300 pl-3 text-gray-600 dark:border-gray-700 dark:text-gray-400; }
+.markdown :not(pre) > code { @apply rounded bg-gray-100 px-1 py-0.5 text-[0.85em] dark:bg-gray-800; }
+.markdown pre { @apply overflow-auto rounded-md bg-gray-50 p-3 text-xs dark:bg-gray-950; }
+.markdown table { @apply block overflow-x-auto text-xs; }
+.markdown th,
+.markdown td { @apply border border-gray-200 px-2 py-1 text-left dark:border-gray-800; }
+.markdown hr { @apply border-gray-200 dark:border-gray-800; }

@@ -9,6 +9,9 @@ uv run pytest          # 单元测试 + 基于剧本模型的端到端测试，�
 uv run ruff check src tests
 ```
 
+Web 界面的前端在 `web/`，构建产物提交在 `src/log_agent/web/static/`，改动后需要 `cd web && npm ci && npm run build`，
+见 [Web 界面 · 开发](web.md#开发)。
+
 CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试。其中 `tests/test_smoke.py`
 用真实子进程跑完整的 `analyze`（只把模型换成脚本），覆盖 Windows 默认 GBK 控制台、中文 / 带空格路径、
 日志和源码不在同一盘符等场景；也可以手动跑 `uv run python -m tests.smoke_driver <日志> src <输出.json>` 看实际终端效果。
