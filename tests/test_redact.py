@@ -146,3 +146,17 @@ def test_timestamp_prefixed_truncated_key_stops_at_unrelated_record() -> None:
     for out in (redact_log(text), redact_code(text, preserve_lines=True)):
         assert out.split("\n") == [prefix + redact.KEY_MASK, prefix + redact.KEY_MASK,
                                     prefix + "unrelated output must remain visible", prefix + redact.KEY_MASK]
+
+
+@pytest.mark.parametrize("prefix", ["2026-10-01 10:20:30 INFO ", "12: 2026-10-01 10:20:30 INFO "])
+@pytest.mark.parametrize("end_marker", [False, True])
+def test_truncated_timestamp_key_preserves_short_log_message(prefix: str, end_marker: bool) -> None:
+    rows = ["-----BEGIN PRIVATE KEY-----", "QUJDREVGR0hJSktMTU5P", "Zw==", "Connected"]
+    if end_marker:
+        rows.append("-----END PRIVATE KEY-----")
+    text = "\n".join(prefix + row for row in rows)
+    expected = [prefix + redact.KEY_MASK] * 3 + [prefix + "Connected"]
+    if end_marker:
+        expected.append(prefix + redact.KEY_MASK)
+    for out in (redact_log(text), redact_code(text, preserve_lines=True)):
+        assert out.split("\n") == expected

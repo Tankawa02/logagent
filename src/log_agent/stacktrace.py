@@ -139,6 +139,10 @@ _DOTNET_FRAME = re.compile(r"^\s*at\s+(?P<func>[^(]+)\([^)]*\)(?:\s+in\s+(?P<fil
 _NODE_FRAME = re.compile(
     r"^\s*at\s+(?:(?:async\s+)?(?P<func>[^\s(][^(]*?)\s+\()?(?P<file>[^\s()]+?):(?P<line>\d+):\d+\)?\s*$"
 )
+# V8 的无源码位置条目必须有明确的占位位置，不能把任意 `at ...` 文案当成栈帧。
+_NODE_UNLOCATED = re.compile(
+    r"^\s*at\s+(?:[^()]+\s+\((?:<anonymous>|native|index \d+)\)|<anonymous>|native)\s*$"
+)
 _NODE_HEADER = re.compile(r"^(?:Uncaught\s+)?(?P<type>(?:[A-Z]\w*)?(?:Error|Exception))(?:\s+\[[\w_]+\])?:\s*(?P<msg>.*)$")
 _NODE_CAUSE = re.compile(r"^\s*\[cause\]:\s*(?P<type>[A-Z]\w*(?:Error|Exception)?)(?::\s*(?P<msg>.*))?")
 _PY_START = "Traceback (most recent call last):"
@@ -245,11 +249,11 @@ def _link_from_header(text: str) -> Link | None:
 
 
 def _has_node_frame(lines: Sequence[str]) -> bool:
-    """允许无源码位置的栈条目，但不能越过另一条真正的异常头。"""
+    """只允许空行和已识别的无位置栈条目，遇到其它文本即停止。"""
     for line in lines:
         if _NODE_FRAME.match(line):
             return True
-        if _HEADER.match(line.strip()) or _NODE_HEADER.match(line.strip()):
+        if line.strip() and not _NODE_UNLOCATED.match(line):
             return False
     return False
 
