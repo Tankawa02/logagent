@@ -64,7 +64,7 @@ def test_can_be_disabled() -> None:
 
 
 def test_code_redaction_preserves_lines_for_multiple_private_keys() -> None:
-    block = "-----BEGIN PRIVATE KEY-----\nfirst_payload\n\nlast_payload\n-----END PRIVATE KEY-----"
+    block = "-----BEGIN PRIVATE KEY-----\nZmlyc3RwYXlsb2Fk\n\nbGFzdHBheWxvYWQ=\n-----END PRIVATE KEY-----"
     code = f'before\nkey = "{block}"\nbetween\n{block}\nafter\n'
     out = redact_code(code, preserve_lines=True)
     assert out.split("\n") == [
@@ -79,12 +79,12 @@ def test_code_redaction_preserves_lines_for_multiple_private_keys() -> None:
 def test_long_private_key_masks_every_line_including_short_tail() -> None:
     # 超过旧版 400 行前瞻的密钥，最后一行 base64 很短，也必须整块遮住且行数不变
     body = ["QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0123456789ab"] * 450
-    lines = ["log start", "-----BEGIN RSA PRIVATE KEY-----", *body, "tAil", "-----END RSA PRIVATE KEY-----", "log end"]
+    lines = ["log start", "-----BEGIN RSA PRIVATE KEY-----", *body, "dA==", "-----END RSA PRIVATE KEY-----", "log end"]
     text = "\n".join(lines)
     for out in (redact_log(text), redact_code(text, preserve_lines=True)):
         rows = out.split("\n")
         assert len(rows) == len(lines)
-        assert "tAil" not in out and "QUJD" not in out
+        assert "dA==" not in out and "QUJD" not in out
         assert rows[0] == "log start" and rows[-1] == "log end"
         assert all(row == redact.KEY_MASK for row in rows[1:-1])
 
@@ -94,3 +94,21 @@ def test_truncated_private_key_masks_short_padded_tail() -> None:
     rows = redact_log(text).split("\n")
     assert rows[:3] == [redact.KEY_MASK] * 3
     assert rows[3] == "next log line here"
+
+
+@pytest.mark.parametrize("prefix", ["", "+", "12: ", "  12 | "])
+def test_truncated_key_does_not_mask_unrelated_output_before_end(prefix: str) -> None:
+    rows = ["-----BEGIN PRIVATE KEY-----", "QUJDREVGR0hJSktMTU5P", "",
+            *["ERROR unrelated output here"] * 500, "-----END PRIVATE KEY-----"]
+    out = redact_log("\n".join(prefix + row for row in rows)).split("\n")
+    assert out[:3] == [prefix + redact.KEY_MASK] * 3
+    assert out[3:-1] == [prefix + "ERROR unrelated output here"] * 500
+    assert out[-1] == prefix + redact.KEY_MASK
+
+
+def test_single_line_key_is_boundary_for_previous_truncated_key() -> None:
+    text = ("-----BEGIN PRIVATE KEY-----\nQUJDREVGR0hJSktMTU5P\n"
+            "saved = '-----BEGIN PRIVATE KEY-----QUJD-----END PRIVATE KEY-----'\nlog end")
+    assert redact_log(text).split("\n") == [
+        redact.KEY_MASK, redact.KEY_MASK, "saved = '" + redact.KEY_MASK + "'", "log end",
+    ]

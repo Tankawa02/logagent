@@ -284,3 +284,34 @@ def logformat_log(path: Path):
     from log_agent.logfile import open_log
 
     return open_log(str(path))
+
+
+@pytest.mark.parametrize(("header", "frame", "language"), [
+    ("java.lang.IllegalStateException: boom", "    at com.acme.Service.run(Service.java:42)", "java"),
+    ("System.InvalidOperationException: boom", "   at Acme.Service.Run() in /src/Service.cs:line 42", "dotnet"),
+])
+def test_log_message_error_does_not_replace_real_header(header, frame, language) -> None:
+    chain = parse_chain(["2026-06-09 10:00:00 ERROR Validation Error: bad input", "", header, frame])
+    assert chain is not None
+    assert chain.language == language
+    assert [link.type for link in chain.links] == [header.split(":")[0]]
+    assert chain.root.message == "boom" and chain.root.frames[0].line == 42
+
+
+def test_node_trailing_header_allows_blank_before_frame() -> None:
+    chain = parse_chain(["2026-06-09 10:00:00 ERROR Error: boom", "", "    at run (/app/main.js:42:1)"])
+    assert chain is not None and chain.root.type == "Error"
+    assert chain.root.frames[0].line == 42
+
+
+@pytest.mark.parametrize("indent", ["  ", "\t"])
+def test_incomplete_traceback_ends_at_indented_log_record(tmp_path: Path, indent: str) -> None:
+    block = ('Traceback (most recent call last):\n  File "/app/job.py", line 3, in run\n'
+             '    handle(order)\n'
+             f'{indent}2026-06-09 10:00:01 ERROR Validation Error: bad input\n'
+             'java.lang.IllegalStateException: boom\n    at com.acme.Service.run(Service.java:42)')
+    out = tools.log_overview(str(_write(tmp_path, block)))
+    [top] = out.meta["top_chains"]
+    assert top["root"] == "java.lang.IllegalStateException"
+    assert "Service.java:42" in top["frame"]
+    assert top["first_line"] == 4
