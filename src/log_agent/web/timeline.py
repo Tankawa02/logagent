@@ -15,6 +15,7 @@ import math
 import statistics
 from collections import Counter
 from collections.abc import Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, tzinfo
 from pathlib import Path
@@ -55,9 +56,9 @@ class FileScan:
     time_only: bool
 
 
-def _epoch(stamp: datetime | time, tz: tzinfo) -> tuple[int, bool]:
+def _epoch(stamp: datetime | time, tz: tzinfo, anchor: date = _TIME_ONLY_DATE) -> tuple[int, bool]:
     if isinstance(stamp, time):
-        value = datetime.combine(_TIME_ONLY_DATE, stamp.replace(tzinfo=None), tzinfo=tz)
+        value = datetime.combine(anchor, stamp.replace(tzinfo=None), tzinfo=tz)
         return int(value.timestamp()), True
     value = stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=tz)
     return int(value.timestamp()), False
@@ -65,7 +66,7 @@ def _epoch(stamp: datetime | time, tz: tzinfo) -> tuple[int, bool]:
 
 def scan_file(path: str | Path, tz: tzinfo, encoding: str | None = None) -> FileScan:
     """逐行扫描一份日志，按秒聚合；同一文件、同一时区重复调用直接命中缓存。"""
-    log = open_log(path, encoding)
+    log = open_log(path, encoding, ignore_global=True)
     key = ("web-timeline", repr(tz))
     with log.scan_lock:
         cached = log.scan_cache.get(key)
@@ -77,6 +78,17 @@ def scan_file(path: str | Path, tz: tzinfo, encoding: str | None = None) -> File
 
 
 def _scan(log, source: str, tz: tzinfo) -> FileScan:
+    # Anchor leading clock-only entries to the first dated event in this file.
+    anchor = _TIME_ONLY_DATE
+    with closing(log.iter_lines(1)) as lines:
+        for _, line in lines:
+            if is_stack_line(line):
+                continue
+            found = find_timestamp(line, record=line_record(line))
+            if found and isinstance(found[1], datetime):
+                stamp = found[1]
+                anchor = (stamp if stamp.tzinfo is None else stamp.astimezone(tz)).date()
+                break
     seconds: dict[int, _Second] = {}
     current: int | None = None
     events = timestamped = 0
@@ -88,7 +100,10 @@ def _scan(log, source: str, tz: tzinfo) -> FileScan:
         found = find_timestamp(line, record=record)
         parsed = level_and_body(line, record=record)
         if found:
-            current, only = _epoch(found[1], tz)
+            if isinstance(found[1], datetime):
+                stamp = found[1]
+                anchor = (stamp if stamp.tzinfo is None else stamp.astimezone(tz)).date()
+            current, only = _epoch(found[1], tz, anchor)
             time_only = time_only and only
             timestamped += 1
         elif not parsed:

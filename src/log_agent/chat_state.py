@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 
 SETTING_KEYS = ("since", "until", "timezone", "baseline", "encoding", "budget", "max_steps")
-_ENV = {"model": "LOG_AGENT_MODEL", "timezone": "LOG_AGENT_TIMEZONE", "encoding": "LOG_AGENT_ENCODING"}
+_ENV = {"model": "LOG_AGENT_MODEL", "timezone": "LOG_AGENT_TIMEZONE", "encoding": "LOG_AGENT_ENCODING",
+        "base_url": "OPENAI_BASE_URL"}
 
 
 def restored_value(ctx, name: str, current, saved: dict):

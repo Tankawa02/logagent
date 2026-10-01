@@ -32,6 +32,7 @@ from ..evidence import SourceResolver
 from ..redact import mask_private_keys, redact_log
 from ..sessions import SessionInfo, SessionStore
 from .shares import ShareStore
+from .sources import ViewSourceResolver
 
 STATIC_DIR = Path(__file__).parent / "static"
 COOKIE = "log_agent_auth"
@@ -80,7 +81,8 @@ def _redacted_copy(value: Any, enabled: bool, resolver: SourceResolver | None = 
         return redact_log(value, enabled=True) if enabled else value
     if isinstance(value, dict):
         return {
-            key: item if (enabled and key == "source" and isinstance(item, str)
+            (redact_log(key, enabled=True) if enabled and isinstance(key, str) else key):
+            item if (enabled and key == "source" and isinstance(item, str)
                           and resolver is not None and resolver.resolve(item) is not None)
             else _redacted_copy(item, enabled, resolver)
             for key, item in value.items()
@@ -126,7 +128,7 @@ def _turn_brief(number: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _session_dict(info: SessionInfo) -> dict[str, Any]:
-    # analyze 存档时在设置里记 origin；之后在 chat 里续过的会话设置会被覆盖，再按默认名前缀兜底
+    # Keep the name-prefix fallback for legacy sessions without origin metadata.
     origin = "analyze" if info.settings.get("origin") == "analyze" or info.name.startswith("analyze-") else "chat"
     return {
         "name": info.name,
@@ -141,6 +143,43 @@ def _session_dict(info: SessionInfo) -> dict[str, Any]:
         "updated_at": info.updated_at,
         "settings": info.settings,
     }
+
+
+def _shared_session_dict(info: SessionInfo) -> dict[str, Any]:
+    """Only read-only UI metadata; source handles never contain owner-local directories."""
+    return {
+        "name": info.name,
+        "origin": "analyze" if info.settings.get("origin") == "analyze" or info.name.startswith("analyze-") else "chat",
+        "title": info.title,
+        "logs": [{"path": f"log/{i}", "name": Path(p).name, "exists": Path(p).is_file()}
+                 for i, p in enumerate(info.logs)],
+        "code": [{"path": f"code/{i}", "name": Path(p).name} for i, p in enumerate(info.code)],
+        "model": info.model,
+        "turns": info.turns,
+        "total_tokens": info.total_tokens,
+        "created_at": info.created_at,
+        "updated_at": info.updated_at,
+        "settings": {key: info.settings[key] for key in ("since", "until", "timezone", "baseline")
+                     if key in info.settings},
+    }
+
+
+def _shared_copy(value: Any, info: SessionInfo) -> Any:
+    """Replace registered local paths and allowlist display settings in shared responses."""
+    if isinstance(value, str):
+        paths = [(p, f"{kind}/{i}") for kind, entries in (("log", info.logs), ("code", info.code))
+                 for i, p in enumerate(entries)]
+        for path, handle in sorted(paths, key=lambda pair: len(pair[0]), reverse=True):
+            value = value.replace(path, handle)
+        return value
+    if isinstance(value, list):
+        return [_shared_copy(item, info) for item in value]
+    if isinstance(value, dict):
+        return {key: _shared_copy(
+            {k: v for k, v in item.items() if k in {"since", "until", "timezone", "baseline"}}
+            if key == "settings" and isinstance(item, dict) else item, info,
+        ) for key, item in value.items()}
+    return value
 
 
 def _load(conn: sqlite3.Connection, name: str) -> tuple[SessionStore, SessionInfo]:
@@ -346,9 +385,11 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
         with _connect(config) as conn:
             store, info = _load(conn, scope.name)
             turns = [_turn_brief(n, p) for n, p in store.history(scope.name)]
-        return _redacted_copy(
-            {**_session_dict(info), "read_only": scope.read_only, "turn_list": turns}, scope.redact,
-        )
+        result = {**(_shared_session_dict(info) if scope.read_only else _session_dict(info)),
+                  "read_only": scope.read_only, "turn_list": turns}
+        if scope.read_only:
+            result = _shared_copy(result, info)
+        return _redacted_copy(result, scope.redact)
 
     @router.get("/turns/{number}")
     def turn(number: int, scope: Scope = Depends(dep)) -> dict[str, Any]:
@@ -357,7 +398,9 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             payload = store.turn(scope.name, number)
         if payload is None:
             raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
-        payload = _redacted_copy(payload, scope.redact, SourceResolver(info.logs, info.code))
+        if scope.read_only:
+            payload = _shared_copy(payload, info)
+        payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "analysis": None, "structured_status": "missing"}
         return {"turn": number, **payload}
@@ -366,10 +409,11 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
     def timeline(buckets: int = 120, scope: Scope = Depends(dep)) -> dict[str, Any]:
         with _connect(config) as conn:
             _, info = _load(conn, scope.name)
-        return build_timeline(
+        result = build_timeline(
             info.logs, _tz(info), target_buckets=buckets,
             encoding=info.settings.get("encoding") or None, redact=scope.redact,
         )
+        return _shared_copy(result, info) if scope.read_only else result
 
     @router.get("/source")
     def source(source: str, start: int, end: int | None = None, before: int = 20, after: int = 20,
@@ -377,12 +421,18 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
         with _connect(config) as conn:
             _, info = _load(conn, scope.name)
         try:
-            return read_context(
+            result = read_context(
                 info.logs, info.code, source, start, end, before=before, after=after,
                 redact=scope.redact, encoding=info.settings.get("encoding") or None,
             )
+            if scope.read_only:
+                result.pop("path", None)
+                if source in info.logs:
+                    result["source"] = f"log/{info.logs.index(source)}"
+            return _shared_copy(result, info) if scope.read_only else result
         except SourceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            message = _shared_copy(str(exc), info) if scope.read_only else str(exc)
+            raise HTTPException(exc.status, redact_log(message, enabled=scope.redact)) from exc
 
     @router.get("/export")
     def export(turn: int, format: str = "markdown", view: str = "detailed", scope: Scope = Depends(dep)) -> Response:
@@ -395,7 +445,9 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             payload = store.turn(scope.name, turn)
         if payload is None:
             raise HTTPException(404, f"第 {turn} 轮不存在或未保存报告")
-        payload = _redacted_copy(payload, scope.redact, SourceResolver(info.logs, info.code))
+        if scope.read_only:
+            payload = _shared_copy(payload, info)
+        payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "schema_version": 2, "analysis": None, "structured_status": "missing", "finding": None}
         stem = f"{info.name}-turn{turn}"
@@ -448,13 +500,14 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
             run_turn(
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
+                redact_owner=config.redact_owner,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log
 
-            emit(custom("log_agent.error", {"message": redact_log(f"{type(exc).__name__}: {exc}")}))
+            emit(custom("log_agent.error", {"message": redact_log(f"{type(exc).__name__}: {exc}", enabled=config.redact_owner)}))
             emit({"type": "RUN_ERROR", "threadId": thread_id, "runId": run_id,
-                  "message": redact_log(f"{type(exc).__name__}: {exc}")})
+                  "message": redact_log(f"{type(exc).__name__}: {exc}", enabled=config.redact_owner)})
         finally:
             TURN_LOCK.release()
             emit(None)
@@ -496,4 +549,3 @@ def _message_page(title: str, body: str) -> str:
     return (f"<!doctype html><meta charset='utf-8'><title>{escape(title)}</title>"
             f"<body style='font-family:system-ui;padding:3rem;color:#333'><h2>{escape(title)}</h2>"
             f"<p>{escape(body)}</p></body>")
-

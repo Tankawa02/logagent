@@ -163,10 +163,11 @@ _CACHE: dict[str, LogFile] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def open_log(path: str | os.PathLike[str], encoding: str | None = None) -> LogFile:
+def open_log(path: str | os.PathLike[str], encoding: str | None = None, *, ignore_global: bool = False) -> LogFile:
     """拿到日志文件句柄（带缓存）。文件被改写（大小或修改时间变化）时自动失效重建。
 
     encoding 显式指定时优先于全局 --encoding，供 Web 界面按会话设置读取，不改动全局状态。
+    ignore_global=True 且 encoding=None 时始终自动检测编码。
 
     Raises:
         FileNotFoundError: 文件不存在或不是普通文件。
@@ -175,7 +176,7 @@ def open_log(path: str | os.PathLike[str], encoding: str | None = None) -> LogFi
     if not p.is_file():
         raise FileNotFoundError(str(path))
     stat = p.stat()
-    forced = encoding or _forced_encoding
+    forced = encoding or (None if ignore_global else _forced_encoding)
     if encoding:
         codecs.lookup(encoding)
     # 同一文件按不同强制编码打开时互不复用：行索引与扫描结果都依赖解码方式

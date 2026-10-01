@@ -29,6 +29,24 @@ class SourceError(Exception):
         self.status = status
 
 
+class ViewSourceResolver(SourceResolver):
+    """Resolve shared source handles through the same registered-source boundary."""
+
+    def __init__(self, log_paths: Sequence[str], code_dirs: Sequence[str]) -> None:
+        super().__init__(log_paths, code_dirs)
+        self.logs = {f"log/{i}": path for i, path in enumerate(log_paths)}
+        self.code = {str(i): path for i, path in enumerate(code_dirs)}
+
+    def resolve(self, source: str):
+        if source in self.logs:
+            source = self.logs[source]
+        elif source.startswith("code/"):
+            parts = source.split("/", 2)
+            if len(parts) == 3 and parts[1] in self.code:
+                source = str(Path(self.code[parts[1]]) / parts[2])
+        return super().resolve(source)
+
+
 def read_context(
     log_paths: Sequence[str],
     code_dirs: Sequence[str],
@@ -47,7 +65,7 @@ def read_context(
     if line_end - line_start + 1 > MAX_SPAN:
         line_end = line_start + MAX_SPAN - 1
     before, after = (max(0, min(int(n), MAX_CONTEXT)) for n in (before, after))
-    target = SourceResolver(log_paths, code_dirs).resolve(source)
+    target = ViewSourceResolver(log_paths, code_dirs).resolve(source)
     if target is None:
         raise SourceError(404, f"来源不属于本会话的日志或源码：{source}")
     kind, path = target
@@ -87,7 +105,7 @@ def _redact_block(raw: dict[int, str], enabled: bool) -> dict[int, str]:
 
 
 def _log_lines(path: Path, lo: int, hi: int, redact: bool, encoding: str | None):
-    log = open_log(path, encoding)
+    log = open_log(path, encoding, ignore_global=True)
     ranges: list[tuple[int, int]] = []
     if redact:
         # One streaming scan per file version, storing only PEM intervals. The
