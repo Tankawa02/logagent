@@ -123,6 +123,20 @@ def _split_prefix(line: str) -> tuple[str, str]:
 
 
 
+def _is_key_body(line: str) -> bool:
+    prefix, body = _split_prefix(line)
+    if not _KEY_BODY.match(body):
+        return False
+    # 带时间戳的短纯字母消息（如 Connected）更可能是新日志，而非 PEM 正文。
+    # 仅收紧这一歧义场景；较长 base64、带填充的短尾和原始 PEM 行维持原规则。
+    if re.fullmatch(r"[A-Za-z]{1,15}", body.strip().rstrip("\"',").rstrip()):
+        tool_prefix = _LINE_PREFIX.match(prefix)
+        offset = tool_prefix.end() if tool_prefix else 0
+        if _LOG_PREFIX.match(prefix) or _LOG_PREFIX.match(prefix[offset:]):
+            return False
+    return True
+
+
 def mask_private_keys(text: str) -> str:
     """逐行遮盖私钥块，行数保持不变，行号前缀原样保留。
 
@@ -153,7 +167,7 @@ def mask_private_keys(text: str) -> str:
                     and begin_rows[bisect_right(begin_rows, i)] <= close:
                 close = None
             if close is not None and any(
-                not _KEY_BODY.match(_split_prefix(row)[1]) for row in lines[i + 1:close]
+                not _is_key_body(row) for row in lines[i + 1:close]
             ):
                 close = None
             j = i + 1
@@ -166,7 +180,7 @@ def mask_private_keys(text: str) -> str:
                 continue
             while j < len(lines):
                 prefix, body = _split_prefix(lines[j])
-                if not _KEY_BODY.match(body):
+                if not _is_key_body(lines[j]):
                     break
                 lines[j] = prefix + KEY_MASK
                 j += 1
@@ -176,7 +190,7 @@ def mask_private_keys(text: str) -> str:
             j = i - 1
             while j >= 0:
                 p, b = _split_prefix(lines[j])
-                if not b.strip() or not _KEY_BODY.match(b) or KEY_MASK in b:
+                if not b.strip() or not _is_key_body(lines[j]) or KEY_MASK in b:
                     break
                 lines[j] = p + KEY_MASK
                 j -= 1

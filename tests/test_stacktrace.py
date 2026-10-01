@@ -333,3 +333,11 @@ def test_node_frame_lookahead_does_not_cross_real_header() -> None:
     chain = parse_chain(["2026-06-09 10:00:00 ERROR Validation Error: bad input",
                          "TypeError: actual failure", "    at run (/app/main.js:42:1)"])
     assert chain is not None and chain.root.type == "TypeError"
+
+
+@pytest.mark.parametrize("diagnostic", ["connection retry scheduled", "    at retry attempt 3"])
+def test_node_frame_lookahead_stops_at_diagnostic(tmp_path: Path, diagnostic: str) -> None:
+    lines = ["2026-06-09 10:00:00 ERROR Validation Error: bad input",
+             "    at new Promise (<anonymous>)", "", diagnostic, "    at run (/app/main.js:42:1)"]
+    assert parse_chain(lines) is None
+    assert _roots(_write(tmp_path, "\n".join(lines))) == []
