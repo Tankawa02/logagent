@@ -106,7 +106,9 @@ def render_comparison(name: str, base_desc: str, target_desc: str, base, target,
             f"{exc} x{target.exceptions[exc]}（首次 L{target.exc_first[exc]}）" for exc in new_exc[:_MAX_ROWS]
         ))
     base_keys = set(base.chains.clusters)
-    new_chains = [c for c in target.chains.top(50) if c.key not in base_keys]
+    # 先过滤再排序：只看 top 50 会漏掉排在 50 个老问题后面的新根因
+    new_chains = sorted((c for c in target.chains.clusters.values() if c.key not in base_keys),
+                        key=lambda c: (-c.count, c.first_line))
     if new_chains:
         out.append("")
         out.append("新出现的根因异常（按根因 + 业务栈帧）：")

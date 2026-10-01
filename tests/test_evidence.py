@@ -57,6 +57,13 @@ def test_fuzzy_match_never_tolerates_changed_numbers(sample_log: Path) -> None:
     # 只改一个数字的“近似”摘录：字符相似度很高，但数字对不上，必须判为不符
     item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order] payment failed order=1009")
     assert item["status"] == "mismatch"
+    # 引用的编号是原文编号的前缀（order=100 vs order=1001）也不能算匹配，精确包含和模糊匹配都一样
+    item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order] payment failed order=100")
+    assert item["status"] == "mismatch"
+    item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order]: payment failed, order=100")
+    assert item["status"] == "mismatch"
+    item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order] payment failed order=001")
+    assert item["status"] == "mismatch"
     # 标点、空白的细微差异仍然放过
     item = _check(sample_log, source="app.log", start=4, end=4, excerpt="ERROR [order]: payment failed, order=1001")
     assert item["status"] == "verified"

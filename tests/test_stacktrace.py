@@ -174,3 +174,113 @@ def test_inspect_shows_chains(tmp_path: Path) -> None:
     out = runner.invoke(cli.app, ["inspect", "-l", str(log)])
     assert out.exit_code == 0, out.output
     assert "异常链：共 1 类" in out.output and "识别格式" in out.output
+
+
+# ---------------------------------------------------------------------------
+# review findings (#43 / #44)
+# ---------------------------------------------------------------------------
+
+CLOCK_CAUSE = """2026-06-09 14:02:03.123 ERROR [exec-3] c.a.o.OrderController - query failed
+org.springframework.dao.QueryTimeoutException: PreparedStatementCallback
+\tat com.acme.order.repo.OrderRepo.findById(OrderRepo.java:88)
+Caused by: java.sql.SQLTimeoutException: Query timed out after 00:00:30
+\tat com.mysql.cj.jdbc.ClientPreparedStatement.executeQuery(ClientPreparedStatement.java:1003)
+\tat com.acme.order.repo.OrderRepo.findById(OrderRepo.java:86)"""
+
+
+def _roots(log: Path) -> list[str]:
+    return sorted(c["root"] for c in tools.log_overview(str(log)).meta["top_chains"])
+
+
+def test_clock_text_inside_stack_does_not_split_chain(tmp_path: Path) -> None:
+    out = tools.log_overview(str(_write(tmp_path, CLOCK_CAUSE)))
+    [top] = out.meta["top_chains"]
+    assert top["root"] == "java.sql.SQLTimeoutException" and "OrderRepo.java:86" in top["frame"]
+    docker = [json.dumps({"log": line + "\n", "stream": "stderr", "time": "2026-06-09T06:02:03.000Z"})
+              for line in CLOCK_CAUSE.splitlines()]
+    assert _roots(_write(tmp_path, *docker, name="docker.log")) == ["java.sql.SQLTimeoutException"]
+
+
+def test_stderr_python_traceback_with_level_words_stays_together(tmp_path: Path) -> None:
+    tb = """Traceback (most recent call last):
+  File "/app/job.py", line 3, in run
+    logger.error(x)
+  File "/app/parse.py", line 9, in parse
+    raise ValueError("parse error at 12:00:01")
+ValueError: parse error at 12:00:01
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/job.py", line 5, in run
+    raise RuntimeError("job failed") from None
+RuntimeError: job failed"""
+    out = tools.log_overview(str(_write(tmp_path, "2026-06-09 10:00:00 INFO start", tb)))
+    [top] = out.meta["top_chains"]
+    assert top["root"] == "ValueError" and top["wrappers"] == ["RuntimeError"]
+    assert "parse.py:9" in top["frame"]
+
+
+def test_python_traceback_header_on_error_log_line(tmp_path: Path) -> None:
+    tb = """2026-06-09 10:00:00,123 ERROR [worker] job crashed Traceback (most recent call last):
+  File "/app/job.py", line 3, in run
+    handle(order)
+KeyError: 'order_id'"""
+    assert _roots(_write(tmp_path, tb)) == ["KeyError"]
+
+
+def test_node_generic_error_on_log_line_keeps_frames(tmp_path: Path) -> None:
+    block = """2026-06-09T10:00:00Z ERROR Error: failed to load order
+    at loadOrder (/app/src/order.js:42:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)"""
+    out = tools.log_overview(str(_write(tmp_path, block)))
+    [top] = out.meta["top_chains"]
+    assert top["root"] == "Error" and top["language"] == "node" and "order.js:42" in top["frame"]
+    # 只是提到 Error: 但后面没有堆栈帧的行不算异常链
+    assert _roots(_write(tmp_path, "2026-06-09T10:00:00Z ERROR Error: nope", name="b.log")) == []
+
+
+def test_serilog_exception_field_is_clustered(tmp_path: Path) -> None:
+    record = {"@t": "2026-06-09T06:00:00Z", "@l": "Error", "@m": "Order failed",
+              "@x": "System.InvalidOperationException: bad state\n   at Acme.Orders.Service.Pay() in /src/Service.cs:line 42"}
+    assert _roots(_write(tmp_path, json.dumps(record))) == ["System.InvalidOperationException"]
+
+
+def test_compare_reports_rare_new_root_behind_many_old_ones(tmp_path: Path) -> None:
+    def block(stamp: str, i: int) -> str:
+        return (f"2026-06-09 {stamp} ERROR [w] failed\ncom.acme.Old{i}Exception: boom\n"
+                f"\tat com.acme.svc.S{i}.run(S{i}.java:{i + 1})")
+
+    base = [block("14:00:00", i) for i in range(55)]
+    target = [block("14:05:00", i) for i in range(55) for _ in range(2)]
+    target.append("2026-06-09 14:06:00 ERROR [w] failed\ncom.acme.BrandNewException: rare\n"
+                  "\tat com.acme.svc.New.run(New.java:7)")
+    log = _write(tmp_path, *base, *target)
+    out = tools.compare_windows(str(log), "2026-06-09 14:00", "2026-06-09 14:01", "2026-06-09 14:05", "2026-06-09 14:07")
+    section = str(out).split("新出现的根因异常", 1)
+    assert len(section) == 2 and "com.acme.BrandNewException: rare" in section[1]
+
+
+def test_json_lines_are_decoded_once_per_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent import logformat
+
+    lines = [json.dumps({"time": f"2026-06-09T06:00:{i:02d}Z", "level": "info", "msg": f"ok {i}"}) for i in range(50)]
+    log = tmp_path / "j.log"
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    calls = 0
+    real = logformat.json.loads
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(logformat.json, "loads", counting)
+    tools._scan_overview(logformat_log(log), tools.TimeWindow())
+    assert calls <= len(lines), calls
+
+
+def logformat_log(path: Path):
+    from log_agent.logfile import open_log
+
+    return open_log(str(path))

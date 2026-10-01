@@ -291,3 +291,72 @@ def test_untrusted_repo_config_cannot_run_commands(git_repo: Path, tmp_path: Pat
     show_commit(str(git_repo), "HEAD~1")
     blame_lines(str(git_repo), "app/order.py", 1, 2)
     assert not marker.exists()
+
+
+# ---------------------------------------------------------------------------
+# review findings (#42)
+# ---------------------------------------------------------------------------
+
+
+def test_recent_changes_flags_truncation_inside_a_huge_commit(git_repo: Path) -> None:
+    # max_commits=1 的行数预算是 800 行：一个改了 900 个文件的提交会在中间被截断
+    _commit(git_repo, {f"gen/f{i}.txt": "x\n" for i in range(900)}, "bulk", "2026-06-10T10:00:00+08:00")
+    out = recent_changes(str(git_repo), max_commits=1)
+    assert out.status == "ok"
+    assert out.meta["truncated"] is True and out.meta["partial"] is True
+    assert "至少" in out and "不完整" in out
+    # 预算充足时不误报
+    ok = recent_changes(str(git_repo), max_commits=20)
+    assert ok.meta["commits"] == 4 and ok.meta["partial"] is False
+
+
+def test_show_commit_totals_are_complete_for_large_commits(git_repo: Path) -> None:
+    _commit(git_repo, {f"gen/f{i}.txt": "a\nb\n" for i in range(900)}, "bulk", "2026-06-10T10:00:00+08:00")
+    out = show_commit(str(git_repo), "HEAD", max_lines=20)
+    assert out.meta["files"] == 900 and out.meta["additions"] == 1800 and out.meta["deletions"] == 0
+    assert out.meta["truncated"] is True
+
+
+def test_blame_drift_check_matches_git_line_splitting(git_repo: Path) -> None:
+    # 换页符、\\x1c、\\u2028、CRLF、超长行都不应该让未改动的文件被当成“工作区已变更”
+    content = "a = 1\x0c\nb = '\x1c\u2028'\r\nc = '" + "x" * 70_000 + "'\nd = 4"
+    path = git_repo / "app" / "odd.py"
+    path.write_bytes(content.encode("utf-8"))
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "-c", "user.name=a", "-c", "user.email=a@b", "-c", "core.autocrlf=false", "commit", "-q", "-m", "odd")
+    out = blame_lines(str(git_repo), "app/odd.py", 1, 4)
+    assert out.status == "ok" and out.meta["drifted"] is False
+    path.write_bytes((content + "\ne = 5").encode("utf-8"))
+    assert blame_lines(str(git_repo), "app/odd.py", 1, 1).meta["drifted"] is True
+
+
+def test_blame_drift_check_does_not_read_huge_worktree_files(git_repo: Path, monkeypatch) -> None:
+    path = git_repo / "app" / "order.py"
+    path.write_bytes(b"x" * (6 * 1024 * 1024))
+
+    def boom(self, *args, **kwargs):  # noqa: ARG001
+        raise AssertionError("不应整个读入工作区文件")
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+    out = blame_lines(str(git_repo), "app/order.py", 1, 1)
+    assert out.status == "ok" and out.meta["drifted"] is False
+
+
+def test_git_never_lazy_fetches_from_promisor_remote(tmp_path: Path) -> None:
+    # partial clone 的仓库把 promisor remote 指向 ext:: 命令，读历史不能触发它
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    _git(src, "config", "uploadpack.allowFilter", "true")
+    _commit(src, {"app/a.py": "old = 1\n"}, "one", "2026-06-01T10:00:00+08:00")
+    _commit(src, {"app/a.py": "new = 2\n"}, "two", "2026-06-02T10:00:00+08:00")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", f"file://{src}", str(clone)],
+                   check=True, capture_output=True,
+                   env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull})
+    marker = tmp_path / "PWNED"
+    _git(clone, "config", "remote.origin.url", f"ext::sh -c touch% {marker}")
+    _git(clone, "config", "protocol.ext.allow", "always")
+    show_commit(str(clone), "HEAD~1")
+    recent_changes(str(clone))
+    assert not marker.exists()

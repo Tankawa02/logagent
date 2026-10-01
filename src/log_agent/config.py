@@ -134,7 +134,8 @@ def _read(path: Path, config: LoadedConfig) -> None:
         if not isinstance(section, dict):
             continue
         if name == "log_formats":  # 只写了一个 [log_formats] 表（而不是 [[log_formats]] 数组）
-            config.shared["log_formats"] = [*config.shared.get("log_formats", []), section]
+            # 和 [[log_formats]] 数组一样按“后读的文件覆盖先读的”处理；追加会让用户级格式排在前面先命中
+            config.shared["log_formats"] = [section]
             continue
         if name not in COMMANDS:
             config.warnings.append(f"{path}: 忽略不认识的配置段 [{name}]")

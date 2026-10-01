@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .logformat import custom_formats, json_record, match_custom, maybe_wrapped, unwrap
+from .logformat import UNPARSED, custom_formats, line_record, match_custom, maybe_wrapped, unwrap
 
 Stamp = datetime | time
 
@@ -161,17 +161,35 @@ def _iso(match: re.Match[str]) -> Stamp:
     return datetime.combine(day, clock, tzinfo=zone)
 
 
+# strptime 里表示“哪一天”的指令；一个都没有就是纯时钟格式
+_DATE_DIRECTIVE = re.compile(r"%[djmbBhxcUWV]")
+
+
 def parse_custom_time(text: str, time_format: str | None) -> Stamp | None:
     """自定义格式里 time 分组的解析：给了 time_format 就按它来，否则按内置规则识别。"""
     text = text.strip()
     if time_format:
+        has_year = "%Y" in time_format or "%y" in time_format or "%G" in time_format
+        if not has_year and not _DATE_DIRECTIVE.search(time_format):
+            # 只有时钟（%H:%M:%S）：strptime 会补成 1900-01-01，当成“只有时间”处理，和内置格式一致
+            try:
+                return datetime.strptime(text, time_format).timetz()
+            except ValueError:
+                return None
         try:
-            value = datetime.strptime(text, time_format)
+            if has_year:
+                return datetime.strptime(text, time_format)
+            # 没有年份时 strptime 默认 1900（不是闰年），02-29 会解析失败；先用闰年解析再推断年份
+            value = datetime.strptime(f"2000 {text}", f"%Y {time_format}")
         except ValueError:
             return None
-        if "%Y" not in time_format and "%y" not in time_format:
-            value = value.replace(year=_infer_year(value.month, value.day))
-        return value
+        year = _infer_year(value.month, value.day)
+        for candidate in range(year, year - 8, -1):
+            try:
+                return value.replace(year=candidate)
+            except ValueError:  # 02-29 落在非闰年，往前找最近的闰年
+                continue
+        return None
     if re.fullmatch(r"\d{10,19}(?:\.\d+)?", text):
         return _from_epoch(float(text))
     # 先按带日期的写法找（分组里通常不带 nginx 的方括号，补上再试），最后才接受“只有时刻”
@@ -221,7 +239,7 @@ def _find_text_timestamp(line: str, scan: int = _SCAN_CHARS) -> tuple[str, Stamp
     return None
 
 
-def find_timestamp(line: str, _depth: int = 0) -> tuple[str, Stamp] | None:
+def find_timestamp(line: str, _depth: int = 0, record: object = UNPARSED) -> tuple[str, Stamp] | None:
     """在行首附近找时间戳，返回 (原文, 解析值)；找不到或数值非法返回 None。
 
     支持：ISO（含 `/` 分隔、逗号毫秒、时区偏移）、nginx / Apache `[30/Sep/2026:14:00:00 +0800]`、
@@ -234,12 +252,13 @@ def find_timestamp(line: str, _depth: int = 0) -> tuple[str, Stamp] | None:
         if custom:
             fmt, match = custom
             raw = fmt.group(match, ("time", "ts", "timestamp"))
-            if raw is None:
-                return None
-            stamp = parse_custom_time(raw, fmt.time_format)
-            return (raw, stamp) if stamp is not None else None
+            # 格式没有时间分组（只定义了 level）时继续走内置识别，否则整份文件的时间窗口都失效
+            if raw is not None:
+                stamp = parse_custom_time(raw, fmt.time_format)
+                return (raw, stamp) if stamp is not None else None
     first = line[:1]
-    record = json_record(line) if first == "{" or (first in " \t" and line.lstrip()[:1] == "{") else None
+    if record is UNPARSED:
+        record = line_record(line)
     if record is None and first.isdigit():
         # 热路径：最常见的 ISO 时间戳直接解析，不经过容器 / 专用格式的判断
         match = TS_RE.search(line, 0, _SCAN_CHARS)
@@ -371,10 +390,12 @@ class WindowTracker:
         self.saw_timestamp = False
         self.done = False
 
-    def accept(self, line: str) -> bool:
+    def accept(self, line: str, found: object = UNPARSED) -> bool:
+        """found：调用方已经算过的 find_timestamp(line) 结果，避免重复解析。"""
         if not self.window:
             return True
-        found = find_timestamp(line)
+        if found is UNPARSED:
+            found = find_timestamp(line)
         if found:
             self.current = found[1]
             self.saw_timestamp = True

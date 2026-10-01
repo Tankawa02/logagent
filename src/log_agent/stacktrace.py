@@ -149,6 +149,9 @@ _GO_FILE = re.compile(r"^\s+(?P<file>\S+\.go):(?P<line>\d+)(?:\s+\+0x[0-9a-f]+)?
 _DOTNET_END = "--- End of inner exception stack trace ---"
 # 首行（带时间和级别的日志行）末尾附带的异常，如 `... - 下单失败 java.lang.IllegalStateException: boom`
 _TRAILING = re.compile(rf"(?:^|[\s:])(?P<type>{_JAVA_TYPE})(?::\s*(?P<msg>.*))?$")
+# 日志行末尾的 Node.js 异常头：`... ERROR Error: boom`、`... ERROR TypeError [ERR_X]: msg`
+# _JAVA_TYPE 要求类型名在 Error 前还有字符，匹配不了最常见的裸 `Error:`
+_NODE_TRAILING = re.compile(r"(?:^|[\s\]|])(?P<type>(?:[A-Z]\w*)?Error)(?:\s+\[[\w_]+\])?:\s+(?P<msg>.*)$")
 
 
 def starts_block(body: str) -> bool:
@@ -179,7 +182,7 @@ def _parse_python(lines: Sequence[str]) -> Chain | None:
     for raw in lines:
         text = raw.rstrip()
         stripped = text.strip()
-        if stripped.startswith(_PY_START):
+        if stripped.endswith(_PY_START):  # 日志前缀和 Traceback 头可能在同一行
             in_tb, frames = True, []
             continue
         if stripped.startswith(_PY_LINKS):
@@ -235,7 +238,7 @@ def _link_from_header(text: str) -> Link | None:
     header = _HEADER.match(text.strip()) or _NODE_HEADER.match(text.strip())
     if header:
         return Link(header["type"], _clean(header["msg"]))
-    trailing = _TRAILING.search(text)
+    trailing = _TRAILING.search(text) or _NODE_TRAILING.search(text)
     return Link(trailing["type"], _clean(trailing["msg"])) if trailing else None
 
 
@@ -283,7 +286,10 @@ def _parse_jvm_like(lines: Sequence[str]) -> Chain | None:
         if dotnet and (dotnet["file"] or "." in dotnet["func"]) and not _NODE_FRAME.match(text):
             language = language or "dotnet"
             frame = Frame(dotnet["func"].strip(), dotnet["file"] or "", int(dotnet["line"]) if dotnet["line"] else None)
-            target = dotnet_links[-1 - dotnet_segment] if dotnet_links and dotnet_segment < len(dotnet_links) else None
+            if dotnet_links:
+                target = dotnet_links[-1 - dotnet_segment] if dotnet_segment < len(dotnet_links) else None
+            else:  # 没有 ---> 的单个 .NET 异常（Serilog @x 最常见）
+                target = links[-1] if links else None
             if target is not None:
                 target.frames.append(frame)
             continue
@@ -305,7 +311,9 @@ def _parse_jvm_like(lines: Sequence[str]) -> Chain | None:
                     links.extend(dotnet_links)
                     language = "dotnet"
                 continue
-            link = _link_from_header(text) if index > 0 or _TRAILING.search(text) else None
+            # 第一行通常是带时间戳的日志行，只认行尾的异常头；是否真是异常由后面有没有堆栈帧决定
+            first_ok = index > 0 or _TRAILING.search(text) or _NODE_TRAILING.search(text)
+            link = _link_from_header(text) if first_ok else None
             if link:
                 links.append(link)
     if not links:
@@ -320,7 +328,7 @@ def parse_chain(lines: Sequence[str]) -> Chain | None:
     lines = list(lines[:MAX_BLOCK_LINES])
     if not lines:
         return None
-    if any(line.strip().startswith(_PY_START) for line in lines):
+    if any(line.rstrip().endswith(_PY_START) for line in lines):
         chain = _parse_python(lines)
         if chain:
             return chain
@@ -381,6 +389,8 @@ class ChainCollector:
         self._start = 0
 
         self.extended = False  # 最近一次调用是续行（extend）还是新块 / 结束
+        # Python traceback 进行到哪一步：None / "tb"（堆栈帧）/ "final"（刚读完 Type: msg）/ "link"
+        self._py: str | None = None
 
     @property
     def open(self) -> bool:
@@ -390,6 +400,7 @@ class ChainCollector:
         self.flush()
         self._block, self._start = [line], lineno
         self.extended = False
+        self._py = "tb" if line.rstrip().endswith(_PY_START) else None
 
     def extend(self, line: str) -> bool:
         if not self._block or len(self._block) >= MAX_BLOCK_LINES:
@@ -397,7 +408,37 @@ class ChainCollector:
             return False
         self._block.append(line)
         self.extended = True
+        self._py = self._next_py_state(line)
         return True
+
+    def _next_py_state(self, line: str) -> str | None:
+        stripped = line.strip()
+        if stripped.endswith(_PY_START):
+            return "tb"
+        if self._py is None or not stripped:
+            return self._py
+        if self._py == "tb":
+            return "tb" if line[:1] in " \t" else "final"
+        if stripped.startswith(_PY_LINKS):
+            return "link"
+        return None
+
+    def continues_traceback(self, line: str) -> bool:
+        """Python traceback 还没结束时，这一行是否属于它。
+
+        源码行（`    logger.error(x)`）和最后的 `ValueError: parse error` 都可能含级别词或时钟，
+        不能按普通日志行的规则切断。
+        """
+        if not self._block or self._py is None:
+            return False
+        stripped = line.strip()
+        if self._py == "tb":
+            return True if line[:1] in " \t" or not stripped else bool(_PY_FINAL.match(stripped))
+        if not stripped:
+            return True
+        if self._py == "final":
+            return stripped.startswith(_PY_LINKS)
+        return stripped.endswith(_PY_START)  # "link"
 
     def add_lines(self, lineno: int, lines: Sequence[str]) -> None:
         """一次性给出一整段（例如 JSON 日志的 stack_trace 字段）。"""
@@ -409,6 +450,7 @@ class ChainCollector:
             self._record(self._start, parse_chain(self._block))
         self._block = []
         self.extended = False
+        self._py = None
 
     def _record(self, lineno: int, chain: Chain | None) -> None:
         if chain is None:
@@ -428,7 +470,7 @@ class ChainCollector:
 
 # JSON 日志里常见的堆栈字段
 STACK_FIELDS = ("stack_trace", "stacktrace", "stack", "exception", "exc_info", "exc_text", "error.stack_trace",
-                "error.stack", "err.stack", "throwable", "trace")
+                "error.stack", "err.stack", "throwable", "trace", "@x")  # @x：Serilog CLEF 的异常
 
 
 def stack_from_record(record: dict) -> list[str] | None:

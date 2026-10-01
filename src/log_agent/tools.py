@@ -21,7 +21,7 @@ from typing import Any
 
 from .gittools import GIT_TOOLS
 from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_text_file
-from .logformat import is_stack_line, json_record, level_and_body, maybe_wrapped, unwrap
+from .logformat import UNPARSED, is_stack_line, level_and_body, line_record, maybe_wrapped, unwrap
 from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_code_lines, redact_log
 from .stacktrace import ChainCollector, stack_from_record, starts_block
@@ -204,9 +204,12 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
     block_has_ts = False
     for lineno, line in log.iter_lines(1):
         stats.total = lineno
-        parsed = level_and_body(line)
-        # 字段读取在截断前完成，JSON 的字段顺序不应影响级别和时间识别。
-        found = find_timestamp(line)
+        # 每行只做一次 JSON 解析 / 容器拆包，级别、时间、窗口和异常链都复用
+        record = line_record(line)
+        wrapped = unwrap(line, record) if record is not None or maybe_wrapped(line) else None
+        parsed = level_and_body(line, record=record)
+        # 没有时间戳的行（堆栈续行、JSON 里没带时间）不计入起止时间
+        found = find_timestamp(line, record=record)
         if found:
             stats.saw_timestamp = True
             stats.timestamp_lines += 1
@@ -215,11 +218,10 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
             stats.last_ts = found[0]
         if parsed:
             stats.level_lines += 1
-        # 概览要报告全文行数与时间范围，所以越过窗口后也不提前结束
-        in_window = tracker.accept(line) if window else True
-        # 热路径：没有进行中的堆栈、本行有时间戳且不是 ERROR / FATAL 时，这一行不会开启或延续异常链
-        if chains.open or not found or (parsed and parsed[0] in ("FATAL", "ERROR")) or maybe_wrapped(line):
-            _collect_chain(chains, lineno, line, parsed, found, in_window, block_has_ts)
+        in_window = tracker.accept(line, found) if window else True
+        # 普通 JSON 行既不是容器包装、也不是 ERROR，又没有打开的异常链时不用进 _collect_chain
+        if chains.open or not found or (parsed and parsed[0] in ("FATAL", "ERROR")) or wrapped:
+            _collect_chain(chains, lineno, line, parsed, found, in_window, block_has_ts, record, wrapped)
             if chains.open:
                 block_has_ts = block_has_ts if chains.extended else bool(found)
         if not in_window:
@@ -245,28 +247,36 @@ def _scan_overview(log, window: TimeWindow) -> _OverviewStats:
 
 
 def _collect_chain(chains: ChainCollector, lineno: int, line: str, parsed, found, in_window: bool,
-                   block_has_ts: bool) -> None:
-    """把一段堆栈（首行 + 续行）交给 ChainCollector。
+                   block_has_ts: bool, record=UNPARSED, wrapped=UNPARSED) -> None:
+    """按行收集异常链：异常头 + 紧跟着的堆栈续行交给 ChainCollector。
 
-    续行：有时间戳的日志里，没有时间戳的行都算上一条的续行（和时间窗口的规则一致）；
-    整份日志都没有时间戳时，退而要求“没有级别”。容器日志按拆出来的应用原始行判断。
+    已知的堆栈续行（帧、Caused by、Python traceback 内部）优先按续行处理，
+    即使里面出现像时钟的文本（`Caused by: ... after 00:00:30`）或级别词也不切断。
+    record / wrapped 是调用方已经算好的 JSON 解析和容器拆包结果。
     """
-    wrapped = unwrap(line) if maybe_wrapped(line) else None
+    if record is UNPARSED:
+        record = line_record(line)
+    if wrapped is UNPARSED:
+        wrapped = unwrap(line, record) if record is not None or maybe_wrapped(line) else None
     text = wrapped[0] if wrapped else line
+    if chains.open and (chains.continues_traceback(text) or is_stack_line(text)):
+        if chains.extend(text):
+            return
     if wrapped:
         found = find_timestamp(text, 1)
-    if chains.open and not found and (block_has_ts or not parsed or is_stack_line(text)):
+    if chains.open and not found and (block_has_ts or not parsed):
         if chains.extend(text):
             return
     chains.flush()
     if not in_window:
         return
     if parsed and parsed[0] in ("FATAL", "ERROR"):
-        record = json_record(text) if text[:1] == "{" else None
-        stack = stack_from_record(record) if record else None
+        inner = record if not wrapped else line_record(text)
+        stack = stack_from_record(inner) if inner else None
         if stack:
             chains.add_lines(lineno, [parsed[1], *stack])
         else:
+            # 链路里保留原始行：解析器需要看到行尾的异常头 / Traceback 头
             chains.begin(lineno, text)
     elif not parsed and starts_block(text):
         chains.begin(lineno, text)

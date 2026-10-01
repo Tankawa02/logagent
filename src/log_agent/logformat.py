@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -22,16 +23,50 @@ from typing import Any
 
 # 先用首字母前瞻排除大部分位置，再按公共前缀分组：比逐个尝试所有单词快 2~3 倍（每行都要跑）
 LEVEL_RE = re.compile(
-    r"\b(?=[acdefinpstw])(FATAL|CRIT(?:ICAL)?|EMERG|ALERT|PANIC|SEVERE|ERR(?:OR)?|WARN(?:ING)?|NOTICE"
+    r"\b(?=[acdefinpstw])(FATAL|CRIT(?:ICAL)?|EMERG|ALERT|PANIC|SEVERE|FINE(?:R|ST)?|ERR(?:OR)?|WARN(?:ING)?|NOTICE"
     r"|INFO(?:RMATION)?|DEBUG|TRACE)\b",
     re.IGNORECASE,
 )
+# 这些词在普通文本、logger / 线程名里很常见（alert-dispatcher、panic recovered、everything is fine），
+# 只在像“级别字段”时才算：全大写的独立 token，或者写在方括号里（nginx / Apache 的 [crit]、[core:notice]）
+_STRICT_LEVELS = frozenset({"CRIT", "EMERG", "ALERT", "PANIC", "NOTICE", "FINE", "FINER", "FINEST"})
+_TOKEN_BEFORE = frozenset(" \t[(<")
+_TOKEN_AFTER = frozenset(" \t])>:,")
 LEVEL_ALIAS = {
     "CRITICAL": "FATAL", "CRIT": "FATAL", "EMERG": "FATAL", "ALERT": "FATAL", "PANIC": "FATAL", "SEVERE": "FATAL",
     "ERR": "ERROR", "EROR": "ERROR", "WARNING": "WARN", "WARNG": "WARN", "NOTICE": "INFO", "INFORMATION": "INFO",
     "DBUG": "DEBUG", "TRCE": "TRACE", "VERBOSE": "TRACE", "FINE": "DEBUG", "FINER": "TRACE", "FINEST": "TRACE",
 }
 LEVELS = ("FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE")
+
+
+def find_text_level(text: str) -> tuple[str, int] | None:
+    """在普通文本里找级别词，返回 (归一化级别, 级别词结束位置)。
+
+    按出现顺序取第一个合格的；_STRICT_LEVELS 里的词要求是独立 token（不贴着 `-` / `.`），
+    并且全大写或写在方括号里；行首的 Go `panic:` 也算。
+    """
+    first = LEVEL_RE.search(text)
+    if first is None:
+        return None
+    upper = first.group(1).upper()
+    if upper not in _STRICT_LEVELS:  # 热路径：绝大多数行第一个就是 ERROR / INFO 这类核心级别词
+        return LEVEL_ALIAS.get(upper, upper), first.end()
+    for match in LEVEL_RE.finditer(text, first.start()):
+        word = match.group(1)
+        upper = word.upper()
+        if upper in _STRICT_LEVELS:
+            start, end = match.span(1)
+            before = text[start - 1] if start else " "
+            after = text[end] if end < len(text) else " "
+            bracketed = before in "[:" and after == "]" and (before == "[" or "[" in text[:start])
+            go_panic = upper == "PANIC" and start == 0 and after == ":"
+            standalone = before in _TOKEN_BEFORE and after in _TOKEN_AFTER and word == upper
+            if not (bracketed or go_panic or standalone):
+                continue
+        return LEVEL_ALIAS.get(upper, upper), match.end()
+    return None
+
 CODE_FIELDS = ("status", "status_code", "statusCode", "http_status", "code", "error_code", "errorCode")
 
 _JSON_LEVEL_KEYS = ("level", "severity", "levelname", "severityText", "lvl", "loglevel", "log_level", "log.level", "@l")
@@ -45,11 +80,16 @@ _SYSLOG_SEVERITY = ("FATAL", "FATAL", "FATAL", "ERROR", "WARN", "INFO", "INFO", 
 def normalize_level(value: Any) -> str | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return _NUMERIC_LEVELS.get(int(value))
+    if isinstance(value, float):
+        # 1e999 解析出来是 inf，int() 会抛 OverflowError；30.5 这种也不是合法的数字级别
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        value = int(value)
+    if isinstance(value, int):
+        return _NUMERIC_LEVELS.get(value)
     text = str(value).strip().upper()
-    if text.isdigit():
-        return _NUMERIC_LEVELS.get(int(text))
+    if text.isascii() and text.isdigit():
+        return _NUMERIC_LEVELS.get(int(text)) if len(text) <= 3 else None
     text = LEVEL_ALIAS.get(text, text)
     return text if text in LEVELS else None
 
@@ -203,6 +243,18 @@ def maybe_wrapped(line: str) -> bool:
     return first == "{" or (first.isdigit() and line[10:11] == "T")
 
 
+_DOCKER_KEYS = frozenset({"log", "stream", "time", "attrs"})
+
+
+def _is_docker_record(record: dict[str, Any]) -> bool:
+    """Docker json-file / fluent 转发的容器行，而不是恰好有个 `log` 字段的业务 JSON（如 Serilog）。"""
+    if any(k in record for k in _JSON_LEVEL_KEYS) or any(k in record for k in _JSON_MESSAGE_KEYS):
+        return False
+    if any(k.startswith("@") for k in record):
+        return False
+    return record.keys() <= _DOCKER_KEYS or record.get("stream") in ("stdout", "stderr")
+
+
 def unwrap(line: str, record: dict[str, Any] | None = None) -> tuple[str, str] | None:
     """拆出容器运行时包在外面的一层，返回 (应用原始行, 外层时间戳)；不是容器格式返回 None。"""
     first = line[:1]
@@ -210,7 +262,7 @@ def unwrap(line: str, record: dict[str, Any] | None = None) -> tuple[str, str] |
         record = json_record(line)
     if record is not None:
         inner = record.get("log")
-        if isinstance(inner, str) and not any(k in record for k in _JSON_LEVEL_KEYS):
+        if isinstance(inner, str) and _is_docker_record(record):
             outer = record.get("time")
             return inner.rstrip("\r\n"), outer if isinstance(outer, str) else ""
         return None
@@ -229,7 +281,8 @@ def unwrap(line: str, record: dict[str, Any] | None = None) -> tuple[str, str] |
 _GLOG = re.compile(r"^(?P<level>[IWEF])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[^\s\]]+:\d+\]\s?(?P<body>.*)$")
 _GLOG_LEVELS = {"I": "INFO", "W": "WARN", "E": "ERROR", "F": "FATAL"}
 _ACCESS = re.compile(
-    r'^\S+ \S+ \S+ \[[^\]]+\] "(?P<method>[A-Z]+) (?P<path>[^" ]+)[^"]*" (?P<status>\d{3}) '
+    # 方括号里必须是 CLF 时间 [30/Sep/2026:14:00:00 +0800]，否则普通应用日志里的 [thread] "GET ..." 也会被当成访问日志
+    r'^\S+ \S+ \S+ \[\d{2}/[A-Z][a-z]{2}/\d{4}:[^\]]+\] "(?P<method>[A-Z]+) (?P<path>[^" ]+)[^"]*" (?P<status>\d{3}) '
 )
 _LOGFMT_START = re.compile(r"^\s*[\w.@-]+=")
 _LOGFMT_LEVEL = re.compile(r"(?:^|\s)(?:level|lvl|severity|log\.level)=\"?(?P<level>[A-Za-z]+)\"?(?=\s|$)")
@@ -312,20 +365,37 @@ def is_stack_line(line: str) -> bool:
     return is_frame_line(line)
 
 
-def level_and_body(line: str, _depth: int = 0) -> tuple[str, str] | None:
+# 调用方已经解析过 JSON 时把结果传进来（None 表示“不是 JSON”），避免同一行被反复 json.loads
+UNPARSED: Any = object()
+
+
+def line_record(line: str) -> dict[str, Any] | None:
+    first = line[:1]
+    return json_record(line) if first == "{" or (first in " \t" and line.lstrip()[:1] == "{") else None
+
+
+def level_and_body(line: str, _depth: int = 0, record: Any = UNPARSED) -> tuple[str, str] | None:
     if is_stack_line(line):
         return None
     if _custom:
         custom = match_custom(line)
         if custom:
             fmt, match = custom
-            level = _custom_level(fmt, match)
-            if level is None:
-                return None
             body = fmt.group(match, _MESSAGE_GROUPS)
-            return level, (body if body is not None else line[match.end("level"):]).strip()
+            if "level" in fmt.pattern.groupindex:
+                level = _custom_level(fmt, match)
+                if level is None:
+                    return None
+                return level, (body if body is not None else line[match.end("level"):]).strip()
+            # 格式只定义了时间：级别交给内置识别（优先看 message 分组），不再重复匹配自定义格式
+            return _builtin_level(body if body is not None else line, _depth)
+    return _builtin_level(line, _depth, record)
+
+
+def _builtin_level(line: str, _depth: int = 0, record: Any = UNPARSED) -> tuple[str, str] | None:
     first = line[:1]
-    record = json_record(line) if first == "{" or (first in " \t" and line.lstrip()[:1] == "{") else None
+    if record is UNPARSED:
+        record = line_record(line)
     if _depth == 0 and (record is not None or maybe_wrapped(line)):
         wrapped = unwrap(line, record)
         if wrapped:
@@ -344,10 +414,9 @@ def level_and_body(line: str, _depth: int = 0) -> tuple[str, str] | None:
         logfmt = _logfmt_level(line)
         if logfmt:
             return logfmt
-    match = LEVEL_RE.search(line[:200])
-    if match:
-        level = match.group(1).upper()
-        return LEVEL_ALIAS.get(level, level), line[match.end():].lstrip(" ]:|-\t")
+    found = find_text_level(line[:200])
+    if found:
+        return found[0], line[found[1]:].lstrip(" ]:|-\t")
     pri = _SYSLOG_PRI.match(line)
     if pri and int(pri["pri"]) < 192:
         return _SYSLOG_SEVERITY[int(pri["pri"]) % 8], line[pri.end():].strip()

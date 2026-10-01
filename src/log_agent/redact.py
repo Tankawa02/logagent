@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
+from bisect import bisect_right
 
 _enabled = True
 
@@ -93,7 +94,9 @@ _KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
 # 工具输出 / diff 的行前缀：`12: `、`12- `、`app.log:12  `、`  12 | `、diff 的 `+` `-` 空格
 _LINE_PREFIX = re.compile(r"^(?:\s*(?:[^\s:|]+:)?\d+(?:\s*\|\s?|[:\-]\s?|\s{2,})|[+\- ](?=\S))?")
 # 私钥正文与 PEM 头部字段。遇到其它内容视为块已结束（截断、只含半个块的 diff hunk）
-_KEY_BODY = re.compile(r"^\s*(?:[A-Za-z0-9+/=]{8,}|Proc-Type:.*|DEK-Info:.*|)\s*[\"',]?\s*$")
+_KEY_BODY = re.compile(
+    r"^\s*(?:[A-Za-z0-9+/=]{8,}|[A-Za-z0-9+/]+={1,2}|Proc-Type:.*|DEK-Info:.*|)\s*[\"',]?\s*$"
+)
 
 
 def _split_prefix(line: str) -> tuple[str, str]:
@@ -102,7 +105,6 @@ def _split_prefix(line: str) -> tuple[str, str]:
     return line[:end], line[end:]
 
 
-_KEY_LOOKAHEAD = 400  # BEGIN 之后最多往后找这么多行的 END（私钥一般几十行）
 
 
 def mask_private_keys(text: str) -> str:
@@ -115,6 +117,8 @@ def mask_private_keys(text: str) -> str:
     if "PRIVATE KEY-----" not in text:
         return text
     lines = text.split("\n")
+    end_rows = [n for n, row in enumerate(lines) if _KEY_END.search(row)]
+    begin_rows = [n for n, row in enumerate(lines) if _KEY_BEGIN.search(row)]
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -126,8 +130,12 @@ def mask_private_keys(text: str) -> str:
                 i += 1
                 continue
             lines[i] = line[:begin.start()] + KEY_MASK
-            close = next((j for j in range(i + 1, min(len(lines), i + 1 + _KEY_LOOKAHEAD))
-                          if _KEY_END.search(lines[j])), None)
+            # 完整的块不限长度地找 END（超长密钥的最后一行可能很短）；中间又出现 BEGIN 说明这块被截断了
+            k = bisect_right(end_rows, i)
+            close = end_rows[k] if k < len(end_rows) else None
+            if close is not None and bisect_right(begin_rows, i) < len(begin_rows) \
+                    and begin_rows[bisect_right(begin_rows, i)] < close:
+                close = None
             j = i + 1
             if close is not None:
                 for j in range(i + 1, close):
