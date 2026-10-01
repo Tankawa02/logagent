@@ -392,3 +392,190 @@ def test_spa_fallback_and_api_404(demo) -> None:
     page = client.get(f"/sessions/{SESSION}")
     assert page.status_code in (200, 503)  # 503：源码运行且未构建前端
     assert "text/html" in page.headers["content-type"]
+
+
+def test_share_redacts_persisted_no_redact_payload(demo, monkeypatch) -> None:
+    from log_agent import redact
+
+    db, *_ = demo
+    secret = 'sk-abcdefghijklmnopqrstuvwx'
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['settings']['no_redact'] = True
+        payload['question'] = payload['summary'] = payload['report'] = secret
+        payload['analysis']['conclusion'] = secret
+        payload['analysis']['issues'][0]['evidence'][0]['excerpt'] = secret
+        payload['evidence_check']['items'][0]['excerpt'] = secret
+        payload['tool_calls'] = [{'name': 'search_logs', 'args': {'pattern': secret}, 'output': [secret]}]
+        payload['extra'] = {'nested': [secret, 42, False, None]}
+        store.record_turn(SESSION, secret, 0, payload)
+    monkeypatch.setattr(redact, '_enabled', False)
+    client = client_for(db, redact_owner=False)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    for suffix in ['', '/turns/2', '/export?turn=2&format=json', '/export?turn=2&format=markdown']:
+        response = client.get(f'/api/share/{token}{suffix}')
+        assert response.status_code == 200
+        assert secret not in response.text
+        assert '已脱敏' in response.text
+        owner = client.get(f'/api/sessions/{SESSION}{suffix}', headers=OWNER)
+        assert owner.status_code == 200 and secret in owner.text
+    shared = client.get(f'/api/share/{token}/turns/2').json()
+    assert shared['extra']['nested'] == ['sk-[已脱敏]', 42, False, None]
+    assert shared['analysis']['issues'][0]['evidence'][0]['excerpt'] == 'sk-[已脱敏]'
+    with sqlite3.connect(str(db)) as conn:
+        assert SessionStore(conn).turn(SESSION, 2) == payload
+
+
+def test_shared_source_masks_interior_private_key_lines(demo, monkeypatch) -> None:
+    from log_agent import redact
+
+    db, log, _ = demo
+    log.write_text('INFO start\n-----BEGIN PRIVATE KEY-----\nabcdefgh12345678\nijklmnop12345678\n'
+                   '-----END PRIVATE KEY-----\nINFO end\n', encoding='utf-8')
+    monkeypatch.setattr(redact, '_enabled', False)
+    client = client_for(db, redact_owner=False)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    params = {'source': log.name, 'start': 3, 'end': 4, 'before': 0, 'after': 0}
+    shared = client.get(f'/api/share/{token}/source', params=params)
+    assert shared.status_code == 200
+    assert shared.json()['lines'] == [{'n': 3, 'text': '[私钥已脱敏]'}, {'n': 4, 'text': '[私钥已脱敏]'}]
+    assert shared.json()['has_more'] is True
+    owner = client.get(f'/api/sessions/{SESSION}/source', params=params, headers=OWNER).json()
+    assert owner['lines'][0]['text'] == 'abcdefgh12345678'
+
+
+def test_timeline_signature_links_stay_in_their_bucket(tmp_path) -> None:
+    log = tmp_path / 'recurring.log'
+    log.write_text('10:00:00 ERROR connection failed\n10:00:01 ERROR connection failed\n'
+                   '10:10:00 ERROR connection failed\n', encoding='utf-8')
+    for target in [10, 60, 600]:
+        data = build_timeline([log], target_buckets=target)
+        buckets = [b for b in data['buckets'] if b['error']]
+        assert buckets[0]['top'][0]['line'] == 1
+        assert buckets[-1]['top'][0]['line'] == 3
+
+
+@pytest.mark.parametrize('continuation', [
+    '    at com.example.error.Handler.run(23:59:59.java:42)',
+    'Caused by: timeout after 23:59:59',
+    '  File "23:59:59.py", line 42, in run',
+])
+def test_timeline_ignores_clocks_in_stack_continuations(tmp_path, continuation) -> None:
+    log = tmp_path / 'stack.log'
+    log.write_text(f'10:00:00 ERROR failed\n{continuation}\n10:00:01 INFO done\n', encoding='utf-8')
+    data = build_timeline([log])
+    assert data['totals'] == {'events': 2, 'warn': 0, 'error': 1}
+    assert data['files'][0]['timestamped'] == 2
+    assert len(data['buckets']) == 2
+
+
+@pytest.mark.parametrize('view', ['brief', 'detailed', 'ticket'])
+def test_shared_payload_masks_pem_split_across_list_items(demo, monkeypatch, view) -> None:
+    from log_agent import redact
+
+    db, *_ = demo
+    body = 'QUJDREVGR0hJSktMTU5P'
+    parts = ['-----BEGIN PRIVATE KEY-----', body + '\nZw==', '', '-----END PRIVATE KEY-----']
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['settings']['no_redact'] = True
+        payload['analysis']['next_steps'] = parts
+        payload['tool_calls'] = [{'output': [0, *parts, {'nested': parts}, None]}]
+        store.record_turn(SESSION, 'split PEM', 0, payload)
+    monkeypatch.setattr(redact, '_enabled', False)
+    client = client_for(db, redact_owner=False)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    for suffix in ['/turns/2', f'/export?turn=2&format=json&view={view}',
+                   f'/export?turn=2&format=markdown&view={view}']:
+        response = client.get(f'/api/share/{token}{suffix}')
+        assert response.status_code == 200
+        assert body not in response.text and 'Zw==' not in response.text
+    turn = client.get(f'/api/share/{token}/turns/2').json()
+    assert turn['analysis']['next_steps'] == [redact.KEY_MASK, f'{redact.KEY_MASK}\n{redact.KEY_MASK}',
+                                              redact.KEY_MASK, redact.KEY_MASK]
+    assert turn['tool_calls'][0]['output'][0] == 0
+    assert turn['tool_calls'][0]['output'][-1] is None
+    assert client.get(f'/api/sessions/{SESSION}/turns/2', headers=OWNER).json() == {'turn': 2, **payload}
+    with sqlite3.connect(str(db)) as conn:
+        assert SessionStore(conn).turn(SESSION, 2) == payload
+
+
+@pytest.mark.parametrize('filename', ['192.168.1.3.log', 'server-192.168.1.3-log.txt'])
+def test_shared_evidence_retains_resolvable_source(tmp_path, code_repo, filename) -> None:
+    log = spike_log(tmp_path / filename)
+    db = tmp_path / 'sessions.db'
+    seed_session(db, log, code_repo, no_redact=True)
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['analysis']['issues'][0]['evidence'][0]['excerpt'] = 'peer 192.168.1.3 password=hunter2'
+        payload['extra'] = {'source': 'password=hunter2'}  # unresolvable free text is still redacted
+        store.record_turn(SESSION, 'source link', 0, payload)
+    client = client_for(db)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    for suffix in ['/turns/2', '/export?turn=2&format=json']:
+        response = client.get(f'/api/share/{token}{suffix}')
+        assert response.status_code == 200
+        assert 'hunter2' not in response.text
+        evidence = response.json()['analysis']['issues'][0]['evidence'][0]
+        assert evidence['source'] == filename
+        assert '192.168.1.3' not in evidence['excerpt']
+        source = client.get(f'/api/share/{token}/source', params={
+            'source': evidence['source'], 'start': evidence['line_start'], 'before': 0, 'after': 0,
+        })
+        assert source.status_code == 200 and source.json()['lines']
+
+
+def test_late_source_window_uses_compact_cached_pem_ranges(tmp_path, monkeypatch) -> None:
+    import tracemalloc
+
+    from log_agent.logfile import LogFile, open_log
+    from log_agent.web.sources import read_context
+
+    log = tmp_path / 'large.log'
+    with log.open('w') as output:
+        for _ in range(30_000):
+            output.write('INFO ' + 'x' * 256 + '\n')
+        output.write('-----BEGIN PRIVATE KEY-----\nQUJDREVGR0hJSktMTU5P\nZw==\n-----END PRIVATE KEY-----\n')
+    calls = []
+    real_iter = LogFile.iter_lines
+
+    def tracked(self, start_line=1):
+        calls.append(start_line)
+        yield from real_iter(self, start_line)
+
+    monkeypatch.setattr(LogFile, 'iter_lines', tracked)
+    tracemalloc.start()
+    try:
+        for _ in range(2):
+            data = read_context([str(log)], [], log.name, 30_002, before=0, after=0)
+            assert data['lines'] == [{'n': 30_002, 'text': '[私钥已脱敏]'}]
+            assert data['total_lines'] == 30_004 and data['has_more']
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024  # no full-log string/dict; input is >7 MiB
+    assert calls == [1, 30_002, 30_002]  # a single scan, then indexed window reads
+    assert open_log(log).scan_cache['web-private-key-ranges'] == [(30_001, 30_004)]
+
+
+def test_source_pem_cache_invalidates_after_appending_end_marker(tmp_path) -> None:
+    from log_agent.web.sources import read_context
+
+    log = tmp_path / 'growing.log'
+    log.write_text('INFO start\nQUJDREVGR0hJSktMTU5P\n', encoding='utf-8')
+    first = read_context([str(log)], [], log.name, 2, before=0, after=0)
+    assert first['lines'][0]['text'] == 'QUJDREVGR0hJSktMTU5P'
+    with log.open('a') as output:
+        output.write('-----END PRIVATE KEY-----\n')
+    second = read_context([str(log)], [], log.name, 2, before=0, after=0)
+    assert second['lines'] == [{'n': 2, 'text': '[私钥已脱敏]'}]
+
+
+def test_payload_redaction_keeps_list_boundaries_when_rules_remove_newlines() -> None:
+    from log_agent.web.app import _redacted_copy
+
+    original = ['Bearer\nabcdefghijklmnop', 'normal next item', 'last item']
+    assert _redacted_copy(original, True) == ['Bearer [已脱敏]', 'normal next item', 'last item']

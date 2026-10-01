@@ -14,6 +14,7 @@ import hashlib
 import ipaddress
 import re
 from bisect import bisect_right
+from collections.abc import Iterable
 
 _enabled = True
 
@@ -197,6 +198,52 @@ def mask_private_keys(text: str) -> str:
             lines[i] = line[:end.start()] + KEY_MASK + line[end.end():]
         i += 1
     return "\n".join(lines)
+
+
+def private_key_ranges(lines: Iterable[tuple[int, str]]) -> list[tuple[int, int]]:
+    """Scan PEM membership without retaining log text; return merged line ranges.
+
+    Match the full-text masker's truncated-block rules, including an END without
+    a BEGIN. Only a candidate run's first line is needed for backward masking.
+    """
+    ranges: list[tuple[int, int]] = []
+    in_key = False
+    candidate: int | None = None
+
+    def add(start: int, end: int) -> None:
+        if ranges and start <= ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], end)
+        else:
+            ranges.append((start, end))
+
+    for n, line in lines:
+        begin, end = _KEY_BEGIN.search(line), _KEY_END.search(line)
+        if begin:
+            add(n, n)
+            in_key = not (end and end.start() > begin.start())
+            candidate = None
+        elif end:
+            add(candidate if candidate is not None else n, n)
+            in_key = False
+            candidate = None
+        elif _is_key_body(line):
+            if in_key:
+                add(n, n)
+            elif _split_prefix(line)[1].strip():
+                candidate = n if candidate is None else candidate
+            else:
+                candidate = None  # missing-BEGIN lookback stops at blank lines
+        else:
+            in_key = False
+            candidate = None
+    return ranges
+
+
+def mask_private_key_line(line: str) -> str:
+    """Mask a line whose membership was established by private_key_ranges."""
+    if _KEY_BEGIN.search(line) or _KEY_END.search(line):
+        return mask_private_keys(line)
+    return _split_prefix(line)[0] + KEY_MASK
 
 
 # 旧行为：完整的私钥块整体换成一个占位符（不关心行号的场景，如存进记忆的一行文本）

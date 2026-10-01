@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logfile import open_log
-from ..logformat import level_and_body, line_record
+from ..logformat import is_stack_line, level_and_body, line_record
 from ..redact import redact_log
 from ..timefilter import find_timestamp
 from ..tools import _error_signature
@@ -29,8 +29,6 @@ from ..tools import _error_signature
 # 展示用桶宽候选（秒）：从 1 秒到 1 天，挑第一个让桶数不超过目标值的
 NICE_WIDTHS = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
 TOP_SIGNATURES = 3
-# 每个签名只记前几个出现位置，点击尖峰时能直接跳到原文
-_SIG_EXAMPLES = 1
 # 只有时钟没有日期的日志（如 `14:00:01 ERROR ...`）统一挂在这一天上，界面只显示时分秒
 _TIME_ONLY_DATE = date(2000, 1, 1)
 _SPIKE_MIN_ERRORS = 3
@@ -45,13 +43,13 @@ class _Second:
     first_line: int = 0
     first_error: int = 0
     signatures: Counter[str] = field(default_factory=Counter)
+    examples: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
 class FileScan:
     source: str
     seconds: dict[int, _Second]
-    examples: dict[str, int]
     events: int
     timestamped: int
     time_only: bool
@@ -80,11 +78,12 @@ def scan_file(path: str | Path, tz: tzinfo, encoding: str | None = None) -> File
 
 def _scan(log, source: str, tz: tzinfo) -> FileScan:
     seconds: dict[int, _Second] = {}
-    examples: dict[str, int] = {}
     current: int | None = None
     events = timestamped = 0
     time_only = True
     for lineno, line in log.iter_lines(1):
+        if is_stack_line(line):
+            continue
         record = line_record(line)
         found = find_timestamp(line, record=record)
         parsed = level_and_body(line, record=record)
@@ -108,10 +107,10 @@ def _scan(log, source: str, tz: tzinfo) -> FileScan:
             signature = _error_signature(parsed[1][:4000])
             if signature:
                 bucket.signatures[signature] += 1
-                examples.setdefault(signature, lineno)
+                bucket.examples.setdefault(signature, lineno)
         elif level == "WARN":
             bucket.warn += 1
-    return FileScan(source, seconds, examples, events, timestamped, time_only and timestamped > 0)
+    return FileScan(source, seconds, events, timestamped, time_only and timestamped > 0)
 
 
 def pick_width(span_seconds: int, target: int) -> int:
@@ -192,7 +191,7 @@ def build_timeline(
                 first_errors[idx] = (second, item.first_error)
             for sig, n in item.signatures.items():
                 bucket["_sigs"][sig] += n
-                bucket["_sig_src"].setdefault(sig, (scan.source, scan.examples.get(sig, item.first_error)))
+                bucket["_sig_src"].setdefault(sig, (scan.source, item.examples[sig]))
         for idx, (_, line) in firsts.items():
             buckets[idx]["first"].append({"source": scan.source, "line": line})
         for idx, (_, line) in first_errors.items():

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 
 from ..evidence import SourceResolver
 from ..logfile import clip_line, open_log, read_text_file
-from ..redact import redact_code_lines, redact_log
+from ..redact import mask_private_key_line, private_key_ranges, redact_code_lines, redact_log
 
 MAX_CONTEXT = 200
 MAX_SPAN = 400
@@ -80,22 +81,36 @@ def _redact_block(raw: dict[int, str], enabled: bool) -> dict[int, str]:
         return raw
     numbers = sorted(raw)
     joined = redact_log("\n".join(raw[n] for n in numbers), enabled=True).split("\n")
-    if len(joined) == len(numbers):  # 跨行规则（私钥块）会合并行，此时退回逐行脱敏
+    if len(joined) == len(numbers):
         return dict(zip(numbers, joined, strict=True))
     return {n: redact_log(raw[n], enabled=True) for n in numbers}
 
 
 def _log_lines(path: Path, lo: int, hi: int, redact: bool, encoding: str | None):
     log = open_log(path, encoding)
-    raw: dict[int, str] = {}
+    ranges: list[tuple[int, int]] = []
+    if redact:
+        # One streaming scan per file version, storing only PEM intervals. The
+        # LogFile cache invalidates on changes and its sparse line index is reused.
+        with log.scan_lock:
+            key = "web-private-key-ranges"
+            if key not in log.scan_cache:
+                with closing(log.iter_lines(1)) as it:
+                    log.scan_cache[key] = private_key_ranges(it)
+            ranges = log.scan_cache[key]
+    lines: dict[int, str] = {}
     more = False
     with closing(log.iter_lines(lo)) as it:
         for lineno, text in it:
             if lineno > hi:
                 more = True
                 break
-            raw[lineno] = text
-    lines = {n: clip_line(t, DISPLAY_CHARS) for n, t in _redact_block(raw, redact).items()}
+            if redact:
+                index = bisect_right(ranges, lineno, key=lambda span: span[0]) - 1
+                if index >= 0 and lineno <= ranges[index][1]:
+                    text = mask_private_key_line(text)
+            lines[lineno] = text
+    lines = {n: clip_line(text, DISPLAY_CHARS) for n, text in _redact_block(lines, redact).items()}
     return lines, log.total_lines, more
 
 

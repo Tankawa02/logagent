@@ -211,3 +211,21 @@ def test_sessions_search(tmp_path: Path) -> None:
     assert "gateway" in hit.output and "payment-bug" not in hit.output
     miss = runner.invoke(cli.app, ["sessions", "list", "--db", str(db), "-S", "zzz"])
     assert "没有匹配 'zzz' 的会话" in miss.output
+
+
+def test_command_display_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    from log_agent import chat_commands
+    from log_agent.chat_input import SLASH_COMMANDS
+
+    expected = [
+        '/help', '/history', '/show', '/settings', '/window', '/baseline',
+        '/remove-log', '/sources', '/stats', '/copy', '/add-log', '/add-code',
+        '/new', '/save', '/save-brief', '/save-ticket', '/retry',
+        '/remember', '/memory', '/forget', '/exit', '/quit',
+    ]
+    assert list(chat_commands.COMMANDS) == expected
+    assert list(SLASH_COMMANDS) == expected
+    tables = []
+    monkeypatch.setattr(chat_commands.console, 'print', tables.append)
+    chat_commands._print_help()
+    assert tables[0].columns[0]._cells == [*expected, 'Ctrl+C']

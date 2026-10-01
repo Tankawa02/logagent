@@ -28,6 +28,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from ..evidence import SourceResolver
+from ..redact import mask_private_keys, redact_log
 from ..sessions import SessionInfo, SessionStore
 from .shares import ShareStore
 
@@ -70,6 +72,41 @@ def _connect(config: WebConfig) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def _redacted_copy(value: Any, enabled: bool, resolver: SourceResolver | None = None) -> Any:
+    """Copy display text, retaining only validated source navigation identifiers."""
+    if isinstance(value, str):
+        return redact_log(value, enabled=True) if enabled else value
+    if isinstance(value, dict):
+        return {
+            key: item if (enabled and key == "source" and isinstance(item, str)
+                          and resolver is not None and resolver.resolve(item) is not None)
+            else _redacted_copy(item, enabled, resolver)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        result = []
+        i = 0
+        while i < len(value):
+            if enabled and isinstance(value[i], str):
+                # PEM markers and body may span adjacent list items. Preserve each
+                # item's original line count so the JSON shape remains unchanged.
+                end = i + 1
+                while end < len(value) and isinstance(value[end], str):
+                    end += 1
+                rows = mask_private_keys("\n".join(value[i:end])).split("\n")
+                offset = 0
+                for item in value[i:end]:
+                    count = item.count("\n") + 1
+                    result.append(redact_log("\n".join(rows[offset:offset + count]), enabled=True))
+                    offset += count
+                i = end
+            else:
+                result.append(_redacted_copy(value[i], enabled, resolver))
+                i += 1
+        return result
+    return value
 
 
 def _turn_brief(number: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -309,15 +346,18 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
         with _connect(config) as conn:
             store, info = _load(conn, scope.name)
             turns = [_turn_brief(n, p) for n, p in store.history(scope.name)]
-        return {**_session_dict(info), "read_only": scope.read_only, "turn_list": turns}
+        return _redacted_copy(
+            {**_session_dict(info), "read_only": scope.read_only, "turn_list": turns}, scope.redact,
+        )
 
     @router.get("/turns/{number}")
     def turn(number: int, scope: Scope = Depends(dep)) -> dict[str, Any]:
         with _connect(config) as conn:
-            store, _ = _load(conn, scope.name)
+            store, info = _load(conn, scope.name)
             payload = store.turn(scope.name, number)
         if payload is None:
             raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
+        payload = _redacted_copy(payload, scope.redact, SourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "analysis": None, "structured_status": "missing"}
         return {"turn": number, **payload}
@@ -355,6 +395,7 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             payload = store.turn(scope.name, turn)
         if payload is None:
             raise HTTPException(404, f"第 {turn} 轮不存在或未保存报告")
+        payload = _redacted_copy(payload, scope.redact, SourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "schema_version": 2, "analysis": None, "structured_status": "missing", "finding": None}
         stem = f"{info.name}-turn{turn}"

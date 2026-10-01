@@ -160,3 +160,23 @@ def test_truncated_timestamp_key_preserves_short_log_message(prefix: str, end_ma
         expected.append(prefix + redact.KEY_MASK)
     for out in (redact_log(text), redact_code(text, preserve_lines=True)):
         assert out.split("\n") == expected
+
+
+@pytest.mark.parametrize('prefix', ['', '+', '12: ', '2026-10-01 10:20:30 INFO '])
+@pytest.mark.parametrize('rows', [
+    ['normal log line'],
+    ['-----BEGIN PRIVATE KEY-----', 'QUJDREVGR0hJSktMTU5P', '', 'Zw==', '-----END PRIVATE KEY-----'],
+    ['-----BEGIN PRIVATE KEY-----', 'QUJDREVGR0hJSktMTU5P', '', 'Zw=='],
+    ['QUJDREVGR0hJSktMTU5P', 'Zw==', '-----END PRIVATE KEY-----'],
+    ['QUJDREVGR0hJSktMTU5P', '', 'Zw==', '-----END PRIVATE KEY-----'],
+    ['-----BEGIN PRIVATE KEY-----', 'QUJDREVGR0hJSktMTU5P', 'INFO unrelated', '-----END PRIVATE KEY-----'],
+    ['-----BEGIN PRIVATE KEY-----', 'QUJDREVGR0hJSktMTU5P', '-----BEGIN PRIVATE KEY-----', 'Zw=='],
+    ['-----BEGIN PRIVATE KEY-----', 'QUJDREVGR0hJSktMTU5P',
+     "saved = '-----BEGIN PRIVATE KEY-----QUJD-----END PRIVATE KEY-----'", 'INFO end'],
+])
+def test_streaming_pem_ranges_match_full_text_mask(prefix, rows) -> None:
+    lines = [prefix + line for line in rows]
+    spans = redact.private_key_ranges(enumerate(lines, 1))
+    masked = [redact.mask_private_key_line(line) if any(lo <= n <= hi for lo, hi in spans) else line
+              for n, line in enumerate(lines, 1)]
+    assert masked == redact.mask_private_keys('\n'.join(lines)).split('\n')
