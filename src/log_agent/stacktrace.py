@@ -244,6 +244,16 @@ def _link_from_header(text: str) -> Link | None:
     return Link(trailing["type"], _clean(trailing["msg"])) if trailing else None
 
 
+def _has_node_frame(lines: Sequence[str]) -> bool:
+    """允许无源码位置的栈条目，但不能越过另一条真正的异常头。"""
+    for line in lines:
+        if _NODE_FRAME.match(line):
+            return True
+        if _HEADER.match(line.strip()) or _NODE_HEADER.match(line.strip()):
+            return False
+    return False
+
+
 def _parse_jvm_like(lines: Sequence[str]) -> Chain | None:
     """Java / Kotlin / .NET / Node.js：一行异常头 + 若干 `at` 栈帧。"""
     links: list[Link] = []
@@ -314,9 +324,8 @@ def _parse_jvm_like(lines: Sequence[str]) -> Chain | None:
                     language = "dotnet"
                 continue
             # 第一行通常是带时间戳的日志行，只认行尾的异常头；是否真是异常由后面有没有堆栈帧决定
-            next_line = next((line for line in lines[index + 1:] if line.strip()), "")
             first_ok = index > 0 or _TRAILING.search(text) or (
-                _NODE_TRAILING.search(text) and _NODE_FRAME.match(next_line)
+                _NODE_TRAILING.search(text) and _has_node_frame(lines[index + 1:])
             )
             link = _link_from_header(text) if first_ok else None
             if link:

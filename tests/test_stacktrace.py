@@ -315,3 +315,21 @@ def test_incomplete_traceback_ends_at_indented_log_record(tmp_path: Path, indent
     assert top["root"] == "java.lang.IllegalStateException"
     assert "Service.java:42" in top["frame"]
     assert top["first_line"] == 4
+
+
+@pytest.mark.parametrize("unlocated", ["    at new Promise (<anonymous>)", "    at Array.forEach (<anonymous>)"])
+def test_node_generic_header_with_unlocated_first_frame(tmp_path: Path, unlocated: str) -> None:
+    block = ("2026-06-09 10:00:00 ERROR Error: boom\n" + unlocated
+             + "\n\n    at run (/app/main.js:42:1)")
+    chain = parse_chain(block.splitlines())
+    assert chain is not None and chain.language == "node"
+    assert chain.root.type == "Error" and chain.root.message == "boom"
+    assert chain.root.frames[-1].file == "/app/main.js" and chain.root.frames[-1].line == 42
+    [top] = tools.log_overview(str(_write(tmp_path, block))).meta["top_chains"]
+    assert top["root"] == "Error" and top["language"] == "node"
+
+
+def test_node_frame_lookahead_does_not_cross_real_header() -> None:
+    chain = parse_chain(["2026-06-09 10:00:00 ERROR Validation Error: bad input",
+                         "TypeError: actual failure", "    at run (/app/main.js:42:1)"])
+    assert chain is not None and chain.root.type == "TypeError"

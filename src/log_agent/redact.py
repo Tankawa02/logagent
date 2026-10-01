@@ -93,6 +93,15 @@ _KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
 # 工具输出 / diff 的行前缀：`12: `、`12- `、`app.log:12  `、`  12 | `、diff 的 `+` `-` 空格
 _LINE_PREFIX = re.compile(r"^(?:\s*(?:[^\s:|]+:)?\d+(?:\s*\|\s?|[:\-]\s?|\s{2,})|[+\- ](?=\S|$))?")
+# 常见日志记录前缀：ISO 日期 / 时钟、可选级别和方括号线程字段。
+# 仅在行首识别固定结构，不能跳过任意消息正文去寻找 base64。
+_LOG_PREFIX = re.compile(
+    r"^\s*\[?(?:\d{4}[-/]\d{2}[-/]\d{2}[ T])?\d{2}:\d{2}:\d{2}"
+    r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\]?\s+"
+    r"(?:\[?(?:TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\]?(?:[ :|]+|$))?"
+    r"(?:\[[^\]\r\n]+\]\s+)*",
+    re.IGNORECASE,
+)
 # 私钥正文与 PEM 头部字段。遇到其它内容视为块已结束（截断、只含半个块的 diff hunk）
 _KEY_BODY = re.compile(
     r"^\s*(?:[A-Za-z0-9+/=]{8,}|[A-Za-z0-9+/]+={1,2}|Proc-Type:.*|DEK-Info:.*|)\s*[\"',]?\s*$"
@@ -100,8 +109,15 @@ _KEY_BODY = re.compile(
 
 
 def _split_prefix(line: str) -> tuple[str, str]:
+    # 先匹配日志前缀，避免把年份 `2026-` 或时钟 `10:` 当成工具行号。
+    match = _LOG_PREFIX.match(line)
+    if match:
+        return line[:match.end()], line[match.end():]
     match = _LINE_PREFIX.match(line)
     end = match.end() if match else 0
+    log_prefix = _LOG_PREFIX.match(line[end:])
+    if log_prefix:
+        end += log_prefix.end()
     return line[:end], line[end:]
 
 
