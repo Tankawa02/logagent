@@ -147,8 +147,8 @@ def show_settings(state: ChatSession, command: str, arg: str) -> None:
     console.print(info_panel(rows, "有效分析设置", state.session))
 
 
-@register("/window", "调整时间窗口，/window 14:00~14:30；/window off 取消")
 @register("/baseline", "调整正常时段，/baseline 13:00~13:30；/baseline off 取消")
+@register("/window", "调整时间窗口，/window 14:00~14:30；/window off 取消")
 def set_window(state: ChatSession, command: str, arg: str) -> None:
     from .compare import parse_range
     from .timefilter import TimeWindow, set_default_window
@@ -220,8 +220,8 @@ def copy_report(state: ChatSession, command: str, arg: str) -> None:
     console.print(Text(f"{glyphs.ok} 已复制上一条回答{note}", style="ok"))
 
 
-@register("/add-log", "给当前会话追加日志文件，/add-log <路径或通配符>")
 @register("/add-code", "给当前会话追加源码目录，/add-code <目录>")
+@register("/add-log", "给当前会话追加日志文件，/add-log <路径或通配符>")
 def add_sources(state: ChatSession, command: str, arg: str) -> None:
     added = _add_sources(command, arg, state.log_paths, state.code_paths)
     if added is None:
@@ -265,9 +265,9 @@ def new_session(state: ChatSession, command: str, arg: str) -> None:
     console.print(Text.assemble((f"{glyphs.ok} 已切换到新会话 ", "ok"), (state.session, "accent")))
 
 
-@register("/save", "保存报告，/save [--turn 轮次] [路径]，默认上一轮")
-@register("/save-brief", "保存上一轮速览，/save-brief [--turn 轮次] [路径]")
 @register("/save-ticket", "保存上一轮工单，/save-ticket [--turn 轮次] [路径]")
+@register("/save-brief", "保存上一轮速览，/save-brief [--turn 轮次] [路径]")
+@register("/save", "保存报告，/save [--turn 轮次] [路径]，默认上一轮")
 def save_report(state: ChatSession, command: str, arg: str) -> None:
     from .chat_state import parse_turn_selection
     from .export import write_report
@@ -307,16 +307,16 @@ def retry(state: ChatSession, command: str, arg: str) -> CommandResult | None:
     return CommandResult(question=state.last_question, retry_prefix=prefix)
 
 
-@register("/remember", "记住一条偏好或项目知识，/remember [-g] <内容>，-g 表示全局")
-@register("/memory", "查看记忆；/memory review 处理待确认的建议，/memory edit <编号> <新内容> 修改")
 @register("/forget", "删除记忆，/forget <编号…>")
+@register("/memory", "查看记忆；/memory review 处理待确认的建议，/memory edit <编号> <新内容> 修改")
+@register("/remember", "记住一条偏好或项目知识，/remember [-g] <内容>，-g 表示全局")
 def memory_command(state: ChatSession, command: str, arg: str) -> None:
     from .memory_cli import handle_slash
 
     handle_slash(state.mem, command, arg)
 
 
-@register("/exit", "退出")
 @register("/quit", "退出")
+@register("/exit", "退出")
 def exit_chat(state: ChatSession, command: str, arg: str) -> CommandResult:
     return CommandResult(exit=True)

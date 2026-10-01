@@ -392,3 +392,79 @@ def test_spa_fallback_and_api_404(demo) -> None:
     page = client.get(f"/sessions/{SESSION}")
     assert page.status_code in (200, 503)  # 503：源码运行且未构建前端
     assert "text/html" in page.headers["content-type"]
+
+
+def test_share_redacts_persisted_no_redact_payload(demo, monkeypatch) -> None:
+    from log_agent import redact
+
+    db, *_ = demo
+    secret = 'sk-abcdefghijklmnopqrstuvwx'
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['settings']['no_redact'] = True
+        payload['question'] = payload['summary'] = payload['report'] = secret
+        payload['analysis']['conclusion'] = secret
+        payload['analysis']['issues'][0]['evidence'][0]['excerpt'] = secret
+        payload['evidence_check']['items'][0]['excerpt'] = secret
+        payload['tool_calls'] = [{'name': 'search_logs', 'args': {'pattern': secret}, 'output': [secret]}]
+        payload['extra'] = {'nested': [secret, 42, False, None]}
+        store.record_turn(SESSION, secret, 0, payload)
+    monkeypatch.setattr(redact, '_enabled', False)
+    client = client_for(db, redact_owner=False)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    for suffix in ['', '/turns/2', '/export?turn=2&format=json', '/export?turn=2&format=markdown']:
+        response = client.get(f'/api/share/{token}{suffix}')
+        assert response.status_code == 200
+        assert secret not in response.text
+        assert '已脱敏' in response.text
+        owner = client.get(f'/api/sessions/{SESSION}{suffix}', headers=OWNER)
+        assert owner.status_code == 200 and secret in owner.text
+    shared = client.get(f'/api/share/{token}/turns/2').json()
+    assert shared['extra']['nested'] == ['sk-[已脱敏]', 42, False, None]
+    assert shared['analysis']['issues'][0]['evidence'][0]['excerpt'] == 'sk-[已脱敏]'
+    with sqlite3.connect(str(db)) as conn:
+        assert SessionStore(conn).turn(SESSION, 2) == payload
+
+
+def test_shared_source_masks_interior_private_key_lines(demo, monkeypatch) -> None:
+    from log_agent import redact
+
+    db, log, _ = demo
+    log.write_text('INFO start\n-----BEGIN PRIVATE KEY-----\nabcdefgh12345678\nijklmnop12345678\n'
+                   '-----END PRIVATE KEY-----\nINFO end\n', encoding='utf-8')
+    monkeypatch.setattr(redact, '_enabled', False)
+    client = client_for(db, redact_owner=False)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={'ttl_hours': 1}, headers=WRITE).json()['token']
+    params = {'source': log.name, 'start': 3, 'end': 4, 'before': 0, 'after': 0}
+    shared = client.get(f'/api/share/{token}/source', params=params)
+    assert shared.status_code == 200
+    assert shared.json()['lines'] == [{'n': 3, 'text': '[私钥已脱敏]'}, {'n': 4, 'text': '[私钥已脱敏]'}]
+    assert shared.json()['has_more'] is True
+    owner = client.get(f'/api/sessions/{SESSION}/source', params=params, headers=OWNER).json()
+    assert owner['lines'][0]['text'] == 'abcdefgh12345678'
+
+
+def test_timeline_signature_links_stay_in_their_bucket(tmp_path) -> None:
+    log = tmp_path / 'recurring.log'
+    log.write_text('10:00:00 ERROR connection failed\n10:00:01 ERROR connection failed\n'
+                   '10:10:00 ERROR connection failed\n', encoding='utf-8')
+    for target in [10, 60, 600]:
+        data = build_timeline([log], target_buckets=target)
+        buckets = [b for b in data['buckets'] if b['error']]
+        assert buckets[0]['top'][0]['line'] == 1
+        assert buckets[-1]['top'][0]['line'] == 3
+
+
+@pytest.mark.parametrize('continuation', [
+    '    at com.example.error.Handler.run(23:59:59.java:42)',
+    'Caused by: timeout after 23:59:59',
+    '  File "23:59:59.py", line 42, in run',
+])
+def test_timeline_ignores_clocks_in_stack_continuations(tmp_path, continuation) -> None:
+    log = tmp_path / 'stack.log'
+    log.write_text(f'10:00:00 ERROR failed\n{continuation}\n10:00:01 INFO done\n', encoding='utf-8')
+    data = build_timeline([log])
+    assert data['totals'] == {'events': 2, 'warn': 0, 'error': 1}
+    assert data['files'][0]['timestamped'] == 2
+    assert len(data['buckets']) == 2

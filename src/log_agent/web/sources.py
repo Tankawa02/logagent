@@ -89,13 +89,16 @@ def _log_lines(path: Path, lo: int, hi: int, redact: bool, encoding: str | None)
     log = open_log(path, encoding)
     raw: dict[int, str] = {}
     more = False
-    with closing(log.iter_lines(lo)) as it:
+    # Include both PEM markers even when the requested window is only key body.
+    # redact_log preserves line numbers; slice only after masking the full log.
+    with closing(log.iter_lines(1 if redact else lo)) as it:
         for lineno, text in it:
             if lineno > hi:
                 more = True
-                break
+                if not redact:
+                    break
             raw[lineno] = text
-    lines = {n: clip_line(t, DISPLAY_CHARS) for n, t in _redact_block(raw, redact).items()}
+    lines = {n: clip_line(t, DISPLAY_CHARS) for n, t in _redact_block(raw, redact).items() if lo <= n <= hi}
     return lines, log.total_lines, more
 
 
