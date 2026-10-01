@@ -341,3 +341,34 @@ def test_node_frame_lookahead_stops_at_diagnostic(tmp_path: Path, diagnostic: st
              "    at new Promise (<anonymous>)", "", diagnostic, "    at run (/app/main.js:42:1)"]
     assert parse_chain(lines) is None
     assert _roots(_write(tmp_path, "\n".join(lines))) == []
+
+
+@pytest.mark.parametrize("entry", [
+    "    at eval (eval at run (/app/main.js:10:3), <anonymous>:1:7)",
+    "    at eval (eval at run ([eval]:1:18), <anonymous>:1:7)",
+    "    at handler (eval at create (C:\\app\\main.js:10:3), <anonymous>:2:4)",
+])
+def test_node_timestamped_error_with_eval_before_located_frame(tmp_path: Path, entry: str) -> None:
+    lines = ["2026-10-01 10:00:00 ERROR Error: boom", entry, "    at run (/app/main.js:42:1)"]
+    chain = parse_chain(lines)
+    assert chain is not None and chain.language == "node"
+    assert chain.root.type == "Error" and chain.root.message == "boom"
+    assert chain.root.frames[-1].file == "/app/main.js" and chain.root.frames[-1].line == 42
+    [top] = tools.log_overview(str(_write(tmp_path, "\n".join(lines)))).meta["top_chains"]
+    assert top["root"] == "Error" and "main.js:42" in top["frame"]
+
+
+@pytest.mark.parametrize("entry", [
+    "    at eval retry scheduled",
+    "    at eval (eval at run (diagnostic text), <anonymous>:1:7)",
+    "    at eval (eval at run (/app/main.js:10:3), retry scheduled)",
+])
+def test_node_eval_lookahead_rejects_unstructured_text(entry: str) -> None:
+    assert parse_chain(["2026-10-01 10:00:00 ERROR Validation Error: bad input",
+                        entry, "    at run (/app/main.js:42:1)"]) is None
+
+
+def test_node_eval_lookahead_still_stops_at_diagnostic() -> None:
+    assert parse_chain(["2026-10-01 10:00:00 ERROR Validation Error: bad input",
+                        "    at eval (eval at run (/app/main.js:10:3), <anonymous>:1:7)",
+                        "connection retry scheduled", "    at run (/app/main.js:42:1)"]) is None
