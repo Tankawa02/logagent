@@ -9,31 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from .chat_commands import COMMANDS
 from .term import console, glyphs
 
-SLASH_COMMANDS: dict[str, str] = {
-    "/history": "列出当前会话历史，/history [关键词] 搜索问题和回答",
-    "/show": "查看指定轮次的完整报告，/show 3",
-    "/help": "显示可用命令",
-    "/save": "保存报告，/save [--turn 轮次] [路径]，默认上一轮",
-    "/save-brief": "保存上一轮速览，/save-brief [--turn 轮次] [路径]",
-    "/save-ticket": "保存上一轮工单，/save-ticket [--turn 轮次] [路径]",
-    "/copy": "把上一条回答复制到剪贴板（Markdown 原文）",
-    "/retry": "重新回答上一个问题，可附补充要求，/retry [补充]",
-    "/add-log": "给当前会话追加日志文件，/add-log <路径或通配符>",
-    "/add-code": "给当前会话追加源码目录，/add-code <目录>",
-    "/remove-log": "移除会话中的日志，/remove-log <完整路径或唯一文件名>（不删除文件）",
-    "/window": "调整时间窗口，/window 14:00~14:30；/window off 取消",
-    "/baseline": "调整正常时段，/baseline 13:00~13:30；/baseline off 取消",
-    "/settings": "查看有效模型、时区、时间范围、基线和预算",
-    "/new": "开一个新会话（当前会话已保存，可用 -s 续上）",
-    "/sources": "查看当前会话使用的日志与源码",
-    "/stats": "查看本次运行的累计用量",
-    "/remember": "记住一条偏好或项目知识，/remember [-g] <内容>，-g 表示全局",
-    "/memory": "查看记忆；/memory review 处理待确认的建议，/memory edit <编号> <新内容> 修改",
-    "/forget": "删除记忆，/forget <编号…>",
-    "/exit": "退出",
-}
+SLASH_COMMANDS: dict[str, str] = {name: spec.description for name, spec in COMMANDS.items()}
 
 
 def make_completer():

@@ -8,12 +8,14 @@ from enum import StrEnum
 from pathlib import Path
 
 import typer
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
 from . import __version__
-from .render import StreamRenderer, TurnResult, format_duration, info_panel
+from .chat_session import ChatSession
+from .chat_session import new_session_name as _new_session_name
+from .cli_context import _base_rows, _build_context_message, _run_config, _skill_sources
+from .render import StreamRenderer, info_panel
 from .report import ReportView
 from .term import console, glyphs, reset_cursor_line
 
@@ -34,7 +36,6 @@ def _register_memory_app() -> None:
 
 _register_memory_app()
 
-_EXIT_WORDS = {"exit", "quit", ":q", "退出", "结束", "/exit", "/quit"}
 DEFAULT_MODEL = "openai:gpt-4.1"
 
 
@@ -197,119 +198,6 @@ def _configure_timezone(value: str) -> None:
         _fail(str(exc))
 
 
-def _build_context_message(log_paths: list[str], code_paths: list[str], question: str, baseline=None) -> str:
-    """把日志/源码路径和问题拼成给 agent 的首条消息。baseline 是 --baseline 解析出的 TimeWindow。"""
-    lines: list[str] = []
-    if len(log_paths) == 1:
-        lines.append(f"日志文件路径：{log_paths[0]}")
-    else:
-        lines.append(
-            f"共提供了 {len(log_paths)} 份日志，请先分别调用 log_overview；"
-            "追同一个请求时可用 trace_request 一次传入全部路径，按时间合并各日志：",
-        )
-        lines.extend(f"  {i}. {p}" for i, p in enumerate(log_paths, start=1))
-
-    if code_paths:
-        if len(code_paths) == 1:
-            lines.append(f"源码目录路径：{code_paths[0]}")
-        else:
-            lines.append(f"共提供了 {len(code_paths)} 个源码目录，可分别检索：")
-            lines.extend(f"  {i}. {p}" for i, p in enumerate(code_paths, start=1))
-            lines.append(
-                "（调用 list_code_files / read_code_file / grep_code 时，"
-                "请用对应仓库的目录路径作为 code_dir，按需逐个排查。）"
-            )
-    else:
-        lines.append("（本次未提供源码目录，只分析日志。）")
-
-    from .timefilter import default_timezone, default_window
-
-    lines.append(f"时间解释：无偏移时间和纯时刻边界使用 {default_timezone()}；带偏移日志按实际时刻比较。")
-    window = default_window()
-    if window:
-        lines.append(
-            f"时间窗口：{window.describe()}。log_overview / search_logs 不传 since/until 时会自动只看这个窗口；"
-            "需要对比窗口之前的情况时可以显式传入其它时间。read_log_chunk 按行号读取，不受窗口限制。"
-        )
-    else:
-        lines.append("时间窗口：全文，没有默认时间限制。")
-    if baseline:
-        target = "上面的时间窗口" if window else "全文"
-        lines.append(
-            f"对比基线：用户给出的正常时段是 {baseline.describe()}。请先对每份日志调用 compare_windows"
-            f"（baseline_since=\"{baseline.since.raw}\"，baseline_until=\"{baseline.until.raw}\"，"
-            f"目标时段为{target}），再围绕新出现和明显增多的错误深入排查。"
-        )
-    else:
-        lines.append("对比基线：未设置。")
-    lines.append(f"\n用户问题：{question}")
-    return "\n".join(lines)
-
-
-def _skill_sources(skills: list[Path] | None):
-    from .skills import resolve_skill_sources
-
-    return resolve_skill_sources(skills or [])
-
-
-def _skills_value(sources) -> Text:
-    value = Text()
-    for i, source in enumerate(sources):
-        if i:
-            value.append("\n")
-        value.append(f"{source.skill_count()} 个", style="accent")
-        value.append(f"  {source.directory}", style="muted")
-    return value
-
-
-def _base_rows(
-    log_paths: list[str], code_paths: list[str], model: str, base_url: str | None, skill_sources=(),
-) -> list[tuple[str, Text | str]]:
-    from . import redact
-    from .logfile import open_log
-    from .render import display_path
-
-    # 面板边框、内边距、标签列约占 16 列，再给编码标签留 12 列
-    width = max(30, console.width - 16)
-    log_value = Text()
-    for i, path in enumerate(log_paths):
-        if i:
-            log_value.append("\n")
-        log_value.append(display_path(path, width - 12))
-        try:
-            meta = open_log(path)
-            tags = [meta.encoding] + (["gzip"] if meta.gz else [])
-            log_value.append(f"  {' · '.join(tags)}", style="muted")
-        except OSError:
-            pass
-
-    code_value = (
-        Text("\n".join(display_path(p, width) for p in code_paths)) if code_paths else Text("（无）", style="muted")
-    )
-    rows: list[tuple[str, Text | str]] = [
-        ("日志", log_value),
-        ("源码", code_value),
-        ("模型", Text(model, style="accent")),
-    ]
-    if base_url:
-        rows.append(("接口", base_url))
-    if skill_sources:
-        rows.append(("Skills", _skills_value(skill_sources)))
-
-    from .timefilter import default_timezone, default_window
-
-    rows.append(("时区", str(default_timezone())))
-    if default_window():
-        rows.append(("时间", Text(default_window().describe(), style="accent")))
-    rows.append(("脱敏", Text("开启", style="ok") if redact.is_enabled() else Text("已关闭", style="warn")))
-
-    from .config import loaded
-
-    if loaded().files:
-        rows.append(("配置", Text("\n".join(str(p) for p in loaded().files), style="muted")))
-    return rows
-
-
 def _make_budget(text: str | None):
     if not text:
         return None
@@ -362,14 +250,6 @@ def _finding_exit_code(result, fail_on: FailOn) -> int:
         rank -= 1
         console.print(Text(f"{glyphs.notice} 有 {check['mismatch']} 条证据与原文不符，--fail-on 按降一级的可信度判断。", style="warn"))
     return EXIT_FINDING if rank >= _FAIL_ON_RANK[fail_on] else 0
-
-
-def _run_config(max_steps: int, thread_id: str | None = None) -> dict:
-    # langgraph 的每个节点执行算一步，一次"模型 + 工具"大约 2-3 步
-    config: dict = {"recursion_limit": max_steps * 3}
-    if thread_id:
-        config["configurable"] = {"thread_id": thread_id}
-    return config
 
 
 # ---------------------------------------------------------------------------
@@ -479,32 +359,6 @@ def analyze(
 # ---------------------------------------------------------------------------
 
 
-class _ChatTotals:
-    def __init__(self) -> None:
-        self.turns = 0
-        self.elapsed = 0.0
-        self.tokens = 0
-        self.tools = 0
-
-    def add(self, result: TurnResult) -> None:
-        self.turns += 1
-        self.elapsed += result.elapsed
-        self.tokens += result.usage.get("total", 0)
-        self.tools += len(result.tools)
-
-    def line(self) -> Text:
-        sep = f" {glyphs.sep} "
-        return Text(
-            f"本次共 {self.turns} 轮{sep}用时 {format_duration(self.elapsed)}{sep}"
-            f"工具 {self.tools} 次{sep}{self.tokens:,} tokens",
-            style="muted",
-        )
-
-
-def _new_session_name() -> str:
-    return "chat-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-
-
 def _stored_session(db_path: Path, name: str | None, latest: bool):
     """查出要续上的会话；--resume 且没有任何会话时直接报错，-s 指定的会话不存在时返回 None（按新会话处理）。"""
     import sqlite3
@@ -542,44 +396,6 @@ def _show_suggestions(log_paths: list[str]) -> list[str]:
     for i, question in enumerate(questions, start=1):
         console.print(Text.assemble((f"  {i}  ", "accent"), (question, "")))
     return questions
-
-
-def _add_sources(command: str, arg: str, log_paths: list[str], code_paths: list[str]) -> list[str] | None:
-    """解析 /add-log、/add-code 的参数，返回新增的绝对路径；参数有误时打印原因并返回 None。"""
-    from .inputs import LogInputError, resolve_log_inputs
-
-    target = arg.strip().strip('"').strip("'")
-    usage = "/add-log <日志路径或通配符>" if command == "/add-log" else "/add-code <源码目录>"
-    if not target:
-        console.print(Text(f"用法：{usage}", style="warn"))
-        return None
-    if command == "/add-log":
-        if target == "-":
-            console.print(Text("chat 模式不能从管道追加日志，请先把日志保存成文件。", style="warn"))
-            return None
-        try:
-            resolved = resolve_log_inputs([target])
-        except LogInputError as exc:
-            console.print(Text(f"{glyphs.fail} {exc}", style="err"))
-            return None
-        return [p for p in dict.fromkeys(resolved) if p not in log_paths]
-    path = Path(target).expanduser().resolve()
-    if not path.is_dir():
-        console.print(Text(f"{glyphs.fail} 源码目录不存在：{path}", style="err"))
-        return None
-    return [] if str(path) in code_paths else [str(path)]
-
-
-def _print_help() -> None:
-    from .chat_input import SLASH_COMMANDS
-
-    grid = Table.grid(padding=(0, 2))
-    grid.add_column(style="accent", no_wrap=True)
-    grid.add_column(style="muted")
-    for cmd, desc in SLASH_COMMANDS.items():
-        grid.add_row(cmd, desc)
-    grid.add_row("Ctrl+C", "回答中按下只中断当前这一轮；在输入框按下退出")
-    console.print(grid)
 
 
 @app.command()
@@ -630,7 +446,7 @@ def chat(
                 code = code or [Path(p) for p in stored.code]
     if not log:
         _fail("请用 -l 指定日志文件；续上已有会话时可以只写 -s <会话名>，或用 --resume 续上最近一次。")
-    from .chat_state import SETTING_KEYS, legacy_last_turn, remove_log, restored_value
+    from .chat_state import SETTING_KEYS, legacy_last_turn, restored_value
 
     saved_settings = stored.settings if stored else {}
     settings = dict(zip(SETTING_KEYS, (since, until, timezone, baseline, encoding, budget, max_steps), strict=True))
@@ -653,10 +469,9 @@ def chat(
 
     from .agent import build_agent
     from .chat_input import ChatInput
+    from .chat_loop import run_chat_loop
     from .citations import CitationLinker
-    from .clipboard import ClipboardError, copy_text
-    from .export import build_payload, write_report
-    from .memory_cli import after_turn, end_session, handle_slash, open_session, status_row
+    from .memory_cli import end_session, open_session, status_row
     from .sessions import SessionStore, describe_source_change
 
     auto_session = session is None
@@ -728,7 +543,6 @@ def chat(
             suggestions = _show_suggestions(log_paths)
 
         chat_input = ChatInput(db_path.parent / "history")
-        totals = _ChatTotals()
         last = store.last_turn(session)
         if last is None and not first_turn:
             # get_state 会重建增量 checkpoint，直接读取 SQLite checkpoint 可能没有 messages。
@@ -739,230 +553,14 @@ def chat(
             console.print(Text(f"上次结果（{last['status']}）：{last.get('summary') or last['report'][:300] or '未生成回答'}", style="muted"))
             if last.get("provenance") == "legacy_unknown":
                 console.print(Text("旧版会话未保存逐轮来源，恢复的报告将标注来源未知。", style="warn"))
-        first_prompt = True
-
-        while True:
-            if not first_prompt:
-                console.print()
-                console.print(Rule(style="muted", characters=glyphs.rule))
-            first_prompt = False
-            try:
-                user_input = chat_input.read().strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-
-            if not user_input:
-                first_prompt = True
-                continue
-            lowered = user_input.lower()
-            if lowered in _EXIT_WORDS:
-                break
-
-            retry_prefix = ""
-            if suggestions and user_input.isdigit() and 1 <= int(user_input) <= len(suggestions):
-                user_input = suggestions[int(user_input) - 1]
-                console.print(Text.assemble((f"{glyphs.notice} ", "accent"), (user_input, "muted")))
-            elif lowered == "/retry" or lowered.startswith("/retry "):
-                if last_question is None:
-                    console.print(Text("还没有可以重答的问题。", style="muted"))
-                    first_prompt = True
-                    continue
-                extra = user_input[len("/retry"):].strip()
-                user_input = last_question
-                retry_prefix = "请重新回答我上一个问题，重新核实证据，不要直接沿用上一次的结论。"
-                if extra:
-                    retry_prefix += f"\n补充要求：{extra}"
-
-            if user_input.startswith("/"):
-                command, _, arg = user_input.partition(" ")
-                command = command.lower()
-                first_prompt = True
-                if handle_slash(mem, command, arg):
-                    continue
-                if command == "/help":
-                    _print_help()
-                elif command == "/history":
-                    entries = store.history(session, arg.strip())
-                    table = Table("轮次", "时间", "状态 / 异常判定", "问题", "结论", box=glyphs.box)
-                    for number, entry in entries:
-                        assessment = (entry.get("analysis") or {}).get("assessment", "unknown")
-                        table.add_row(str(number), Text(entry.get("generated_at") or "未知"),
-                                      Text(f"{entry.get('status', '未知')} / {assessment}"),
-                                      Text(entry.get("question", "")), Text(entry.get("summary") or "未保存结论"))
-                    console.print(table if entries else Text("没有匹配的历史报告。", style="muted"))
-                    console.print(Text("轮次按原会话编号；旧版未保存的轮次无法查看。/show N 查看，/save --turn N 导出。", style="muted"))
-                elif command == "/show":
-                    from .chat_state import parse_turn_number
-
-                    try:
-                        number = parse_turn_number(arg.strip())
-                    except ValueError:
-                        console.print(Text("用法：/show <正整数轮次>", style="warn"))
-                        continue
-                    entry = store.turn(session, number)
-                    if entry is None:
-                        console.print(Text("该轮次不存在或未保存报告。输入 /history 查看可用轮次。", style="warn"))
-                        continue
-                    from rich.markdown import Markdown
-
-                    from .export import to_markdown
-
-                    console.print(Markdown(to_markdown(entry)))
-                elif command == "/settings":
-                    rows = [(key, str(value) if value is not None else "未设置") for key, value in settings.items()]
-                    rows.extend([("model", model), ("脱敏", "关闭" if no_redact else "开启")])
-                    console.print(info_panel(rows, "有效分析设置", session))
-                elif command in ("/window", "/baseline"):
-                    from .compare import parse_range
-                    from .timefilter import TimeWindow, set_default_window
-
-                    raw = arg.strip()
-                    if not raw:
-                        console.print(Text(f"用法：{command} <起点~终点|off>（off 取消）", style="warn"))
-                        continue
-                    try:
-                        window = TimeWindow() if raw.lower() == "off" else parse_range(raw)
-                    except ValueError as exc:
-                        console.print(Text(str(exc), style="warn"))
-                        continue
-                    if command == "/window":
-                        since = window.since.raw if window.since else None
-                        until = window.until.raw if window.until else None
-                        set_default_window(since, until)
-                        settings.update(since=since, until=until)
-                    else:
-                        baseline_window = window if window else None
-                        baseline = raw if window else None
-                        settings["baseline"] = baseline
-                    store.touch(session, log_paths, code_paths, model, settings)
-                    suggestions = []
-                    source_note = (
-                        "分析设置已更新，请用以下范围重新核实，之前的范围和基线不再适用。\n"
-                        + _build_context_message(log_paths, code_paths, "继续排查", baseline_window)
-                        + f"\n范围：{since or '开头'} → {until or '结尾'}；基线：{baseline or '未设置'}。"
-                    )
-                    console.print(Text(f"{glyphs.ok} 已更新，下一次提问生效；已生成的报告保持原设置。", style="ok"))
-                elif command == "/remove-log":
-                    try:
-                        log_paths = remove_log(log_paths, arg)
-                    except ValueError as exc:
-                        console.print(Text(str(exc), style="warn"))
-                        continue
-                    linker = CitationLinker(log_paths, code_paths)
-                    store.touch(session, log_paths, code_paths, model, settings)
-                    suggestions = []
-                    source_note = (
-                        "日志列表已更新，移出的日志不再作为本轮证据。当前来源和范围如下：\n"
-                        + _build_context_message(log_paths, code_paths, "继续排查", baseline_window)
-                    )
-                    console.print(Text(f"{glyphs.ok} 已从会话移除日志，原文件未删除。", style="ok"))
-                elif command == "/sources":
-                    rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
-                    console.print(info_panel(rows, "当前会话", session))
-                elif command == "/stats":
-                    console.print(totals.line())
-                elif command == "/copy":
-                    if last is None or not last.get("report"):
-                        console.print(Text("还没有可以复制的回答。", style="muted"))
-                        continue
-                    try:
-                        method = copy_text(last["report"].strip() + "\n")
-                    except ClipboardError as exc:
-                        console.print(Text(f"{glyphs.fail} 复制失败：{exc}，可以改用 /save 保存成文件。", style="err"))
-                        continue
-                    note = "（通过终端 OSC 52 写入，需终端支持）" if method == "OSC 52" else ""
-                    console.print(Text(f"{glyphs.ok} 已复制上一条回答{note}", style="ok"))
-                elif command in ("/add-log", "/add-code"):
-                    added = _add_sources(command, arg, log_paths, code_paths)
-                    if added is None:
-                        continue
-                    kind = "日志文件" if command == "/add-log" else "源码目录"
-                    if not added:
-                        console.print(Text(f"这个{kind}已经在当前会话里了。", style="muted"))
-                        continue
-                    if command == "/add-log":
-                        log_paths = log_paths + added
-                    else:
-                        code_paths = code_paths + added
-                        if mem is not None:
-                            from .memory import project_key
-
-                            mem.project = project_key(code_paths)
-                    suggestions = []
-                    linker = CitationLinker(log_paths, code_paths)
-                    store.touch(session, log_paths, code_paths, model, settings)
-                    if not first_turn:
-                        note = f"补充：我新增了{kind}，之后排查可以一并使用：\n" + "\n".join(f"  - {p}" for p in added)
-                        source_note = f"{source_note}\n\n{note}" if source_note else note
-                    for path in added:
-                        console.print(Text.assemble((f"{glyphs.ok} 已追加{kind} ", "ok"), (path, "accent")))
-                    if not first_turn:
-                        console.print(Text("会在下一条消息里告知 agent。", style="muted"))
-                elif command == "/new":
-                    end_session(mem)
-                    last_question = None
-                    last = None
-                    suggestions = []
-                    session = _new_session_name()
-                    if mem is not None:
-                        mem.session = session
-                    first_turn = True
-                    source_note = ""
-                    store.touch(session, log_paths, code_paths, model, settings)
-                    console.print(Text.assemble((f"{glyphs.ok} 已切换到新会话 ", "ok"), (session, "accent")))
-                elif command in {"/save", "/save-brief", "/save-ticket"}:
-                    from .chat_state import parse_turn_selection
-
-                    try:
-                        number, path_arg = parse_turn_selection(arg)
-                    except ValueError as exc:
-                        console.print(Text(str(exc), style="warn"))
-                        continue
-                    data = store.turn(session, number) if number is not None else last
-                    if data is None:
-                        console.print(Text("该轮次不存在或未保存报告。" if number is not None else "还没有可以保存的回答。", style="warn"))
-                        continue
-                    view = {"/save-brief": "brief", "/save-ticket": "ticket"}.get(command, "detailed")
-                    turn_label = f"-turn-{number}" if number is not None else ""
-                    default_name = f"log-agent-report-{view}{turn_label}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
-                    target = Path(path_arg) if path_arg else Path.cwd() / default_name
-                    fmt = "json" if target.suffix.lower() == ".json" else "markdown"
-                    try:
-                        saved = write_report(target, data, fmt, view)
-                    except OSError as exc:
-                        console.print(Text(f"{glyphs.fail} 保存失败: {exc}", style="err"))
-                        continue
-                    console.print(Text.assemble((f"{glyphs.ok} 已保存 ", "ok"), (str(saved), "accent")))
-                else:
-                    console.print(Text(f"未知命令 {command}，输入 /help 查看可用命令。", style="warn"))
-                continue
-
-            if first_turn:
-                message = _build_context_message(log_paths, code_paths, user_input, baseline_window)
-                first_turn = False
-            elif source_note:
-                message = f"{source_note}\n\n{user_input}"
-            else:
-                message = user_input
-            if retry_prefix:
-                message = f"{retry_prefix}\n\n{message}"
-            source_note = ""
-            suggestions = []
-            last_question = user_input
-
-            payload = {"messages": [{"role": "user", "content": message}]}
-            result = StreamRenderer(verbose=verbose, linker=linker, budget=token_budget).run(
-                agent, payload, config=_run_config(max_steps, session)
-            )
-            totals.add(result)
-            last = build_payload(
-                result, question=user_input, logs=log_paths, code=code_paths, model=model,
-                settings={**settings, "no_redact": no_redact},
-            )
-            store.record_turn(session, user_input, result.usage.get("total", 0), last)
-            if result.interrupted:
-                console.print(Text("本轮回答已中断，可以继续追问或换个问题。", style="muted"))
-            after_turn(mem, user_input)
+        state = ChatSession(
+            store=store, session=session, log_paths=log_paths, code_paths=code_paths,
+            model=model, settings=settings, linker=linker, mem=mem, base_url=base_url,
+            skill_sources=skill_sources, no_redact=no_redact, baseline_window=baseline_window,
+            first_turn=first_turn, source_note=source_note, suggestions=suggestions,
+            last=last, last_question=last_question,
+        )
+        run_chat_loop(state, chat_input, agent, verbose=verbose, token_budget=token_budget, max_steps=max_steps)
         end_session(mem)
     finally:
         conn.close()
@@ -970,9 +568,9 @@ def chat(
             mem.store.close()
 
     console.print()
-    if totals.turns:
-        console.print(totals.line())
-    console.print(Text.assemble(("已退出，会话已保存。下次用 ", "muted"), (f"-s {session}", "accent"), (" 续上。", "muted")))
+    if state.totals.turns:
+        console.print(state.totals.line())
+    console.print(Text.assemble(("已退出，会话已保存。下次用 ", "muted"), (f"-s {state.session}", "accent"), (" 续上。", "muted")))
 
 
 # ---------------------------------------------------------------------------

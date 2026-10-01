@@ -190,3 +190,25 @@ def test_path_completion_with_spaces(tmp_path: Path) -> None:
     text = f'/add-log "{tmp_path}/app'
     items = list(make_completer().get_completions(Document(text), CompleteEvent()))
     assert any(item.text == " log.txt" for item in items)
+
+
+def test_new_session_uses_updated_state_for_model_and_export(tmp_path, sample_log, monkeypatch):
+    seen = _patch(monkeypatch, [AIMessage(content="old answer"), AIMessage(content="new answer")])
+    output = tmp_path / "new.json"
+    out = run_chat(
+        tmp_path,
+        f"旧问题\n/window 10:00~10:01\n/new\n新问题\n/SAVE {output}\n/QUIT\n",
+        "-l", str(sample_log),
+    )
+    assert out.exit_code == 0, out.output
+    assert str(sample_log) in seen[-1] and "10:00" in seen[-1]
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["question"] == "新问题"
+    assert report["report"] == "new answer"
+    assert report["settings"]["since"] == "10:00"
+    with sqlite3.connect(tmp_path / "sessions.db") as conn:
+        store = SessionStore(conn)
+        new_session, = [entry for entry in store.list() if entry.name != "case"]
+        assert store.last_turn("case")["question"] == "旧问题"
+        assert store.last_turn(new_session.name)["question"] == "新问题"
+        assert f"-s {new_session.name}" in out.output
