@@ -463,16 +463,13 @@ def _config_target(cwd: Path) -> tuple[Path, bool]:
 
 def _base_layer(target: Path) -> dict:
     """除了要生成的文件之外，运行时还会读到的配置（用户级 ~/.log-agent/config.toml）。"""
-    from .config import ConfigError, LoadedConfig, _read, user_config_path
+    from .config import LoadedConfig, _read, user_config_path
 
     user = user_config_path()
     if not user.is_file() or user.resolve() == target.resolve():
         return {}
     loaded = LoadedConfig()
-    try:
-        _read(user, loaded)
-    except ConfigError:
-        return {}
+    _read(user, loaded)
     return loaded.for_command("analyze")
 
 
@@ -515,7 +512,11 @@ def run_init(
             return 2
         if not typer.confirm(f"{target} 已存在，覆盖？", default=False):
             return 2
-    base = _base_layer(target)
+    try:
+        base = _base_layer(target)
+    except ConfigError as exc:
+        _warn(f"现有配置读取失败：{exc}。请先修复用户级配置，再运行 init。")
+        return 2
     try:
         existing = base if explicit_target and not target.exists() else load_config(cwd).for_command("analyze")
     except ConfigError as exc:

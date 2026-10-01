@@ -182,7 +182,9 @@ def test_init_yes_generates_loadable_config_without_secrets(project: Path, gatew
     assert data["code"] == ["."] and data["timezone"] == "+08:00"
     assert GOOD_KEY not in text and "hunter2" not in text  # Key 不落盘，抽样行先脱敏
     assert "# [[log_formats]]" in text and "GW|30.09.2026|start" in text  # 未识别的日志附上模板
-    assert "模型接口可用" in out.output and "log-agent analyze -l logs/app.log" in out.output
+    assert "模型接口可用" in out.output
+    sample_arg = '"logs/app.log"' if onboarding.IS_WINDOWS else "logs/app.log"
+    assert f"log-agent analyze -l {sample_arg}" in out.output
     config = load_config(project).for_command("analyze")
     assert config["code"] == [str(project.resolve())] and config["timezone"] == "+08:00"
 
@@ -503,19 +505,59 @@ def test_doctor_process_exits_when_invocation_never_returns(project: Path) -> No
     import subprocess
     import sys
     import textwrap
+    import time
 
+    started_file = project / "ping-started"
     code = textwrap.dedent('''
         import os
         import threading
+        import sys
+        from pathlib import Path
         from log_agent import agent, cli, probe
         class Hangs:
             def invoke(self, *args, **kwargs):
+                Path(sys.argv[1]).touch()
                 threading.Event().wait()
         agent._resolve_chat_model = lambda *args, **kwargs: Hangs()
         probe._GRACE_SECONDS = 0
         os.environ["OPENAI_API_KEY"] = "test"
         cli.app(args=["doctor", "--ping", "--ping-timeout", "1"])
     ''')
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=8)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "没有响应" in result.stdout
+    # Cold imports and doctor's dependency checks are not part of the request timeout.
+    # Keep a separate startup bound, then require the actual CLI process to exit promptly.
+    with subprocess.Popen([sys.executable, "-c", code, str(started_file)], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, encoding="utf-8") as process:
+        try:
+            startup_deadline = time.monotonic() + 60
+            while not started_file.exists() and process.poll() is None and time.monotonic() < startup_deadline:
+                time.sleep(0.02)
+            if not started_file.exists():
+                process.kill()
+                stdout, stderr = process.communicate(timeout=5)
+                pytest.fail(f"CLI did not reach model invocation: {stdout}\n{stderr}")
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+    assert process.returncode == 1, stdout + stderr
+    assert "没有响应" in stdout
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("contents", ['model = [', 'code = [42]'])
+def test_init_refuses_broken_user_config(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       explicit: bool, contents: str) -> None:
+    from log_agent.config import user_config_path
+
+    user = user_config_path()
+    user.parent.mkdir(parents=True)
+    user.write_text(contents, encoding="utf-8")
+    target = tmp_path / "new.toml" if explicit else project / ".log-agent.toml"
+    if explicit:
+        monkeypatch.setenv("LOG_AGENT_CONFIG", str(target))
+    out = runner.invoke(cli.app, ["init", "--yes", "--no-ping"], env=WIDE)
+    assert out.exit_code == 2, out.output
+    assert "现有配置读取失败" in out.output and "请先修复用户级配置" in out.output
+    assert not target.exists()
+    assert user.read_text(encoding="utf-8") == contents
