@@ -2,12 +2,12 @@
 
 [← 返回 README](../README.md) · [文档目录](README.md)
 
-`log-agent serve` 在浏览器里打开 `chat` 保存的会话。它读的是同一个 SQLite 会话库（默认 `~/.log-agent/sessions.db`），
+`log-agent serve` 在浏览器里打开 `analyze` 和 `chat` 保存的会话（`analyze` 默认每次都会存档，见[分析结果存为会话](usage.md#分析结果存为会话)）。它读的是同一个 SQLite 会话库（默认 `~/.log-agent/sessions.db`），
 报告用的是同一份 `schema_version: 2` 结构化数据，所以终端和网页看到的结论、证据核对结果完全一致。
 
 ```bash
 uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'   # 需要 web 额外依赖
-log-agent chat -l app.log -c ./src        # 先在终端里排查，产生会话
+log-agent analyze -l app.log -c ./src     # 照常分析，结果自动存为会话（chat 也一样）
 log-agent serve                           # 打开终端里打印的链接（带 ?token=）
 ```
 
@@ -20,7 +20,7 @@ log-agent serve                           # 打开终端里打印的链接（带
   每条证据带核对状态（✓ 已核对原文、△ 行号偏移、✗ 与原文不符、? 无法核对）。点证据或正文里的 `app.log:42`，
   右边打开日志 / 源码对应行和上下文，可以继续向上、向下加载。行号偏移的证据直接跳到核对出的真实位置。
 - **网页续问**：沿用会话的日志、源码、时间窗口、时区、基线和预算，过程实时显示工具调用，
-  结束后和终端一样存成新的一轮（`log-agent chat -s <会话>` 回到终端也能接着问）。关页面或点「停止」按中断处理，已输出部分照常保存。
+  结束后和终端一样存成新的一轮（`log-agent chat -s <会话>` 回到终端也能接着问）。`analyze` 的存档也能续问，agent 带着那次分析的完整上下文。关页面或点「停止」按中断处理，已输出部分照常保存。
 - **分享链接**：会话页点「分享」生成只读链接交给同事。同事不需要安装、不需要令牌，能看报告、时间线、证据原文并导出 Markdown / 工单 / JSON；
   不能续问，也看不到你的其他会话。
 - **导出**：每轮报告都能下载 Markdown（详细 / 工单视图）或 JSON，内容与 `/save`、`/save-ticket` 相同。

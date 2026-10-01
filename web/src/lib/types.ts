@@ -116,6 +116,8 @@ export interface SourceRef {
 
 export interface SessionSummary {
   name: string
+  /** analyze 单次分析存档 / chat 多轮对话 */
+  origin: 'analyze' | 'chat'
   title: string
   logs: SourceRef[]
   code: SourceRef[]

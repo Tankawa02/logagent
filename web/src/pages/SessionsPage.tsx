@@ -29,7 +29,7 @@ export function SessionsPage() {
         <div>
           <h1 className="text-xl font-semibold">log-agent 会话</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            来自 <span className="font-mono">{meta.data?.db ?? '…'}</span>，用 <code>log-agent chat</code> 产生的会话都会出现在这里。
+            来自 <span className="font-mono">{meta.data?.db ?? '…'}</span>：<code>log-agent analyze</code> 的每次分析和 <code>chat</code> 的对话都会出现在这里。
           </p>
         </div>
         <input
@@ -47,7 +47,7 @@ export function SessionsPage() {
           </div>
         )}
         {sessions.data && sessions.data.length === 0 && (
-          <Empty>{q ? `没有匹配「${q}」的会话。` : '还没有会话。先运行 log-agent chat -l app.log 排查一次，再刷新这里。'}</Empty>
+          <Empty>{q ? `没有匹配「${q}」的会话。` : '还没有会话。先运行 log-agent analyze -l app.log 分析一次，再刷新这里。'}</Empty>
         )}
         <ul className="divide-y divide-gray-100 dark:divide-gray-800">
           {sessions.data?.map((s) => (
@@ -58,6 +58,7 @@ export function SessionsPage() {
                 className="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50"
               >
                 <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={s.origin === 'analyze' ? 'blue' : 'gray'}>{s.origin === 'analyze' ? '单次分析' : '多轮对话'}</Badge>
                   <span className="font-medium text-gray-900 dark:text-gray-50">{s.title || s.name}</span>
                   {s.last?.assessment && (
                     <Badge tone={ASSESSMENT[s.last.assessment].tone}>{ASSESSMENT[s.last.assessment].label}</Badge>

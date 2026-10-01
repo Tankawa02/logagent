@@ -89,8 +89,11 @@ def _turn_brief(number: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _session_dict(info: SessionInfo) -> dict[str, Any]:
+    # analyze 存档时在设置里记 origin；之后在 chat 里续过的会话设置会被覆盖，再按默认名前缀兜底
+    origin = "analyze" if info.settings.get("origin") == "analyze" or info.name.startswith("analyze-") else "chat"
     return {
         "name": info.name,
+        "origin": origin,
         "title": info.title,
         "logs": [{"path": p, "name": Path(p).name, "exists": Path(p).is_file()} for p in info.logs],
         "code": [{"path": p, "name": Path(p).name} for p in info.code],

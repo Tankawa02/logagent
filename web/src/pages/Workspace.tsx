@@ -287,6 +287,7 @@ function SessionHeader({
         <div className="min-w-0 space-y-1">
           <h1 className="truncate text-lg font-semibold">{info.title || info.name}</h1>
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+            <Badge tone={info.origin === 'analyze' ? 'blue' : 'gray'}>{info.origin === 'analyze' ? '单次分析' : '多轮对话'}</Badge>
             <span className="font-mono">{info.name}</span>
             <span>· {info.turns} 轮</span>
             <span>· {info.model}</span>
