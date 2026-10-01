@@ -13,6 +13,24 @@ CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试�
 用真实子进程跑完整的 `analyze`（只把模型换成脚本），覆盖 Windows 默认 GBK 控制台、中文 / 带空格路径、
 日志和源码不在同一盘符等场景；也可以手动跑 `uv run python -m tests.smoke_driver <日志> src <输出.json>` 看实际终端效果。
 
+### CLI 与渲染模块
+
+`cli.py` 负责命令行参数、配置恢复与资源生命周期；共享的上下文消息和面板数据在
+`cli_context.py`。交互会话分为：
+
+- `chat_session.py`：会话状态与累计统计，来源变化时统一刷新引用链接并保存会话。
+- `chat_commands.py`：斜杠命令注册表与处理函数；命令名、说明、处理函数在同一处注册，
+  `/help` 和 `chat_input.py` 的补全列表从注册表生成。
+- `chat_loop.py`：读取输入、分发命令、调用模型并保存每轮结果。
+
+新增命令时，用 `@register("/命令", "说明")` 装饰接收 `(state, command, arg)` 的处理函数。
+本地命令返回 `None` 后继续等待输入；需要提交问题或退出时返回 `CommandResult`。
+当前来源、设置与历史报告快照分开保存，修改会话设置不能改写已生成的报告。
+
+`render.py` 保留 `StreamRenderer` 的流式事件与 Live 生命周期，以及已有导入入口。
+通用文本、路径和面板在 `render_common.py`，工具参数与结果展示在 `render_tools.py`，
+报告结果模型、Markdown 与证据提示在 `render_report.py`。这些模块不反向依赖 `render.py`。
+
 ### 升级依赖
 
 deepagents、langchain、langgraph、openai 在 `pyproject.toml` 里带了版本上限，`uv.lock` 锁定了测过的版本，
