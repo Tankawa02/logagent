@@ -315,10 +315,11 @@ def analyze(
                 "base_url": base_url, "no_redact": no_redact}
     saved_session = None if no_save else _open_analyze_session(db, session)
     session_name = saved_session.name if saved_session else (session or _analyze_session_name())
-    mem = open_session(memory.value, code_paths, session_name)
+    mem = None
     # 管道运行或输出到文件时不弹确认，候选留到下次 chat / log-agent memory review 再处理
     can_ask = sys.stdin.isatty() and sys.stdout.isatty() and output is None and "-" not in log
     try:
+        mem = open_session(memory.value, code_paths, session_name)
         reset_cursor_line()
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         _extra_rows(rows, token_budget, baseline_window)
@@ -396,11 +397,12 @@ class _AnalyzeSession:
         self.store = SessionStore(conn)
         self.checkpointer = InMemorySaver()
         self.ok = True
+        self.registered = False
 
-    def _guard(self, action) -> None:
+    def _guard(self, action, *, force: bool = False) -> None:
         import sqlite3
 
-        if not self.ok:
+        if not self.ok and not force:
             return
         try:
             action()
@@ -413,6 +415,7 @@ class _AnalyzeSession:
         self._guard(lambda: self.store.touch(
             self.name, logs, code, model, {**settings, "origin": "analyze"}, reserved=True,
         ))
+        self.registered = self.ok
 
     def save_checkpoints(self) -> None:
         from collections import defaultdict
@@ -444,7 +447,11 @@ class _AnalyzeSession:
             ))
 
     def close(self) -> None:
-        self.conn.close()
+        try:
+            if not self.registered:
+                self._guard(lambda: self.store.release(self.name), force=True)
+        finally:
+            self.conn.close()
 
 
 def _open_analyze_session(db: Path | None, name: str | None) -> _AnalyzeSession | None:

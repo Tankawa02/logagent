@@ -218,18 +218,78 @@ def test_concurrent_analyze_names_are_reserved_before_registration(tmp_path, mon
 
     def reserve(_):
         saved = cli._open_analyze_session(db, None)
-        try:
-            assert saved is not None
-            return saved.name
-        finally:
-            if saved:
-                saved.close()
+        assert saved is not None
+        return saved
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        names = list(pool.map(reserve, range(4)))
-    assert set(names) == {"analyze-fixed", "analyze-fixed-2", "analyze-fixed-3", "analyze-fixed-4"}
-    with pytest.raises(typer.Exit):
-        cli._open_analyze_session(db, "analyze-fixed")
+        sessions = list(pool.map(reserve, range(4)))
+    try:
+        assert {s.name for s in sessions} == {"analyze-fixed", "analyze-fixed-2", "analyze-fixed-3", "analyze-fixed-4"}
+        with pytest.raises(typer.Exit):
+            cli._open_analyze_session(db, "analyze-fixed")
+    finally:
+        for saved in sessions:
+            saved.close()
+    with sqlite3.connect(str(db)) as conn:
+        assert SessionStore(conn).list() == []
+
+
+@pytest.mark.parametrize("stage", ["memory", "agent", "registration"])
+@pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt])
+def test_failed_setup_releases_analyze_name(scripted, monkeypatch, stage, error) -> None:
+    from log_agent import memory_cli
+
+    log, _ = scripted
+
+    def fail(*args, **kwargs):
+        raise error("setup failed")
+
+    target, attr = {"memory": (memory_cli, "open_session"), "agent": (agent_module, "build_agent"),
+                    "registration": (SessionStore, "touch")}[stage]
+    with monkeypatch.context() as patch:
+        patch.setattr(target, attr, fail)
+        result = runner.invoke(cli.app, ["analyze", "-l", str(log), "-s", "retryable"])
+        assert result.exit_code != 0
+    with sqlite3.connect(str(default_db_path())) as conn:
+        assert SessionStore(conn).get("retryable") is None
+    retry = runner.invoke(cli.app, ["analyze", "-l", str(log), "-s", "retryable", "--max-steps", "20"])
+    assert retry.exit_code == 0, retry.output
+
+
+def test_registered_analyze_is_not_released_on_failure(tmp_path) -> None:
+    saved = cli._open_analyze_session(tmp_path / "db", "registered")
+    saved.register([], [], "test", {})
+    saved.close()
+    with sqlite3.connect(str(tmp_path / "db")) as conn:
+        assert SessionStore(conn).get("registered") is not None
+
+
+def test_registration_database_failure_releases_placeholder(tmp_path, monkeypatch) -> None:
+    saved = cli._open_analyze_session(tmp_path / "db", "retryable")
+
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("registration failed")
+
+    monkeypatch.setattr(saved.store, "touch", fail)
+    saved.register([], [], "test", {})
+    assert not saved.ok
+    saved.close()
+    with sqlite3.connect(str(tmp_path / "db")) as conn:
+        assert SessionStore(conn).get("retryable") is None
+
+
+def test_analyze_export_excludes_connection_metadata(scripted, tmp_path) -> None:
+    log, _ = scripted
+    output = tmp_path / "report.json"
+    url = "https://user:secret@private.example/v1"
+    result = runner.invoke(cli.app, ["analyze", "-l", str(log), "-s", "private", "--base-url", url,
+                                     "-o", str(output), "--max-steps", "20"])
+    assert result.exit_code == 0, result.output
+    assert "base_url" not in json.loads(output.read_text(encoding="utf-8"))["settings"]
+    with sqlite3.connect(str(default_db_path())) as conn:
+        store = SessionStore(conn)
+        assert store.get("private").settings["base_url"] == url
+        assert "base_url" not in store.turn("private", 1)["settings"]
 
 
 def test_analyze_no_redact_is_redacted_on_share(scripted, monkeypatch) -> None:

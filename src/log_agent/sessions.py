@@ -114,6 +114,16 @@ class SessionStore:
                 (name, _now(), _now()),
             )
 
+    def release(self, name: str) -> None:
+        """Release an unused reservation, without deleting registered sessions."""
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM log_agent_sessions WHERE name = ? AND turns = 0 "
+                "AND logs = '[]' AND code = '[]' AND model = '' "
+                "AND NOT EXISTS (SELECT 1 FROM log_agent_session_settings WHERE name = ?)",
+                (name, name),
+            )
+
     def touch(self, name: str, logs: list[str], code: list[str], model: str, settings: dict | None = None,
               *, reserved: bool = False) -> None:
         """登记会话（首次）或更新它当前使用的日志/源码/模型。"""

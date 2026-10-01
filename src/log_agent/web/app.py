@@ -175,10 +175,15 @@ def _shared_copy(value: Any, info: SessionInfo) -> Any:
     if isinstance(value, list):
         return [_shared_copy(item, info) for item in value]
     if isinstance(value, dict):
-        return {key: _shared_copy(
+        result = {key: _shared_copy(
             {k: v for k, v in item.items() if k in {"since", "until", "timezone", "baseline"}}
             if key == "settings" and isinstance(item, dict) else item, info,
         ) for key, item in value.items()}
+        # Browser source handles use URL separators, including on Windows hosts.
+        source = result.get("source")
+        if isinstance(source, str) and source.startswith("code/"):
+            result["source"] = source.replace("\\", "/")
+        return result
     return value
 
 
@@ -398,6 +403,7 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             payload = store.turn(scope.name, number)
         if payload is None:
             raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
+        payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
         if scope.read_only:
             payload = _shared_copy(payload, info)
         payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
@@ -445,6 +451,7 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             payload = store.turn(scope.name, turn)
         if payload is None:
             raise HTTPException(404, f"第 {turn} 轮不存在或未保存报告")
+        payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
         if scope.read_only:
             payload = _shared_copy(payload, info)
         payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))

@@ -186,7 +186,7 @@ def run_turn(
 
         checkpointer = SqliteSaver(conn)
         agent = agent_factory(model=info.model, checkpointer=checkpointer,
-                              base_url=base_url or settings.get("base_url"), budget=budget)
+                              base_url=settings.get("base_url") or base_url, budget=budget)
         try:
             first_turn = checkpointer.get(config) is None
         except Exception:

@@ -723,3 +723,89 @@ def test_web_redaction_setting_prefers_current_metadata(demo) -> None:
         store = SessionStore(conn)
         store.touch(SESSION, [str(log)], [str(code)], 'test', {'no_redact': True})
         assert runner.session_no_redact(store, SESSION) is True
+
+
+@pytest.mark.parametrize('stamps', [
+    ['23:59:59', '2026-01-02 00:00:01', '00:00:02'],
+    ['2026-01-01 23:59:59', '00:00:01', '00:00:02'],
+    ['23:59:59', '00:00:01', '2026-01-02 00:00:02'],
+])
+@pytest.mark.parametrize('offset', [0, 8, -5])
+def test_timeline_mixed_dates_across_midnight(tmp_path, stamps, offset) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from log_agent.web.timeline import scan_file
+
+    log = tmp_path / 'midnight.log'
+    log.write_text('\n'.join(f'{stamp} ERROR failure' for stamp in stamps), encoding='utf-8')
+    tz = timezone(timedelta(hours=offset))
+    scan = scan_file(log, tz)
+    assert scan.events == 3 and not scan.time_only
+    assert max(scan.seconds) - min(scan.seconds) == 3
+    assert datetime.fromtimestamp(min(scan.seconds), tz).replace(tzinfo=None) == datetime(2026, 1, 1, 23, 59, 59)
+
+
+@pytest.mark.parametrize('dated', [False, True])
+def test_timeline_scans_file_only_once(dated) -> None:
+    from datetime import UTC
+
+    from log_agent.web.timeline import _scan
+
+    class Log:
+        calls = 0
+
+        def iter_lines(self, start):
+            self.calls += 1
+            assert self.calls == 1
+            yield 1, '23:59:59 ERROR leading'
+            yield 2, ('2026-01-02 ' if dated else '') + '00:00:01 WARN next'
+
+    scan = _scan(Log(), 'test', UTC)
+    assert scan.events == 2
+    assert max(scan.seconds) - min(scan.seconds) == 2
+    assert scan.time_only is not dated
+
+
+@pytest.mark.parametrize('saved_url', [None, 'https://saved.example/v1'])
+def test_web_turn_prefers_saved_endpoint(demo, monkeypatch, saved_url) -> None:
+    import threading
+
+    from log_agent.render import TurnResult
+
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        info = SessionStore(conn).get(SESSION)
+    info.settings['base_url'] = saved_url
+    seen = []
+    monkeypatch.setattr(runner.WebStreamRenderer, 'run', lambda *a, **kw: TurnResult(report='done'))
+    runner.run_turn(db_path=db, info=info, question='q', emit=lambda e: None, cancelled=threading.Event(),
+                    agent_factory=lambda **kwargs: seen.append(kwargs), base_url='https://server.example/v1',
+                    thread_id=SESSION, run_id='endpoint')
+    assert seen[0]['base_url'] == (saved_url or 'https://server.example/v1')
+    with sqlite3.connect(str(db)) as conn:
+        assert 'base_url' not in SessionStore(conn).turn(SESSION, 2)['settings']
+
+
+def test_shared_windows_source_uses_url_separators(demo) -> None:
+    from log_agent.web.app import _shared_copy
+
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        info = SessionStore(conn).get(SESSION)
+    info.code = [r'C:\Users\owner\project']
+    value = {'source': r'C:\Users\owner\project\nested\file.py', 'text': r'regex \d+'}
+    assert _shared_copy(value, info) == {'source': 'code/0/nested/file.py', 'text': r'regex \d+'}
+
+
+def test_owner_export_removes_legacy_connection_metadata(demo) -> None:
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['settings']['base_url'] = 'https://user:secret@internal.example/v1'
+        store.record_turn(SESSION, 'legacy', 0, payload)
+    client = client_for(db)
+    for path in ['turns/2', 'export?turn=2&format=json']:
+        response = client.get(f'/api/sessions/{SESSION}/{path}', headers=WRITE)
+        assert response.status_code == 200
+        assert 'base_url' not in response.json()['settings']

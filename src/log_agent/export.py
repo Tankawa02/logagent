@@ -28,7 +28,7 @@ def build_payload(
         "question": question,
         "logs": list(logs),
         "code": list(code),
-        "settings": deepcopy(settings or {}),
+        "settings": deepcopy({k: v for k, v in (settings or {}).items() if k != "base_url"}),
         "model": model,
         "status": "interrupted" if result.interrupted else ("error" if result.error else "ok"),
         "error": result.error or None,
@@ -85,6 +85,8 @@ def infer_format(path: Path, explicit: str | None) -> str:
 
 def write_report(path: Path, payload: dict[str, Any], fmt: str, view: str = "detailed") -> Path:
     ReportView(view)
+    # Connection settings belong to restorable metadata, never portable reports (including older turns).
+    payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
     # Older persisted snapshots have a wording-derived finding; do not export it as a v2 assessment.
     if not payload.get("schema_version"):
         payload = {**payload, "schema_version": 2, "analysis": None, "structured_status": "missing", "finding": None}
