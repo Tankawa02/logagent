@@ -94,33 +94,37 @@ def _status_code(exc: BaseException) -> int | None:
     return code if isinstance(code, int) else None
 
 
-def describe_api_error(exc: BaseException) -> str | None:
+def describe_api_error(exc: BaseException, *, retries: int | None = None, timeout: float | None = None) -> str | None:
     """模型接口类异常返回一句中文说明；不是接口问题（代码 bug 等）返回 None，交给上层照常抛出。"""
     name = type(exc).__name__
     module = type(exc).__module__ or ""
-    retries = max_retries()
+    # 按整条继承链匹配：langchain-openai 会把 SDK 异常包成 OpenAIConnectionError / OpenAITimeoutError 等子类
+    lineage = {cls.__name__ for cls in type(exc).__mro__}
+    retries = max_retries() if retries is None else retries
+    timeout = request_timeout() if timeout is None else timeout
+    retried = f"，已自动重试 {retries} 次" if retries else ""
     first_line = (str(exc).strip().splitlines() or [name])[0]
 
-    if name in {"APITimeoutError", "ReadTimeout", "ConnectTimeout", "TimeoutException"}:
+    if lineage & {"APITimeoutError", "ReadTimeout", "ConnectTimeout", "TimeoutException", "ModelTimeoutError"}:
         return (
-            f"模型接口请求超时（单次 {request_timeout():g}s，已自动重试 {retries} 次）。"
+            f"模型接口请求超时（单次 {timeout:g}s{retried}）。"
             "可以设置 LOG_AGENT_TIMEOUT 调大超时，或稍后再试。"
         )
-    if name in {"APIConnectionError", "ConnectError", "ConnectionError"}:
-        return f"无法连接模型接口（已自动重试 {retries} 次）：{first_line}。请检查网络、代理和 --base-url。"
+    if lineage & {"APIConnectionError", "ConnectError", "ConnectionError", "ModelConnectionError"}:
+        return f"无法连接模型接口{f'（{retried[1:]}）' if retried else ''}：{first_line}。请检查网络、代理和 --base-url。"
 
     code = _status_code(exc)
-    if code == 401 or name == "AuthenticationError":
+    if code == 401 or "AuthenticationError" in lineage:
         return "模型接口认证失败（401）：请检查 OPENAI_API_KEY 等密钥是否正确、是否过期。"
-    if code == 403 or name == "PermissionDeniedError":
+    if code == 403 or "PermissionDeniedError" in lineage:
         return "模型接口拒绝访问（403）：当前密钥没有该模型或接口的权限。"
-    if code == 404 or name == "NotFoundError":
+    if code == 404 or "NotFoundError" in lineage:
         return "模型接口返回 404：请检查 --base-url 是否带了正确的路径（如 /v1），以及 -m 模型名是否存在。"
-    if code == 429 or name == "RateLimitError":
-        return f"模型接口限流或额度不足（429，已自动重试 {retries} 次）：{first_line}"
+    if code == 429 or "RateLimitError" in lineage:
+        return f"模型接口限流或额度不足（429{retried}）：{first_line}"
     if code is not None and code >= 500:
-        return f"模型接口服务端错误（{code}，已自动重试 {retries} 次）：{first_line}"
-    if code == 400 or name == "BadRequestError":
+        return f"模型接口服务端错误（{code}{retried}）：{first_line}"
+    if code == 400 or "BadRequestError" in lineage:
         return f"模型接口拒绝了请求（400）：{first_line}"
     if module.startswith(("openai", "anthropic", "httpx", "httpcore")) or name.endswith("APIError"):
         return f"模型接口出错（{name}）：{first_line}"

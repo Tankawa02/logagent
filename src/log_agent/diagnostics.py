@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import codecs
 import os
+from collections import Counter
+from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import _ENV_OVERRIDES, _KEYS, load_config
+
+UNKNOWN = "未识别"
 
 
 def inspect_log(path: str, window) -> str:
@@ -65,14 +69,19 @@ def _looks_like_continuation(line: str) -> bool:
     return line[:1] in " \t" or line.lstrip()[:1] in ")]}," or starts_block(line)
 
 
-def _format_breakdown(log, sample: int = 2000) -> list[str]:
-    from collections import Counter
+@dataclass
+class FormatCounts:
+    counts: Counter[str] = field(default_factory=Counter)
+    seen: int = 0
+    unknown_example: str = ""
+
+
+def _format_counts(log, sample: int = 2000) -> FormatCounts:
     from contextlib import closing
 
     from .logformat import detect_format, is_stack_line
 
-    counts: Counter[str] = Counter()
-    seen = 0
+    result = FormatCounts()
     previous_known = False
     run = 0  # 已经连续当成续行跳过的行数
     with closing(log.iter_lines(1)) as lines:
@@ -89,9 +98,74 @@ def _format_breakdown(log, sample: int = 2000) -> list[str]:
                 continue
             run = 0
             previous_known = kind is not None
-            seen += 1
-            counts[kind or "未识别"] += 1
-    return [f"{name} {count / seen:.0%}" for name, count in counts.most_common(4)] if seen else []
+            result.seen += 1
+            result.counts[kind or UNKNOWN] += 1
+            if kind is None and not result.unknown_example:
+                result.unknown_example = line
+    return result
+
+
+def _format_breakdown(log, sample: int = 2000) -> list[str]:
+    result = _format_counts(log, sample)
+    if not result.seen:
+        return []
+    return [f"{name} {count / result.seen:.0%}" for name, count in result.counts.most_common(4)]
+
+
+@dataclass
+class LogSample:
+    """init 用的抽样结果：只看文件开头一段，不扫全文。"""
+
+    path: str
+    encoding: str
+    formats: list[tuple[str, float]]
+    unknown_ratio: float
+    unknown_example: str
+    naive_stamps: int
+    aware_stamps: int
+    levels: Counter[str]
+    lines: int
+
+    @property
+    def needs_timezone(self) -> bool:
+        return self.naive_stamps > 0
+
+
+def sample_log(path: str, sample: int = 2000) -> LogSample:
+    """抽样识别一份日志：格式分布、时间戳是否带时区、级别分布。
+
+    Raises:
+        OSError / EOFError: 文件读不了。
+    """
+    from contextlib import closing
+    from datetime import datetime
+
+    from .logfile import open_log
+    from .logformat import level_and_body
+    from .timefilter import find_timestamp
+
+    log = open_log(path)
+    formats = _format_counts(log, sample)
+    naive = aware = lines = 0
+    levels: Counter[str] = Counter()
+    with closing(log.iter_lines(1)) as rows:
+        for lineno, line in rows:
+            if lineno > sample:
+                break
+            lines = lineno
+            found = find_timestamp(line)
+            if found:
+                if isinstance(found[1], datetime) and found[1].tzinfo is not None:
+                    aware += 1
+                else:
+                    naive += 1
+            parsed = level_and_body(line)
+            if parsed:
+                levels[parsed[0]] += 1
+    seen = formats.seen or 1
+    ratios = [(name, count / seen) for name, count in formats.counts.most_common()]
+    unknown = formats.counts.get(UNKNOWN, 0) / seen if formats.seen else 0.0
+    return LogSample(str(path), log.encoding, ratios, unknown, formats.unknown_example, naive, aware, levels, lines)
 
 
 def effective_config(app, command: str) -> tuple[object, dict, dict]:
@@ -173,7 +247,7 @@ def configuration_checks(values: dict) -> list[tuple[bool, str]]:
         checks.append((valid, "模型接口地址格式" + ("有效" if valid else "无效，需要 http(s) 地址")))
     if "model" in values:
         present = bool(os.environ.get("OPENAI_API_KEY"))
-        checks.append((present, "OPENAI_API_KEY " + ("已设置（仅检查存在，不验证有效性）" if present else "未设置")))
+        checks.append((present, "OPENAI_API_KEY " + ("已设置（仅检查存在；用 doctor --ping 验证是否有效）" if present else "未设置")))
     return checks
 
 

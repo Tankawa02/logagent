@@ -15,7 +15,7 @@ from rich.text import Text
 from . import __version__
 from .render import StreamRenderer, TurnResult, format_duration, info_panel
 from .report import ReportView
-from .term import IS_WINDOWS, console, glyphs, reset_cursor_line
+from .term import console, glyphs, reset_cursor_line
 
 app = typer.Typer(
     help="基于 deepagents 的 CLI 日志分析智能体：结合日志与源码定位问题根因。",
@@ -138,19 +138,14 @@ def _load_config(ctx: typer.Context) -> None:
 
 
 def _check_api_key() -> None:
+    from .onboarding import key_hints
+
     if os.environ.get("OPENAI_API_KEY"):
         return
     console.print(Text("缺少 OPENAI_API_KEY 环境变量。", style="bold err"))
-    if IS_WINDOWS:
-        hints = [
-            ("PowerShell", '$env:OPENAI_API_KEY="sk-..."'),
-            ("CMD", "set OPENAI_API_KEY=sk-..."),
-            ("永久生效", 'setx OPENAI_API_KEY "sk-..."（需重开终端）'),
-        ]
-    else:
-        hints = [("Shell", 'export OPENAI_API_KEY="sk-..."')]
-    for label, command in hints:
+    for label, command in key_hints():
         console.print(Text.assemble(("  ", ""), (f"{label}: ", "muted"), (command, "accent")))
+    console.print(Text.assemble(("  或运行 ", "muted"), ("log-agent init", "accent"), (" 按步骤引导配置。", "muted")))
     raise typer.Exit(code=1)
 
 
@@ -1129,8 +1124,13 @@ def inspect_logs(
 @app.command()
 def doctor(
     command: str = typer.Option("analyze", "--command", help="检查 analyze / chat / watch / inspect 的有效配置"),
+    ping: bool = typer.Option(
+        False, "--ping",
+        help="真正向模型服务发一次最小请求，验证 Key、网关和模型名是否可用（消耗极少量 token）",
+    ),
+    ping_timeout: float = typer.Option(20.0, "--ping-timeout", min=1, help="--ping 的超时秒数，不自动重试"),
 ) -> None:
-    """本地检查有效配置、凭据是否设置和依赖兼容性，不连接模型服务。"""
+    """检查有效配置、凭据是否设置和依赖兼容性；加 --ping 时再真正连一次模型服务。"""
     from .config import COMMANDS, ConfigError
     from .diagnostics import configuration_checks, dependency_checks, effective_config, safe_config_value
 
@@ -1140,7 +1140,8 @@ def doctor(
         config, values, origins = effective_config(app, command)
     except (ConfigError, ValueError, TypeError) as exc:
         _fail(str(exc))
-    console.print(Text(f"本地诊断 · {command} · 不连接模型服务", style="muted"))
+    mode = "会发送一次最小请求验证模型服务" if ping else "不连接模型服务（加 --ping 实际验证 Key 和网关）"
+    console.print(Text(f"诊断 · {command} · {mode}", style="muted"))
     for path in config.files:
         console.print(Text(f"配置文件：{path}"))
     for warning in config.warnings:
@@ -1152,9 +1153,60 @@ def doctor(
     checks = configuration_checks(values) + dependency_checks()
     for ok, message in checks:
         console.print(Text(f"{glyphs.ok if ok else glyphs.fail} {message}", style="ok" if ok else "err"))
-    if any(not ok for ok, _ in checks):
+    local_failed = any(not ok for ok, _ in checks)
+    ping_failed = ping and not _doctor_ping(values, ping_timeout)
+    if local_failed:
         console.print(Text("请修正配置；依赖缺失或版本不匹配时运行 uv sync。", style="warn"))
+    if ping_failed:
+        console.print(Text("按上面的提示检查 OPENAI_API_KEY、网关地址（--base-url / OPENAI_BASE_URL）和模型名（-m / LOG_AGENT_MODEL）。",
+                           style="warn"))
+    if local_failed or ping_failed:
         raise typer.Exit(1)
+
+
+def _doctor_ping(values: dict, timeout: float) -> bool:
+    """doctor --ping：用有效配置里的模型和接口发一次最小请求。返回是否通过。"""
+    from .probe import api_key, endpoint_label
+    from .probe import ping as probe_ping
+
+    if "model" not in values:
+        console.print(Text("该命令不调用模型，跳过 --ping。", style="muted"))
+        return True
+    if not api_key():
+        console.print(Text(f"{glyphs.fail} 未设置 OPENAI_API_KEY，无法连接模型服务", style="err"))
+        return False
+    model, base_url = values["model"], values.get("base_url")
+    with console.status("正在向模型服务发送最小请求…", spinner=glyphs.spinner):
+        result = probe_ping(model, base_url, timeout=timeout)
+    where = f"{model} @ {endpoint_label(base_url)}"
+    if not result.ok:
+        console.print(Text(f"{glyphs.fail} 模型服务不可用（{where}）：{result.message}", style="err"))
+        return False
+    served = f" · 实际模型 {result.served_model}" if result.served_model else ""
+    console.print(Text(f"{glyphs.ok} 模型服务可用（{where}）· {result.latency:.2f}s{served} · {result.message}",
+                       style="ok"))
+    return True
+
+
+@app.command()
+def init(
+    log: list[str] = typer.Option(None, "--log", "-l", help="用来抽样识别格式的日志，可重复传、支持通配符；不传时自动找当前目录的 *.log"),
+    model: str = typer.Option(None, "--model", "-m", help="模型，provider:model 格式；不传时交互选择"),
+    base_url: str = typer.Option(None, "--base-url", help="OpenAI 兼容网关地址；带凭据的地址不会写进配置"),
+    code: list[Path] = typer.Option(None, "--code", "-c", help=CODE_HELP, exists=True, file_okay=False),
+    timezone: str = typer.Option(None, "--timezone", help="日志时间不带时区时使用的时区；不传时按抽样结果询问"),
+    ping: bool = typer.Option(None, "--ping/--no-ping", help="生成前发一次最小请求验证 Key（默认：交互模式下询问，--yes 时不验证）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="不提问，全部使用检测到的默认值（适合脚本 / CI）"),
+    force: bool = typer.Option(False, "--force", help="覆盖已有的 .log-agent.toml"),
+) -> None:
+    """引导配置：检查 Key、选模型、抽样日志识别格式，生成 .log-agent.toml（Key 不会写进文件）。"""
+    from .onboarding import run_init
+
+    code_exit = run_init(logs=log, model=model, base_url=base_url, code=code, timezone=timezone, ping=ping,
+                         yes=yes, force=force)
+    if code_exit:
+        raise typer.Exit(code_exit)
+
 
 _CONFIG_TEMPLATE = """\
 # log-agent 项目配置：命令行没写的参数从这里取默认值（命令行 > 环境变量 > 本文件）。
@@ -1183,7 +1235,7 @@ _CONFIG_TEMPLATE = """\
 
 @app.command("config")
 def show_config(
-    init: bool = typer.Option(False, "--init", help=f"在当前目录生成一份带注释的 {'.log-agent.toml'} 模板"),
+    init: bool = typer.Option(False, "--init", help="在当前目录生成一份带注释的 .log-agent.toml 模板（想要引导式配置用 log-agent init）"),
 ) -> None:
     """查看当前生效的配置文件与配置项。"""
     from .config import PROJECT_FILE, ConfigError, find_project_config, load_config, user_config_path

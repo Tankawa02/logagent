@@ -293,7 +293,8 @@ def _subagents(tools: list) -> list[dict]:
     ]
 
 
-def _resolve_chat_model(model: Any, base_url: str | None) -> Any:
+def _resolve_chat_model(model: Any, base_url: str | None, *, timeout: float | None = None,
+                        retries: int | None = None) -> Any:
     """字符串模型统一带上超时与自动重试；测试等场景直接传入的模型实例原样使用。"""
     if not isinstance(model, str):
         return model
@@ -301,7 +302,10 @@ def _resolve_chat_model(model: Any, base_url: str | None) -> Any:
     from .netguard import install_retry_watch, max_retries, request_timeout
 
     install_retry_watch()
-    options = {"timeout": request_timeout(), "max_retries": max_retries()}
+    options = {
+        "timeout": request_timeout() if timeout is None else timeout,
+        "max_retries": max_retries() if retries is None else retries,
+    }
     if base_url:
         # 显式走 OpenAI 兼容接口：去掉可能存在的 "openai:" 前缀，得到纯模型名；api_key 仍读 OPENAI_API_KEY
         model_name = model.split(":", 1)[1] if model.startswith("openai:") else model
