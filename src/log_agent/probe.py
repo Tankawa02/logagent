@@ -9,9 +9,9 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
+from threading import Thread
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -73,12 +73,25 @@ def _describe(exc: BaseException, timeout: float) -> str:
 
 def _bounded(call: Callable[[], Any], deadline: float) -> Any:
     """在工作线程里执行，最多等 deadline 秒；SDK 自己的超时不生效时也不会卡住命令行。"""
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-agent-ping")
-    future = pool.submit(call)
-    try:
-        return future.result(timeout=deadline)
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    if deadline <= 0:
+        raise FutureTimeout
+    result: list[Any] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(call())
+        except BaseException as exc:  # preserve exceptions raised in the worker
+            errors.append(exc)
+
+    worker = Thread(target=run, name="log-agent-ping", daemon=True)
+    worker.start()
+    worker.join(deadline)
+    if worker.is_alive():
+        raise FutureTimeout
+    if errors:
+        raise errors[0]
+    return result[0]
 
 
 def ping(model: str, base_url: str | None, *, timeout: float = PING_TIMEOUT, chat_model: Any = None) -> ProbeResult:
@@ -93,21 +106,23 @@ def ping(model: str, base_url: str | None, *, timeout: float = PING_TIMEOUT, cha
         llm = chat_model if chat_model is not None else _resolve_chat_model(
             model, base_url, timeout=timeout, retries=0, strict=True)
     except (TypeError, ValueError) as exc:
-        return ProbeResult(False, f"该模型 provider 不支持设置超时和重试次数，无法可靠地执行 --ping：{_describe(exc, timeout)}")
+        if isinstance(exc, TypeError) and any(option in str(exc) for option in ("timeout", "max_retries")):
+            return ProbeResult(False, f"该模型 provider 不支持设置超时和重试次数，无法可靠地执行 --ping：{_describe(exc, timeout)}")
+        return ProbeResult(False, f"无法创建模型客户端：{_describe(exc, timeout)}")
     except Exception as exc:  # noqa: BLE001 — 缺 provider 包、模型名格式不对等，都当成配置错误报给用户
         return ProbeResult(False, f"无法创建模型客户端：{_describe(exc, timeout)}")
 
-    deadline = timeout + _GRACE_SECONDS
     started = time.monotonic()
+    deadline = started + timeout + _GRACE_SECONDS
     try:
         try:
-            reply = _bounded(lambda: llm.invoke(_PING_PROMPT, max_tokens=16), deadline)
+            reply = _bounded(lambda: llm.invoke(_PING_PROMPT, max_tokens=16), deadline - time.monotonic())
         except FutureTimeout:
             raise
         except Exception as exc:  # noqa: BLE001
             if not any(hint in str(exc) for hint in _MAX_TOKENS_HINTS):
                 raise
-            reply = _bounded(lambda: llm.invoke(_PING_PROMPT), deadline)
+            reply = _bounded(lambda: llm.invoke(_PING_PROMPT), deadline - time.monotonic())
     except FutureTimeout:
         return ProbeResult(False, f"模型接口在 {timeout:g}s 内没有响应。可以用 --ping-timeout 调大，或检查网络和网关。",
                            time.monotonic() - started)

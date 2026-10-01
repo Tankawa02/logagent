@@ -346,6 +346,8 @@ def test_node_frame_lookahead_stops_at_diagnostic(tmp_path: Path, diagnostic: st
 @pytest.mark.parametrize("entry", [
     "    at eval (eval at run (/app/main.js:10:3), <anonymous>:1:7)",
     "    at eval (eval at run ([eval]:1:18), <anonymous>:1:7)",
+    "    at eval (eval at inner (eval at outer (/app/main.js:10:3)), <anonymous>:1:7)",
+    "    at eval (eval at inner (eval at outer (/app/main.js:10:3), <anonymous>:2:4), <anonymous>:1:7)",
     "    at handler (eval at create (C:\\app\\main.js:10:3), <anonymous>:2:4)",
 ])
 def test_node_timestamped_error_with_eval_before_located_frame(tmp_path: Path, entry: str) -> None:
@@ -361,6 +363,9 @@ def test_node_timestamped_error_with_eval_before_located_frame(tmp_path: Path, e
 @pytest.mark.parametrize("entry", [
     "    at eval retry scheduled",
     "    at eval (eval at run (diagnostic text), <anonymous>:1:7)",
+    "    at eval (eval at inner (eval at outer (diagnostic text)), <anonymous>:1:7)",
+    "    at eval (eval at inner (eval at outer (/app/main.js:1:2)), <anonymous>:1:7))",
+    "    at eval (eval at inner (eval at outer (/app/main.js:1:2)), <anonymous>:1:7",
     "    at eval (eval at run (/app/main.js:10:3), retry scheduled)",
 ])
 def test_node_eval_lookahead_rejects_unstructured_text(entry: str) -> None:

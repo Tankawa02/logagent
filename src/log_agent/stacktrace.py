@@ -144,10 +144,37 @@ _NODE_UNLOCATED = re.compile(
     r"^\s*at\s+(?:[^()]+\s+\((?:<anonymous>|native|index \d+)\)|<anonymous>|native)\s*$"
 )
 # V8 eval 条目同时包含 eval 来源位置与动态代码位置；仅用于前瞻，不推断业务源码位置。
-_NODE_EVAL = re.compile(
-    r"^\s*at\s+[^()]+\s+\(eval at [^()]+\s+\("
-    r"[^\s()]+:\d+:\d+\),\s+[^\s()]+:\d+:\d+\)\s*$"
-)
+_NODE_EVAL = re.compile(r"^\s*at\s+[^()]+\s+\((?P<origin>eval at .*)\)\s*$")
+_NODE_EVAL_ORIGIN = re.compile(r"^eval at [^()]+\s+\(")
+_NODE_LOCATION = re.compile(r"[^\s()]+:\d+:\d+")
+
+
+def _is_node_eval(line: str) -> bool:
+    entry = _NODE_EVAL.fullmatch(line)
+    if not entry:
+        return False
+    origin = entry["origin"]
+    outer = True
+    while match := _NODE_EVAL_ORIGIN.match(origin):
+        start = match.end()
+        depth = 1
+        end = start
+        while end < len(origin) and depth:
+            depth += (origin[end] == "(") - (origin[end] == ")")
+            end += 1
+        if depth:
+            return False
+        tail = origin[end:]
+        if tail:
+            if not tail.startswith(", ") or not _NODE_LOCATION.fullmatch(tail[2:].strip()):
+                return False
+        elif outer:
+            return False  # outer eval entry must include the dynamic-code location
+        origin = origin[start:end - 1]
+        outer = False
+    return _NODE_LOCATION.fullmatch(origin) is not None
+
+
 _NODE_HEADER = re.compile(r"^(?:Uncaught\s+)?(?P<type>(?:[A-Z]\w*)?(?:Error|Exception))(?:\s+\[[\w_]+\])?:\s*(?P<msg>.*)$")
 _NODE_CAUSE = re.compile(r"^\s*\[cause\]:\s*(?P<type>[A-Z]\w*(?:Error|Exception)?)(?::\s*(?P<msg>.*))?")
 _PY_START = "Traceback (most recent call last):"
@@ -258,7 +285,7 @@ def _has_node_frame(lines: Sequence[str]) -> bool:
     for line in lines:
         if _NODE_FRAME.match(line):
             return True
-        if line.strip() and not (_NODE_UNLOCATED.match(line) or _NODE_EVAL.match(line)):
+        if line.strip() and not (_NODE_UNLOCATED.match(line) or _is_node_eval(line)):
             return False
     return False
 
