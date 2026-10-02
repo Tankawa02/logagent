@@ -16,7 +16,7 @@ import statistics
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -55,9 +55,9 @@ class FileScan:
     time_only: bool
 
 
-def _epoch(stamp: datetime | time, tz: tzinfo) -> tuple[int, bool]:
+def _epoch(stamp: datetime | time, tz: tzinfo, anchor: date = _TIME_ONLY_DATE) -> tuple[int, bool]:
     if isinstance(stamp, time):
-        value = datetime.combine(_TIME_ONLY_DATE, stamp.replace(tzinfo=None), tzinfo=tz)
+        value = datetime.combine(anchor, stamp.replace(tzinfo=None), tzinfo=tz)
         return int(value.timestamp()), True
     value = stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=tz)
     return int(value.timestamp()), False
@@ -65,7 +65,7 @@ def _epoch(stamp: datetime | time, tz: tzinfo) -> tuple[int, bool]:
 
 def scan_file(path: str | Path, tz: tzinfo, encoding: str | None = None) -> FileScan:
     """逐行扫描一份日志，按秒聚合；同一文件、同一时区重复调用直接命中缓存。"""
-    log = open_log(path, encoding)
+    log = open_log(path, encoding, ignore_global=True)
     key = ("web-timeline", repr(tz))
     with log.scan_lock:
         cached = log.scan_cache.get(key)
@@ -77,7 +77,30 @@ def scan_file(path: str | Path, tz: tzinfo, encoding: str | None = None) -> File
 
 
 def _scan(log, source: str, tz: tzinfo) -> FileScan:
+    anchor = _TIME_ONLY_DATE
+    previous: datetime | None = None
     seconds: dict[int, _Second] = {}
+
+    def rebase(offset: timedelta) -> None:
+        # Leading clock-only buckets use synthetic UTC until a real date is known.
+        pending = list(seconds.items())
+        seconds.clear()
+        for epoch, bucket in pending:
+            wall = datetime.fromtimestamp(epoch, UTC).replace(tzinfo=None) + offset
+            key = int(wall.replace(tzinfo=tz).timestamp())
+            existing = seconds.get(key)
+            if existing is None:
+                seconds[key] = bucket
+            else:
+                existing.total += bucket.total
+                existing.warn += bucket.warn
+                existing.error += bucket.error
+                existing.first_line = min(existing.first_line, bucket.first_line)
+                existing.first_error = min(filter(None, (existing.first_error, bucket.first_error)), default=0)
+                existing.signatures.update(bucket.signatures)
+                for signature, line in bucket.examples.items():
+                    existing.examples[signature] = min(existing.examples.get(signature, line), line)
+
     current: int | None = None
     events = timestamped = 0
     time_only = True
@@ -88,7 +111,29 @@ def _scan(log, source: str, tz: tzinfo) -> FileScan:
         found = find_timestamp(line, record=record)
         parsed = level_and_body(line, record=record)
         if found:
-            current, only = _epoch(found[1], tz)
+            stamp = found[1]
+            only = isinstance(stamp, time)
+            if only:
+                wall = datetime.combine(anchor, stamp).replace(tzinfo=None)
+                if previous and previous - wall > timedelta(hours=12):
+                    wall += timedelta(days=1)
+                elif previous and wall - previous > timedelta(hours=12):
+                    wall -= timedelta(days=1)
+                anchor = wall.date()
+                current, _ = _epoch(wall, UTC if time_only else tz)
+            else:
+                wall = (stamp if stamp.tzinfo is None else stamp.astimezone(tz)).replace(tzinfo=None)
+                if time_only and previous is not None:
+                    offset = wall.date() - previous.date()
+                    gap = datetime.combine(previous.date(), wall.time()) - previous
+                    if gap < -timedelta(hours=12):
+                        offset -= timedelta(days=1)
+                    elif gap > timedelta(hours=12):
+                        offset += timedelta(days=1)
+                    rebase(offset)
+                anchor = wall.date()
+                current, _ = _epoch(stamp, tz)
+            previous = wall
             time_only = time_only and only
             timestamped += 1
         elif not parsed:
@@ -110,6 +155,8 @@ def _scan(log, source: str, tz: tzinfo) -> FileScan:
                 bucket.examples.setdefault(signature, lineno)
         elif level == "WARN":
             bucket.warn += 1
+    if time_only:
+        rebase(timedelta(0))
     return FileScan(source, seconds, events, timestamped, time_only and timestamped > 0)
 
 

@@ -70,9 +70,12 @@ class _TextTap:
 
 
 class WebStreamRenderer(StreamRenderer):
-    def __init__(self, emit: Emit, cancelled: threading.Event, *, linker=None, budget=None) -> None:
+    def __init__(self, emit: Emit, cancelled: threading.Event, *, linker=None, budget=None,
+                 redact_owner: bool = True) -> None:
         super().__init__(verbose=False, linker=linker, budget=budget)
-        self.emit = emit
+        from .app import _redacted_copy
+
+        self.emit = lambda event: emit(_redacted_copy(event, redact_owner))
         self.cancelled = cancelled
         self.message_id = f"msg-{uuid.uuid4().hex[:12]}"
         self.message_open = False
@@ -132,7 +135,8 @@ def _apply_session_settings(settings: dict[str, Any], no_redact: bool) -> None:
 def session_no_redact(store: SessionStore, name: str) -> bool:
     """会话最初是否关闭了脱敏：chat 把它记在每轮快照的 settings 里，续问时沿用。"""
     last = store.last_turn(name) or {}
-    return bool((last.get("settings") or {}).get("no_redact"))
+    info = store.get(name)
+    return bool((info.settings if info else {}).get("no_redact", (last.get("settings") or {}).get("no_redact")))
 
 
 def run_turn(
@@ -146,18 +150,28 @@ def run_turn(
     base_url: str | None,
     thread_id: str,
     run_id: str,
+    redact_owner: bool = True,
 ) -> dict[str, Any] | None:
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
 
+    from .. import logfile, redact, timefilter
     from ..budget import TokenBudget, parse_budget
     from ..citations import CitationLinker
     from ..cli_context import _build_context_message, _run_config
     from ..compare import parse_range
     from ..export import build_payload
     from ..term import console
+    from .app import _redacted_copy
 
     settings = dict(info.settings)
+    original_emit = emit
+
+    def emit(event):
+        original_emit(_redacted_copy(event, redact_owner))
+
+    saved_globals = (logfile._forced_encoding, timefilter._default_timezone,
+                     timefilter._default_window, redact.is_enabled())
     emit(_event("RUN_STARTED", threadId=thread_id, runId=run_id))
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     quiet = console.quiet
@@ -171,7 +185,8 @@ def run_turn(
         config = _run_config(max_steps, info.name)
 
         checkpointer = SqliteSaver(conn)
-        agent = agent_factory(model=info.model, checkpointer=checkpointer, base_url=base_url, budget=budget)
+        agent = agent_factory(model=info.model, checkpointer=checkpointer,
+                              base_url=settings.get("base_url") or base_url, budget=budget)
         try:
             first_turn = checkpointer.get(config) is None
         except Exception:
@@ -179,7 +194,8 @@ def run_turn(
         message = (_build_context_message(info.logs, info.code, question, baseline) if first_turn else question)
 
         renderer = WebStreamRenderer(
-            emit, cancelled, linker=CitationLinker(info.logs, info.code, mode="off"), budget=budget,
+            original_emit, cancelled, linker=CitationLinker(info.logs, info.code, mode="off"), budget=budget,
+            redact_owner=redact_owner,
         )
         console.quiet = True
         try:
@@ -207,5 +223,8 @@ def run_turn(
             emit(_event("RUN_FINISHED", threadId=thread_id, runId=run_id, finishReason="stop"))
         return payload
     finally:
+        (logfile._forced_encoding, timefilter._default_timezone,
+         timefilter._default_window, enabled) = saved_globals
+        redact.set_enabled(enabled)
         console.quiet = quiet
         conn.close()

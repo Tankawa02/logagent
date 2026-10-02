@@ -106,18 +106,48 @@ class SessionStore:
         sessions = self.list()
         return sessions[0] if sessions else None
 
-    def touch(self, name: str, logs: list[str], code: list[str], model: str, settings: dict | None = None) -> None:
+    def reserve(self, name: str) -> None:
+        """Atomically claim a new name; uniqueness conflicts belong to the caller."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO log_agent_sessions (name, created_at, updated_at) VALUES (?, ?, ?)",
+                (name, _now(), _now()),
+            )
+
+    def release(self, name: str) -> None:
+        """Release an unused reservation, without deleting registered sessions."""
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM log_agent_sessions WHERE name = ? AND turns = 0 "
+                "AND logs = '[]' AND code = '[]' AND model = '' "
+                "AND NOT EXISTS (SELECT 1 FROM log_agent_session_settings WHERE name = ?)",
+                (name, name),
+            )
+
+    def touch(self, name: str, logs: list[str], code: list[str], model: str, settings: dict | None = None,
+              *, reserved: bool = False) -> None:
         """登记会话（首次）或更新它当前使用的日志/源码/模型。"""
         now = _now()
         with self.conn:
-            self.conn.execute(
-                "INSERT INTO log_agent_sessions (name, logs, code, model, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(name) DO UPDATE SET logs = excluded.logs, code = excluded.code, "
-                "model = excluded.model, updated_at = excluded.updated_at",
-                (name, json.dumps(logs, ensure_ascii=False), json.dumps(code, ensure_ascii=False), model, now, now),
-            )
+            if reserved:
+                updated = self.conn.execute(
+                    "UPDATE log_agent_sessions SET logs = ?, code = ?, model = ?, updated_at = ? WHERE name = ?",
+                    (json.dumps(logs, ensure_ascii=False), json.dumps(code, ensure_ascii=False), model, now, name),
+                )
+                if not updated.rowcount:
+                    raise sqlite3.IntegrityError(f"Session reservation no longer exists: {name}")
+            else:
+                self.conn.execute(
+                    "INSERT INTO log_agent_sessions (name, logs, code, model, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(name) DO UPDATE SET logs = excluded.logs, code = excluded.code, "
+                    "model = excluded.model, updated_at = excluded.updated_at",
+                    (name, json.dumps(logs, ensure_ascii=False), json.dumps(code, ensure_ascii=False), model, now, now),
+                )
             if settings is not None:
+                previous = self.get(name)
+                if previous and "origin" in previous.settings:
+                    settings = {**settings, "origin": previous.settings["origin"]}
                 self.conn.execute(
                     "INSERT INTO log_agent_session_settings (name, settings) VALUES (?, ?) "
                     "ON CONFLICT(name) DO UPDATE SET settings = excluded.settings",

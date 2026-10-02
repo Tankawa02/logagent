@@ -120,7 +120,8 @@ def test_chat_restores_structured_snapshot_and_exports_views(tmp_path, sample_lo
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     args = ["chat", "--db", str(tmp_path / "s.db"), "-s", "handoff"]
     runner = CliRunner()
-    first = runner.invoke(cli.app, [*args, "-l", str(sample_log), "--since", "10:00"], input="分析\nexit\n")
+    first = runner.invoke(cli.app, [*args, "-l", str(sample_log), "--since", "10:00",
+                                    "--base-url", "https://private.example/v1"], input="分析\nexit\n")
     assert first.exit_code == 0, first.output
     ticket, brief = tmp_path / "ticket.json", tmp_path / "brief.md"
     resumed = runner.invoke(cli.app, args, input=f"/window off\n/save-ticket {ticket}\n/save-brief {brief}\nexit\n")
@@ -128,6 +129,7 @@ def test_chat_restores_structured_snapshot_and_exports_views(tmp_path, sample_lo
     saved = json.loads(ticket.read_text(encoding="utf-8"))
     assert saved["analysis"]["assessment"] == "finding"
     assert saved["settings"]["since"] == "10:00"
+    assert "base_url" not in saved["settings"]
     assert "验证方法" in saved["rendered_report"]
     assert "完整推导" not in brief.read_text(encoding="utf-8")
 
@@ -143,3 +145,15 @@ def test_old_snapshot_does_not_export_wording_based_finding(tmp_path):
     assert saved["finding"] is None and saved["structured_status"] == "missing"
     assert payload["finding"] is False
     assert saved["generated_at"] == payload["generated_at"]
+
+
+def test_report_filters_connection_settings_without_mutating_metadata(tmp_path):
+    settings = {"base_url": "https://user:secret@private.example/v1", "timezone": "UTC"}
+    payload = build_payload(TurnResult(report="done"), question="q", logs=[], code=[], model="test", settings=settings)
+    assert payload["settings"] == {"timezone": "UTC"}
+    assert "base_url" in settings
+    # Existing snapshots must also be safe when exported by chat /save.
+    payload["settings"] = settings
+    path = write_report(tmp_path / "legacy.json", payload, "json")
+    assert json.loads(path.read_text(encoding="utf-8"))["settings"] == {"timezone": "UTC"}
+    assert payload["settings"] == settings and "base_url" in payload["settings"]

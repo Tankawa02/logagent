@@ -579,3 +579,233 @@ def test_payload_redaction_keeps_list_boundaries_when_rules_remove_newlines() ->
 
     original = ['Bearer\nabcdefghijklmnop', 'normal next item', 'last item']
     assert _redacted_copy(original, True) == ['Bearer [已脱敏]', 'normal next item', 'last item']
+
+
+def test_shared_metadata_hides_paths_and_settings_with_resolvable_handles(demo, tmp_path) -> None:
+    db, log, code = demo
+    duplicate = tmp_path / 'other' / log.name
+    duplicate.parent.mkdir()
+    duplicate.write_text('10:00:00 ERROR second log\n', encoding='utf-8')
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        info = store.get(SESSION)
+        store.touch(SESSION, [str(log), str(duplicate)], [str(code)], info.model,
+                    {**info.settings, 'base_url': 'https://internal.example/v1',
+                     'private_setting': 'do-not-disclose', 'no_redact': True})
+    client = client_for(db)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={}, headers=WRITE).json()['token']
+    detail = client.get(f'/api/share/{token}')
+    assert detail.status_code == 200
+    assert str(tmp_path) not in detail.text
+    assert 'internal.example' not in detail.text and 'do-not-disclose' not in detail.text
+    assert set(detail.json()['settings']) <= {'since', 'until', 'timezone', 'baseline'}
+    handles = [item['path'] for item in detail.json()['logs']]
+    assert len(set(handles)) == 2
+    for handle in handles:
+        response = client.get(f'/api/share/{token}/source', params={'source': handle, 'start': 1})
+        assert response.status_code == 200 and response.json()['lines']
+        assert str(tmp_path) not in response.text
+    timeline = client.get(f'/api/share/{token}/timeline')
+    assert str(tmp_path) not in timeline.text
+    assert timeline.json()['files'][1]['source'] == handles[1]
+
+
+@pytest.mark.parametrize('dated_first', [True, False])
+def test_timeline_mixed_dated_and_clock_only_entries(tmp_path, dated_first) -> None:
+    log = tmp_path / 'mixed.log'
+    lines = ['2026-10-01 10:00:00 ERROR dated', '10:00:01 ERROR clock-only']
+    log.write_text('\n'.join(lines if dated_first else reversed(lines)), encoding='utf-8')
+    data = build_timeline([log])
+    assert data['time_only'] is False
+    assert data['totals']['error'] == 2
+    assert data['bucket_seconds'] == 1
+    assert len(data['buckets']) == 2
+    assert data['start'].startswith('2026-10-01')
+
+
+def test_web_auto_encoding_ignores_cli_global(tmp_path, monkeypatch) -> None:
+    from log_agent import logfile
+    from log_agent.web.sources import read_context
+
+    log = tmp_path / 'utf8.log'
+    log.write_text('10:00:00 ERROR 支付失败\n', encoding='utf-8')
+    monkeypatch.setattr(logfile, '_forced_encoding', 'utf-16')
+    assert logfile.open_log(log).encoding == 'utf-16'
+    assert build_timeline([log])['totals']['error'] == 1
+    source = read_context([str(log)], [], log.name, 1)
+    assert source['lines'][0]['text'] == '10:00:00 ERROR 支付失败'
+
+
+@pytest.mark.parametrize('redact_owner', [True, False])
+def test_live_tool_events_apply_owner_policy_recursively(monkeypatch, redact_owner) -> None:
+    import threading
+    from types import SimpleNamespace
+
+    from log_agent import redact
+
+    monkeypatch.setattr(redact, '_enabled', False)
+    events = []
+    renderer = runner.WebStreamRenderer(events.append, threading.Event(), redact_owner=redact_owner)
+    secret = 'sk-' + 'a' * 32
+    renderer.pending_note = secret
+    handle = SimpleNamespace(tool_name='search_logs', tool_call_id='tool-1',
+                             input={'nested': {'values': [secret], secret: 'value'}}, error=secret)
+    renderer._on_tool(handle)
+    renderer._record(renderer.running[-1], subagent=secret)
+    assert [e['name'] for e in events] == ['log_agent.tool_start', 'log_agent.tool_end']
+    for event in events:
+        assert (secret in json.dumps(event)) is not redact_owner
+    assert renderer.records[-1].summary == secret  # View redaction does not mutate the saved record.
+
+
+@pytest.mark.parametrize('failure', [False, True])
+def test_web_turn_restores_global_settings(demo, monkeypatch, failure) -> None:
+    import threading
+
+    from log_agent import logfile, redact, timefilter
+    from log_agent.render import TurnResult
+
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        info = SessionStore(conn).get(SESSION)
+    monkeypatch.setattr(logfile, '_forced_encoding', 'gb18030')
+    monkeypatch.setattr(timefilter, '_default_timezone', timefilter.parse_timezone('+03:00'))
+    window = timefilter.parse_window('01:00', '02:00')
+    monkeypatch.setattr(timefilter, '_default_window', window)
+    monkeypatch.setattr(redact, '_enabled', False)
+    before = (logfile._forced_encoding, timefilter.default_timezone(), timefilter.default_window(), redact.is_enabled())
+
+    def build(**kwargs):
+        assert logfile._forced_encoding is None
+        assert redact.is_enabled()
+        if failure:
+            raise RuntimeError('build failed')
+        return object()
+
+    monkeypatch.setattr(runner.WebStreamRenderer, 'run', lambda *a, **kw: TurnResult(report='done'))
+    kwargs = dict(db_path=db, info=info, question='q', emit=lambda e: None, cancelled=threading.Event(),
+                  agent_factory=build, base_url=None, thread_id=SESSION, run_id='restore')
+    if failure:
+        with pytest.raises(RuntimeError, match='build failed'):
+            runner.run_turn(**kwargs)
+    else:
+        runner.run_turn(**kwargs)
+    assert (logfile._forced_encoding, timefilter.default_timezone(),
+            timefilter.default_window(), redact.is_enabled()) == before
+
+
+def test_shared_absolute_code_source_remains_resolvable(demo) -> None:
+    db, _, code = demo
+    target = code / '192.168.1.3.py'
+    target.write_text('print("hello")\n', encoding='utf-8')
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['analysis']['issues'][0]['evidence'][0].update(source=str(target), line_start=1, line_end=1)
+        store.record_turn(SESSION, 'code source', 0, payload)
+    client = client_for(db)
+    token = client.post(f'/api/sessions/{SESSION}/shares', json={}, headers=WRITE).json()['token']
+    response = client.get(f'/api/share/{token}/turns/2')
+    assert str(code) not in response.text
+    source = response.json()['analysis']['issues'][0]['evidence'][0]['source']
+    assert source == 'code/0/192.168.1.3.py'
+    response = client.get(f'/api/share/{token}/source', params={'source': source, 'start': 1})
+    assert response.status_code == 200 and response.json()['lines'][0]['text'] == 'print("hello")'
+    assert str(code) not in response.text
+    assert client.get(f'/api/share/{token}/source', params={
+        'source': 'code/0/../../not-registered', 'start': 1,
+    }).status_code == 404
+
+
+def test_web_redaction_setting_prefers_current_metadata(demo) -> None:
+    db, log, code = demo
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        store.touch(SESSION, [str(log)], [str(code)], 'test', {'no_redact': True})
+        assert runner.session_no_redact(store, SESSION) is True
+
+
+@pytest.mark.parametrize('stamps', [
+    ['23:59:59', '2026-01-02 00:00:01', '00:00:02'],
+    ['2026-01-01 23:59:59', '00:00:01', '00:00:02'],
+    ['23:59:59', '00:00:01', '2026-01-02 00:00:02'],
+])
+@pytest.mark.parametrize('offset', [0, 8, -5])
+def test_timeline_mixed_dates_across_midnight(tmp_path, stamps, offset) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from log_agent.web.timeline import scan_file
+
+    log = tmp_path / 'midnight.log'
+    log.write_text('\n'.join(f'{stamp} ERROR failure' for stamp in stamps), encoding='utf-8')
+    tz = timezone(timedelta(hours=offset))
+    scan = scan_file(log, tz)
+    assert scan.events == 3 and not scan.time_only
+    assert max(scan.seconds) - min(scan.seconds) == 3
+    assert datetime.fromtimestamp(min(scan.seconds), tz).replace(tzinfo=None) == datetime(2026, 1, 1, 23, 59, 59)
+
+
+@pytest.mark.parametrize('dated', [False, True])
+def test_timeline_scans_file_only_once(dated) -> None:
+    from datetime import UTC
+
+    from log_agent.web.timeline import _scan
+
+    class Log:
+        calls = 0
+
+        def iter_lines(self, start):
+            self.calls += 1
+            assert self.calls == 1
+            yield 1, '23:59:59 ERROR leading'
+            yield 2, ('2026-01-02 ' if dated else '') + '00:00:01 WARN next'
+
+    scan = _scan(Log(), 'test', UTC)
+    assert scan.events == 2
+    assert max(scan.seconds) - min(scan.seconds) == 2
+    assert scan.time_only is not dated
+
+
+@pytest.mark.parametrize('saved_url', [None, 'https://saved.example/v1'])
+def test_web_turn_prefers_saved_endpoint(demo, monkeypatch, saved_url) -> None:
+    import threading
+
+    from log_agent.render import TurnResult
+
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        info = SessionStore(conn).get(SESSION)
+    info.settings['base_url'] = saved_url
+    seen = []
+    monkeypatch.setattr(runner.WebStreamRenderer, 'run', lambda *a, **kw: TurnResult(report='done'))
+    runner.run_turn(db_path=db, info=info, question='q', emit=lambda e: None, cancelled=threading.Event(),
+                    agent_factory=lambda **kwargs: seen.append(kwargs), base_url='https://server.example/v1',
+                    thread_id=SESSION, run_id='endpoint')
+    assert seen[0]['base_url'] == (saved_url or 'https://server.example/v1')
+    with sqlite3.connect(str(db)) as conn:
+        assert 'base_url' not in SessionStore(conn).turn(SESSION, 2)['settings']
+
+
+def test_shared_windows_source_uses_url_separators(demo) -> None:
+    from log_agent.web.app import _shared_copy
+
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        info = SessionStore(conn).get(SESSION)
+    info.code = [r'C:\Users\owner\project']
+    value = {'source': r'C:\Users\owner\project\nested\file.py', 'text': r'regex \d+'}
+    assert _shared_copy(value, info) == {'source': 'code/0/nested/file.py', 'text': r'regex \d+'}
+
+
+def test_owner_export_removes_legacy_connection_metadata(demo) -> None:
+    db, _, _ = demo
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        payload = store.turn(SESSION, 1)
+        payload['settings']['base_url'] = 'https://user:secret@internal.example/v1'
+        store.record_turn(SESSION, 'legacy', 0, payload)
+    client = client_for(db)
+    for path in ['turns/2', 'export?turn=2&format=json']:
+        response = client.get(f'/api/sessions/{SESSION}/{path}', headers=WRITE)
+        assert response.status_code == 200
+        assert 'base_url' not in response.json()['settings']

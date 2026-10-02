@@ -83,7 +83,7 @@ _opt_timezone = typer.Option(
     "UTC", "--timezone", envvar="LOG_AGENT_TIMEZONE",
     help="无时区日志和时间边界使用的时区，如 +08:00；默认 UTC，已有偏移保持不变",
 )
-_opt_no_redact = typer.Option(False, "--no-redact", help="关闭敏感信息脱敏（默认会打码 token、手机号、身份证、邮箱、IP 等）")
+_opt_no_redact = typer.Option(False, "--no-redact/--redact", help="关闭敏感信息脱敏（默认会打码 token、手机号、身份证、邮箱、IP 等）")
 _opt_max_steps = typer.Option(120, "--max-steps", min=10, help="单轮最多推理步数，防止 agent 陷入反复搜索")
 _opt_budget = typer.Option(
     None, "--budget",
@@ -311,13 +311,15 @@ def analyze(
     from .memory_cli import after_turn, end_session, open_session, status_row
 
     settings = {"since": since, "until": until, "timezone": timezone, "baseline": baseline,
-                "encoding": encoding, "budget": budget, "max_steps": max_steps}
+                "encoding": encoding, "budget": budget, "max_steps": max_steps,
+                "base_url": base_url, "no_redact": no_redact}
     saved_session = None if no_save else _open_analyze_session(db, session)
     session_name = saved_session.name if saved_session else (session or _analyze_session_name())
-    mem = open_session(memory.value, code_paths, session_name)
+    mem = None
     # 管道运行或输出到文件时不弹确认，候选留到下次 chat / log-agent memory review 再处理
     can_ask = sys.stdin.isatty() and sys.stdout.isatty() and output is None and "-" not in log
     try:
+        mem = open_session(memory.value, code_paths, session_name)
         reset_cursor_line()
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         _extra_rows(rows, token_budget, baseline_window)
@@ -348,13 +350,15 @@ def analyze(
             settings={**settings, "no_redact": no_redact},
         )
 
+        if saved_session:
+            saved_session.record(question, result.usage.get("total", 0), data)
+            saved_session.save_checkpoints()
+
         if output:
             from .export import infer_format, write_report
 
             saved = write_report(output, data, infer_format(output, fmt.value if fmt else None), view.value)
             console.print(Text.assemble((f"{glyphs.ok} 报告已保存 ", "ok"), (str(saved), "accent")))
-        if saved_session:
-            saved_session.record(question, result.usage.get("total", 0), data)
 
         after_turn(mem, question, ask=False)
         if can_ask:
@@ -383,7 +387,7 @@ class _AnalyzeSession:
     """analyze 的会话存档：和 chat 共用会话库，保存失败只提示、不影响分析结果与退出码。"""
 
     def __init__(self, conn, name: str, db_path: Path) -> None:
-        from langgraph.checkpoint.sqlite import SqliteSaver
+        from langgraph.checkpoint.memory import InMemorySaver
 
         from .sessions import SessionStore
 
@@ -391,13 +395,14 @@ class _AnalyzeSession:
         self.name = name
         self.db_path = db_path
         self.store = SessionStore(conn)
-        self.checkpointer = SqliteSaver(conn)
+        self.checkpointer = InMemorySaver()
         self.ok = True
+        self.registered = False
 
-    def _guard(self, action) -> None:
+    def _guard(self, action, *, force: bool = False) -> None:
         import sqlite3
 
-        if not self.ok:
+        if not self.ok and not force:
             return
         try:
             action()
@@ -407,7 +412,30 @@ class _AnalyzeSession:
 
     def register(self, logs: list[str], code: list[str], model: str, settings: dict) -> None:
         # 先登记再分析：中断或出错的一轮也能在会话里看到
-        self._guard(lambda: self.store.touch(self.name, logs, code, model, {**settings, "origin": "analyze"}))
+        self._guard(lambda: self.store.touch(
+            self.name, logs, code, model, {**settings, "origin": "analyze"}, reserved=True,
+        ))
+        self.registered = self.ok
+
+    def save_checkpoints(self) -> None:
+        from collections import defaultdict
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        def save():
+            target = SqliteSaver(self.conn)
+            for item in reversed(list(self.checkpointer.list({"configurable": {"thread_id": self.name}}))):
+                parent = item.parent_config or {"configurable": {
+                    "thread_id": self.name, "checkpoint_ns": item.config["configurable"]["checkpoint_ns"],
+                }}
+                target.put(parent, item.checkpoint, item.metadata, item.checkpoint["channel_versions"])
+                writes = defaultdict(list)
+                for task_id, channel, value in item.pending_writes or []:
+                    writes[task_id].append((channel, value))
+                for task_id, values in writes.items():
+                    target.put_writes(item.config, values, task_id)
+
+        self._guard(save)
 
     def record(self, question: str, tokens: int, payload: dict) -> None:
         self._guard(lambda: self.store.record_turn(self.name, question, tokens, payload))
@@ -419,7 +447,11 @@ class _AnalyzeSession:
             ))
 
     def close(self) -> None:
-        self.conn.close()
+        try:
+            if not self.registered:
+                self._guard(lambda: self.store.release(self.name), force=True)
+        finally:
+            self.conn.close()
 
 
 def _open_analyze_session(db: Path | None, name: str | None) -> _AnalyzeSession | None:
@@ -428,12 +460,15 @@ def _open_analyze_session(db: Path | None, name: str | None) -> _AnalyzeSession 
     from .sessions import SessionStore, default_db_path
 
     db_path = db.expanduser().resolve() if db else default_db_path()
+    conn = None
     try:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         store = SessionStore(conn)
         if name:
-            if store.get(name) is not None:
+            try:
+                store.reserve(name)
+            except sqlite3.IntegrityError:
                 conn.close()
                 _fail(f"会话 '{name}' 已存在：继续追问请用 log-agent chat -s {name}，或换一个 --session 名称。")
             final = name
@@ -441,10 +476,16 @@ def _open_analyze_session(db: Path | None, name: str | None) -> _AnalyzeSession 
             # 同一秒内连续运行（脚本循环、CI）时追加序号，不覆盖已有会话
             base = final = _analyze_session_name()
             suffix = 2
-            while store.get(final) is not None:
-                final, suffix = f"{base}-{suffix}", suffix + 1
+            while True:
+                try:
+                    store.reserve(final)
+                    break
+                except sqlite3.IntegrityError:
+                    final, suffix = f"{base}-{suffix}", suffix + 1
         return _AnalyzeSession(conn, final, db_path)
     except (sqlite3.Error, OSError) as exc:
+        if conn is not None:
+            conn.close()
         console.print(Text(f"{glyphs.notice} 无法打开会话库 {db_path}，本次分析不保存为会话：{exc}", style="warn"))
         return None
 
@@ -549,6 +590,8 @@ def chat(
     since, until, timezone, baseline, encoding, budget, max_steps = (settings[key] for key in SETTING_KEYS)
     if stored:
         model = restored_value(ctx, "model", model, {"model": stored.model})
+        base_url = restored_value(ctx, "base_url", base_url, saved_settings)
+        no_redact = restored_value(ctx, "no_redact", no_redact, saved_settings)
     _configure_timezone(timezone)
     token_budget = _make_budget(budget)
     baseline_window = _parse_baseline(baseline)
@@ -556,6 +599,7 @@ def chat(
     log_paths, code_paths = _prepare(log, code, encoding, no_redact, since, until)
     model = _resolve_model(model)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    settings.update(base_url=base_url, no_redact=no_redact)
     skill_sources = _skill_sources(skills)
 
     import sqlite3
