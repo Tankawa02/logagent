@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal
 
+from .file_index import FileNameLookup
 from .logfile import open_log, read_text_file
 from .redact import redact_code_lines, redact_log
 
@@ -86,7 +87,8 @@ class SourceResolver:
             names[path.name] = None if path.name in names and names[path.name] != path else path
         self._names = {k: v for k, v in names.items() if v is not None}
         self._roots = [Path(d).expanduser().resolve() for d in code_dirs]
-        self._name_index: dict[Path, dict[str, list[Path]]] = {}
+        # 跨请求复用的文件名缓存：只记查过的文件名，靠目录 mtime 发现增删的文件
+        self._file_names = FileNameLookup()
 
     def resolve(self, source: str) -> tuple[Literal["log", "code"], Path] | None:
         ref = source.strip().strip("`\"'").strip()
@@ -139,7 +141,7 @@ class SourceResolver:
             return None
         matches: set[Path] = set()
         for root in self._roots:
-            for path in self._files_named(root, parts[-1]):
+            for path in self._file_names.find(root, parts[-1]):
                 if path.parts[-len(parts):] != parts:
                     continue
                 try:
@@ -151,29 +153,6 @@ class SourceResolver:
                     if len(matches) > 1:
                         return None
         return next(iter(matches)) if matches else None
-
-    def _files_named(self, root: Path, name: str) -> list[Path]:
-        """文件名 → 路径的索引只在这个 resolver 里复用（一次核对 / 一次查看请求），
-        每个请求都重新遍历：新增的同名文件能立刻看到，进程里也不会越攒越多。
-        遍历不设文件数上限，否则大仓库里排在后面的文件会被当成不存在。"""
-        index = self._name_index.get(root)
-        if index is None:
-            index = _index_file_names(root)
-            self._name_index[root] = index
-        return index.get(name, [])
-
-
-def _index_file_names(root: Path) -> dict[str, list[Path]]:
-    import os
-
-    from .tools import SKIP_DIRS
-
-    index: dict[str, list[Path]] = {}
-    for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
-        for file in files:
-            index.setdefault(file, []).append(Path(current) / file)
-    return index
 
 
 def _abs(path: Path) -> str:
