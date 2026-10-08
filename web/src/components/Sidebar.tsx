@@ -5,7 +5,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
 import type { SessionSummary } from '../lib/types'
-import { Spinner } from './ui'
+import { ErrorBox, Spinner } from './ui'
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function groupLabel(stamp: string): string {
   const day = stamp.slice(0, 10)
@@ -53,10 +57,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const remove = useMutation({
     mutationFn: (name: string) => api.deleteSession(name),
     onSuccess: (_, name) => {
+      setRemoveError(null)
       void client.invalidateQueries({ queryKey: ['sessions'] })
       if (pathname === `/sessions/${encodeURIComponent(name)}` || pathname === `/sessions/${name}`) void navigate({ to: '/' })
     },
+    onError: (error, name) => setRemoveError({ name, error }),
   })
+  const [removeError, setRemoveError] = useState<{ name: string; error: unknown } | null>(null)
 
   const groups = useMemo(() => {
     const map = new Map<string, SessionSummary[]>()
@@ -117,6 +124,27 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <Spinner />
           </div>
         )}
+        {removeError && (
+          <div role="alert" className="mb-2 space-y-1 px-1">
+            <ErrorBox error={`删除会话「${removeError.name}」失败：${errorText(removeError.error)}`} />
+            <button type="button" onClick={() => setRemoveError(null)} className="px-1 text-xs text-zinc-500 hover:underline">
+              知道了
+            </button>
+          </div>
+        )}
+        {sessions.error && (
+          <div role="alert" className="mb-2 space-y-1 px-1">
+            <ErrorBox error={`${sessions.data ? '刷新会话列表失败，下面是上次加载的结果' : '加载会话列表失败'}：${errorText(sessions.error)}`} />
+            <button
+              type="button"
+              onClick={() => void sessions.refetch()}
+              disabled={sessions.isFetching}
+              className="px-1 text-xs text-sky-700 hover:underline disabled:opacity-60 dark:text-sky-400"
+            >
+              {sessions.isFetching ? '重试中…' : '重试'}
+            </button>
+          </div>
+        )}
         {sessions.data?.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-zinc-500">{q ? `没有匹配「${q}」的会话` : '还没有会话，点上方「新建分析」开始'}</p>
         )}
@@ -154,7 +182,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     <button
                       type="button"
                       onClick={() => {
-                        if (window.confirm(`删除会话「${s.title || s.name}」？对话记录与报告会一并删除，日志文件不受影响。`)) remove.mutate(s.name)
+                        if (window.confirm(`删除会话「${s.title || s.name}」？对话记录与报告会一并删除，日志文件不受影响。`)) {
+                          setRemoveError(null)
+                          remove.mutate(s.name)
+                        }
                       }}
                       aria-label={`删除会话 ${s.title || s.name}`}
                       className="absolute right-1.5 top-2 rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-200 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-700"

@@ -281,10 +281,16 @@ def create_app(config: WebConfig) -> FastAPI:
     # ---- 新建分析：浏览本机文件、列出模型、登记会话（仅本人）-----------------
 
     @app.get("/api/fs/list", dependencies=[Depends(require_owner)])
-    def fs_list(path: str = "", hidden: bool = False) -> dict[str, Any]:
+    def fs_list(path: str = "", hidden: bool = False, q: str = "", dirs: bool = False) -> dict[str, Any]:
         from .workspace import list_directory
 
-        return list_directory(path or None, show_hidden=hidden)
+        return list_directory(path or None, show_hidden=hidden, query=q, dirs_only=dirs)
+
+    @app.get("/api/fs/glob", dependencies=[Depends(require_owner)])
+    def fs_glob(pattern: str) -> dict[str, Any]:
+        from .workspace import expand_pattern
+
+        return expand_pattern(pattern)
 
     @app.get("/api/fs/places", dependencies=[Depends(require_owner)])
     def fs_places() -> list[dict[str, str]]:
