@@ -1,26 +1,14 @@
 import { useChat, type UIMessage } from '@tanstack/ai-react'
-import { Activity as ActivityIcon, ArrowUp, Check, ChevronDown, Copy, FileSearch, Square, X } from 'lucide-react'
+import { Activity as ActivityIcon, ArrowUp, Check, Copy, FileSearch, Square } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT, CHECK_STATUS, visibleReport } from '../lib/format'
 import { liveChatConnection } from '../lib/live-chat'
 import { takePendingQuestion } from '../lib/pending'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
+import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
 import { Markdown } from './Markdown'
 import { Badge, ErrorBox, Spinner } from './ui'
-
-interface ToolActivity {
-  id: string
-  label: string
-  name: string
-  detail: string
-  note?: string
-  subagent?: string
-  summary?: string
-  failed?: boolean
-  seconds?: number
-  done: boolean
-}
 
 export interface AskRequest {
   text: string
@@ -233,7 +221,7 @@ export function ChatPanel({
                 />
               )
             if (index === lastUserIndex && showActivity) {
-              return [node, <Activity key="activity" tools={tools} draft={isLoading ? draft : ''} running={isLoading} />]
+              return [node, <ActivityTimeline key="activity" tools={tools} draft={isLoading ? draft : ''} running={isLoading} />]
             }
             return node
           })}
@@ -378,59 +366,6 @@ function AssistantMessage({
           )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function Activity({ tools, draft, running }: { tools: ToolActivity[]; draft: string; running: boolean }) {
-  const [open, setOpen] = useState(true)
-  const failed = tools.filter((t) => t.failed).length
-  return (
-    <div className="ml-10 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/60 text-xs dark:border-zinc-800 dark:bg-zinc-900/60">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 font-medium text-zinc-600 dark:text-zinc-300"
-      >
-        {running ? <Spinner /> : <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden />}
-        <span>{running ? `正在取证 · 已执行 ${tools.length} 步` : `本轮取证 ${tools.length} 步${failed ? `，${failed} 步失败` : ''}`}</span>
-        <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
-      </button>
-      {open && (
-        <div className="space-y-1.5 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          {tools.length === 0 && running && <p className="text-zinc-400">正在加载模型与工具…</p>}
-          <ol className="space-y-1">
-            {tools.map((tool) => (
-              <li key={tool.id} className={`flex items-center gap-2 ${tool.subagent ? 'pl-4' : ''}`}>
-                <span className="flex w-3.5 shrink-0 justify-center">
-                  {tool.done ? (
-                    tool.failed ? (
-                      <X className="h-3.5 w-3.5 text-red-500" aria-label="失败" />
-                    ) : (
-                      <Check className="h-3.5 w-3.5 text-emerald-600" aria-label="完成" />
-                    )
-                  ) : (
-                    <Spinner className="h-3 w-3" />
-                  )}
-                </span>
-                <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-200">{tool.label || tool.name}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-zinc-500" title={tool.summary || tool.detail}>
-                  {tool.note ? `${tool.note} · ` : ''}
-                  {tool.detail}
-                  {tool.summary ? ` → ${tool.summary}` : ''}
-                </span>
-                {tool.seconds !== undefined && <span className="shrink-0 tabular-nums text-zinc-400">{tool.seconds.toFixed(1)}s</span>}
-              </li>
-            ))}
-          </ol>
-          {draft && (
-            <p className="line-clamp-4 whitespace-pre-wrap border-t border-zinc-200 pt-1.5 text-zinc-500 dark:border-zinc-800">
-              {visibleReport(draft)}
-            </p>
-          )}
-        </div>
-      )}
     </div>
   )
 }
