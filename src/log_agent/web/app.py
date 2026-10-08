@@ -664,7 +664,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
             run_turn(
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
-                redact_owner=config.redact_owner,
+                redact_owner=config.redact_owner, memory_path=config.memory_path,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

@@ -131,3 +131,81 @@ def test_memory_candidates_accept_and_reject(env) -> None:
     assert data["pending"] == []
     assert [m["text"] for m in data["memories"]] == [first["text"]]
     assert client.post(f"/api/memory/candidates/{second['id']}/accept", json={}, headers=WRITE).status_code == 404
+
+
+def test_skill_save_rejects_multibyte_content_over_byte_limit(env) -> None:
+    from log_agent.web.manage import MAX_SKILL_BYTES
+
+    client, home, *_ = env
+    created = client.post(
+        "/api/skills", headers=WRITE, json={"source": "user", "name": "big", "content": skill_md("big")},
+    )
+    assert created.status_code == 200
+    # 字符数没超，但 UTF-8 字节数超了：必须在写盘前拒绝，否则保存后再也打不开
+    huge = skill_md("big") + "中" * (MAX_SKILL_BYTES // 3 + 10)
+    assert len(huge) <= MAX_SKILL_BYTES < len(huge.encode("utf-8"))
+    response = client.put("/api/skills/user/big", headers=WRITE, json={"content": huge})
+    assert response.status_code == 413
+    assert (home / "big" / "SKILL.md").read_text(encoding="utf-8") == skill_md("big")
+    assert client.get("/api/skills/user/big", headers=OWNER).status_code == 200
+
+
+def test_symlinked_skill_is_listed_readable_but_not_writable(env, tmp_path: Path) -> None:
+    client, home, *_ = env
+    target = tmp_path / "shared" / "linked"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text(skill_md("linked"), encoding="utf-8")
+    home.mkdir(parents=True, exist_ok=True)
+    try:
+        (home / "linked").symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("当前系统不支持创建符号链接")
+
+    sources = client.get("/api/skills", headers=OWNER).json()["sources"]
+    listed = {s["name"]: s for src in sources for s in src["skills"]}
+    assert listed["linked"]["readonly"] is True
+
+    detail = client.get("/api/skills/user/linked", headers=OWNER)
+    assert detail.status_code == 200 and detail.json()["readonly"] is True
+    assert client.put("/api/skills/user/linked", headers=WRITE, json={"content": skill_md("linked")}).status_code == 409
+    assert client.delete("/api/skills/user/linked", headers=WRITE).status_code == 409
+    assert (target / "SKILL.md").exists()
+
+
+def test_web_turn_injects_memory_and_records_candidates(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+    import threading
+
+    from log_agent.render import TurnResult
+    from log_agent.sessions import SessionStore
+    from log_agent.web import runner
+
+    db = tmp_path / "sessions.db"
+    memory_db = tmp_path / "memory.db"
+    store = MemoryStore(memory_db)
+    store.add("报告先写结论", "preference", None)
+    store.close()
+    with sqlite3.connect(str(db)) as conn:
+        sessions = SessionStore(conn)
+        sessions.touch("s1", [str(tmp_path / "app.log")], [str(tmp_path)], "openai:gpt-test")
+        info = sessions.get("s1")
+
+    seen: list[MemorySession] = []
+
+    def build(**kwargs):
+        seen.append(kwargs["memory"])
+        return object()
+
+    monkeypatch.setattr(runner.WebStreamRenderer, "run", lambda *a, **kw: TurnResult(report="done"))
+    runner.run_turn(
+        db_path=db, info=info, question="记住：测试环境叫 pre", emit=lambda e: None, cancelled=threading.Event(),
+        agent_factory=build, base_url=None, thread_id="s1", run_id="r", memory_path=memory_db,
+    )
+    assert seen and seen[0] is not None
+    assert seen[0].project is not None
+    reopened = MemoryStore(memory_db)
+    try:
+        assert [m.text for m in reopened.memories(all_projects=True)] == ["报告先写结论"]
+        assert any("测试环境叫 pre" in c.text for c in reopened.pending(all_projects=True))
+    finally:
+        reopened.close()

@@ -724,7 +724,7 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问���",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问题",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
     cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
@@ -1098,12 +1098,14 @@ def sessions_rm(
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget, skill_dirs: tuple[str, ...] = ()):
+def _web_agent_factory(
+    *, model: str, checkpointer, base_url: str | None, budget, skill_dirs: tuple[str, ...] = (), memory=None,
+):
     # 调用时再取 build_agent，测试里替换 agent.build_agent 就能换成脚本化模型
     from . import agent as agent_module
 
     return agent_module.build_agent(
-        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=list(skill_dirs), memory=None, budget=budget,
+        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=list(skill_dirs), memory=memory, budget=budget,
     )
 
 

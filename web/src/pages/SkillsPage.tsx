@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, BookOpen, FileText, FolderOpen, Layers, Plus, Save, Trash2 } from 'lucide-react'
+import { AlertTriangle, BookOpen, FileText, FolderOpen, Layers, Link2, Plus, Save, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Markdown } from '../components/Markdown'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
@@ -82,6 +82,9 @@ function SkillRow({
             {broken ? skill.problems[0] : skill.shadowed_by ? `被「${skill.shadowed_by}」的同名 skill 覆盖` : skill.description}
           </span>
         </span>
+        {skill.readonly && (
+          <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-label="符号链接，只读" />
+        )}
         <span className="shrink-0 text-xs tabular-nums text-zinc-400" title={`${skill.files} 个文件`}>
           {skill.files}
         </span>
@@ -294,26 +297,36 @@ function SkillEditor({
               </button>
             ))}
           </div>
-          <Button
-            variant="danger"
-            disabled={remove.isPending}
-            onClick={() => {
-              const extra = data.files.length > 1 ? `，目录里的 ${data.files.length} 个文件会一并删除` : ''
-              if (window.confirm(`删除 skill「${data.name}」${extra}？此操作不可撤销。`)) remove.mutate()
-            }}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden />
-            删除
-          </Button>
-          <Button variant="primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()} title="Ctrl / ⌘ + S">
-            {save.isPending ? <Spinner className="h-3 w-3" /> : <Save className="h-4 w-4" aria-hidden />}
-            保存
-          </Button>
+          {!data.readonly && (
+            <>
+              <Button
+                variant="danger"
+                disabled={remove.isPending}
+                onClick={() => {
+                  const extra = data.files.length > 1 ? `，目录里的 ${data.files.length} 个文件会一并删除` : ''
+                  if (window.confirm(`删除 skill「${data.name}」${extra}？此操作不可撤销。`)) remove.mutate()
+                }}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+                删除
+              </Button>
+              <Button variant="primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()} title="Ctrl / ⌘ + S">
+                {save.isPending ? <Spinner className="h-3 w-3" /> : <Save className="h-4 w-4" aria-hidden />}
+                保存
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      {(save.error || remove.error || data.problems.length > 0) && (
+      {(data.readonly || save.error || remove.error || data.problems.length > 0) && (
         <div className="space-y-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+          {data.readonly && (
+            <p className="flex items-center gap-2 text-sm text-zinc-500">
+              <Link2 className="h-4 w-4 shrink-0" aria-hidden />
+              这是符号链接的 skill，只能查看；如需修改，请到链接目标处在本地编辑。
+            </p>
+          )}
           {save.error && <ErrorBox error={save.error} />}
           {remove.error && <ErrorBox error={`删除失败：${errorText(remove.error)}`} />}
           {data.problems.length > 0 && !save.error && (
@@ -339,10 +352,11 @@ function SkillEditor({
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
               e.preventDefault()
-              if (dirty && !save.isPending) save.mutate()
+              if (dirty && !save.isPending && !data.readonly) save.mutate()
             }
           }}
           spellCheck={false}
+          readOnly={data.readonly}
           aria-label={`${data.name} 的 SKILL.md`}
           className="min-h-[28rem] flex-1 resize-y bg-transparent px-4 py-3 font-mono text-[13px] leading-relaxed text-zinc-800 outline-none dark:text-zinc-200"
         />

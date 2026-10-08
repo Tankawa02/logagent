@@ -112,6 +112,10 @@ def _mtime(path: Path) -> str | None:
         return None
 
 
+def _is_linked(folder: Path) -> bool:
+    return folder.is_symlink() or (folder / SKILL_FILE).is_symlink()
+
+
 def _read_text(path: Path) -> str:
     if path.stat().st_size > MAX_SKILL_BYTES:
         raise HTTPException(413, f"{SKILL_FILE} 超过 {MAX_SKILL_BYTES // 1024} KB，请在本地编辑")
@@ -156,6 +160,7 @@ def list_skills(sources: Sequence[ManagedSource]) -> list[dict[str, Any]]:
                     "shadowed_by": seen.get(child.name),
                     "files": len(_skill_files(child)),
                     "updated_at": _mtime(skill_file),
+                    "readonly": _is_linked(child),
                 })
                 if not problems:
                     seen.setdefault(child.name, source.label)
@@ -260,15 +265,21 @@ def register(
                 return source
         raise HTTPException(404, "skill 来源不存在")
 
-    def skill_folder(key: str, name: str, *, must_exist: bool = True) -> tuple[ManagedSource, Path]:
+    def skill_folder(
+        key: str, name: str, *, must_exist: bool = True, writable: bool = False,
+    ) -> tuple[ManagedSource, Path]:
         source = source_by_key(key)
         if not name or name in {".", ".."} or "/" in name or "\\" in name or name.startswith("."):
             raise HTTPException(400, "skill 名称无效")
         folder = source.directory / name
         if must_exist:
-            if folder.is_symlink() or not (folder / SKILL_FILE).is_file():
+            if not (folder / SKILL_FILE).is_file():
                 raise HTTPException(404, f"没有名为「{name}」的 skill")
-            if folder.resolve().parent != source.directory.resolve():
+            # 符号链接的 skill 只读：可以查看，但不在网页上改写或删除链接目标里的文件
+            if _is_linked(folder):
+                if writable:
+                    raise HTTPException(409, f"「{name}」是符号链接，请到链接目标处在本地编辑")
+            elif folder.resolve().parent != source.directory.resolve():
                 raise HTTPException(400, "skill 目录不在来源目录内")
         return source, folder
 
@@ -279,9 +290,13 @@ def register(
             "source": source.key, "source_label": source.label, "name": folder.name,
             "path": str(folder / SKILL_FILE), "content": content, "problems": problems,
             "files": _skill_files(folder), "updated_at": _mtime(folder / SKILL_FILE),
+            "readonly": _is_linked(folder),
         }
 
     def check_content(content: str, name: str) -> None:
+        # 和 _read_text 用同一个字节上限，否则多字节文本写得进去却读不回来
+        if len(content.encode("utf-8")) > MAX_SKILL_BYTES:
+            raise HTTPException(413, f"{SKILL_FILE} 超过 {MAX_SKILL_BYTES // 1024} KB，请精简或在本地编辑")
         _, problems = parse_skill(content, name)
         if problems:
             raise HTTPException(422, "无法保存：" + "；".join(problems))
@@ -313,7 +328,7 @@ def register(
 
     @app.put("/api/skills/{source}/{name}", dependencies=owner)
     def skill_update(source: str, name: str, body: SkillUpdate) -> dict[str, Any]:
-        src, folder = skill_folder(source, name)
+        src, folder = skill_folder(source, name, writable=True)
         check_content(body.content, folder.name)
         try:
             _atomic_write(folder / SKILL_FILE, body.content)
@@ -323,7 +338,7 @@ def register(
 
     @app.delete("/api/skills/{source}/{name}", dependencies=owner)
     def skill_delete(source: str, name: str) -> dict[str, Any]:
-        _, folder = skill_folder(source, name)
+        _, folder = skill_folder(source, name, writable=True)
         try:
             shutil.rmtree(folder)
         except OSError as exc:
