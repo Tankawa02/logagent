@@ -329,7 +329,6 @@ def test_resolver_finds_code_by_file_name_or_partial_path(tmp_path: Path) -> Non
         for sub in ("a", "b"):
             (root / sub).mkdir(exist_ok=True)
             (root / sub / name).write_text("x\n")
-    evidence._name_index.clear()
     resolver = SourceResolver([], [root])
 
     # 只写文件名、半截路径都能找到；node_modules 里的同名文件不算
@@ -339,3 +338,86 @@ def test_resolver_finds_code_by_file_name_or_partial_path(tmp_path: Path) -> Non
     assert resolver.resolve("other/CheckPasswordValidityHandler.java") is None
     assert resolver.resolve("Util.java") is None
     assert resolver.resolve("../account-verification/manager/x.java") is None
+
+
+def test_registered_log_basename_wins_over_same_named_code_file(tmp_path: Path) -> None:
+    log = tmp_path / "logs" / "app.log"
+    log.parent.mkdir()
+    log.write_text("line\n")
+    root = tmp_path / "repo"
+    (root / "fixtures").mkdir(parents=True)
+    (root / "fixtures" / "app.log").write_text("fixture\n")
+
+    assert SourceResolver([log], [root]).resolve("app.log") == ("log", log)
+
+
+def test_suffix_lookup_sees_new_duplicates_on_next_request(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "a").mkdir(parents=True)
+    first = root / "a" / "Handler.java"
+    first.write_text("x\n")
+    assert SourceResolver([], [root]).resolve("Handler.java") == ("code", first.resolve())
+
+    (root / "b").mkdir()
+    (root / "b" / "Handler.java").write_text("y\n")
+    # 新的请求（新的 resolver）重新遍历，出现同名文件后不再当成唯一命中
+    assert SourceResolver([], [root]).resolve("Handler.java") is None
+
+
+def test_file_name_cache_reuses_walks_and_tracks_changes(tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    from log_agent import file_index
+
+    file_index.clear_cache()
+    root = tmp_path / "repo"
+    (root / "a" / "deep").mkdir(parents=True)
+    first = root / "a" / "deep" / "Handler.java"
+    first.write_text("x\n")
+    (root / "a" / "Other.java").write_text("x\n")
+    # 不让 mtime 落在「刚改过」窗口里，否则每次都会重新列，测不出复用
+    monkeypatch.setattr(file_index, "_RACY_WINDOW_NS", 0)
+
+    listed: list[str] = []
+    real_scandir = os.scandir
+    monkeypatch.setattr(file_index.os, "scandir", lambda p: (listed.append(p), real_scandir(p))[1])
+
+    assert SourceResolver([], [root]).resolve("Handler.java") == ("code", first.resolve())
+    assert listed  # 第一次查这个文件名：完整遍历一次
+    index = file_index._ROOTS[root.resolve()]
+    assert set(index.names) == {"Handler.java"}  # 只记查过的文件名，Other.java 不占内存
+
+    listed.clear()
+    assert SourceResolver([], [root]).resolve("deep/Handler.java") == ("code", first.resolve())
+    assert listed == []  # 目录没变：下一个请求只 stat，不重新列目录
+
+    def bump(directory: Path) -> None:
+        st = directory.stat()
+        os.utime(directory, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+
+    second = root / "b" / "Handler.java"
+    second.parent.mkdir()
+    second.write_text("y\n")
+    bump(root)
+    listed.clear()
+    assert SourceResolver([], [root]).resolve("Handler.java") is None  # 新出现的同名文件能看到
+    assert set(listed) == {str(root.resolve()), str(second.parent.resolve())}  # 只列了变化的目录
+
+    second.unlink()
+    second.parent.rmdir()
+    bump(root)
+    assert SourceResolver([], [root]).resolve("Handler.java") == ("code", first.resolve())
+    file_index.clear_cache()
+
+
+def test_suffix_lookup_has_no_file_count_cutoff(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    noise = root / "aaa"
+    noise.mkdir(parents=True)
+    for i in range(300):
+        (noise / f"n{i}.txt").write_text("")
+    target = root / "zzz" / "Late.java"
+    target.parent.mkdir()
+    target.write_text("x\n")
+
+    assert SourceResolver([], [root]).resolve("zzz/Late.java:3") == ("code", target.resolve())

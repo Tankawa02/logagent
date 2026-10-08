@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal
 
+from .file_index import FileNameLookup
 from .logfile import open_log, read_text_file
 from .redact import redact_code_lines, redact_log
 
@@ -86,6 +87,8 @@ class SourceResolver:
             names[path.name] = None if path.name in names and names[path.name] != path else path
         self._names = {k: v for k, v in names.items() if v is not None}
         self._roots = [Path(d).expanduser().resolve() for d in code_dirs]
+        # 跨请求复用的文件名缓存：只记查过的文件名，靠目录 mtime 发现增删的文件
+        self._file_names = FileNameLookup()
 
     def resolve(self, source: str) -> tuple[Literal["log", "code"], Path] | None:
         ref = source.strip().strip("`\"'").strip()
@@ -100,8 +103,12 @@ class SourceResolver:
         code = self._resolve_code(ref)
         if code is not None:
             return "code", code
+        # 登记过的日志按文件名引用时优先认日志，不能被源码目录里碰巧同名的文件抢走
         if "/" not in ref and "\\" not in ref and ref in self._names:
             return "log", self._names[ref]
+        code = self._resolve_code_suffix(ref)
+        if code is not None:
+            return "code", code
         return None
 
     def _resolve_code(self, ref: str) -> Path | None:
@@ -124,52 +131,28 @@ class SourceResolver:
                 continue
             if resolved.is_relative_to(root) and resolved.is_file():
                 return resolved
-        if absolute.is_absolute() or not parts:
-            return None
-        return self._resolve_code_suffix(parts)
+        return None
 
-    def _resolve_code_suffix(self, parts: tuple[str, ...]) -> Path | None:
+    def _resolve_code_suffix(self, ref: str) -> Path | None:
         """模型常只写文件名或半截路径（`CheckPasswordValidityHandler.java`、`validity/Foo.java`）：
         在登记的源码目录里按路径后缀找，唯一命中才算，同名文件不止一个时不猜。"""
-        if any(p in ("..", ".") for p in parts):
+        parts = Path(ref.replace("\\", "/")).parts
+        if not parts or Path(ref).expanduser().is_absolute() or any(p in ("..", ".") for p in parts):
             return None
         matches: set[Path] = set()
         for root in self._roots:
-            for path in _code_files_named(root, parts[-1]):
-                if path.parts[-len(parts):] == parts and path.resolve().is_relative_to(root):
-                    matches.add(path.resolve())
+            for path in self._file_names.find(root, parts[-1]):
+                if path.parts[-len(parts):] != parts:
+                    continue
+                try:
+                    resolved = path.resolve()
+                except OSError:
+                    continue
+                if resolved.is_relative_to(root) and resolved.is_file():
+                    matches.add(resolved)
                     if len(matches) > 1:
                         return None
         return next(iter(matches)) if matches else None
-
-
-# 文件名 → 路径的索引按源码目录缓存一小会儿：一份报告里有很多引用，不必每条都重新遍历仓库
-_NAME_INDEX_TTL = 60.0
-_NAME_INDEX_MAX_FILES = 200_000
-_name_index: dict[Path, tuple[float, dict[str, list[Path]]]] = {}
-
-
-def _code_files_named(root: Path, name: str) -> list[Path]:
-    import os
-    import time
-
-    from .tools import SKIP_DIRS
-
-    cached = _name_index.get(root)
-    now = time.monotonic()
-    if cached is None or now - cached[0] > _NAME_INDEX_TTL:
-        index: dict[str, list[Path]] = {}
-        count = 0
-        for current, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
-            for file in files:
-                index.setdefault(file, []).append(Path(current) / file)
-                count += 1
-            if count >= _NAME_INDEX_MAX_FILES:
-                break
-        cached = (now, index)
-        _name_index[root] = cached
-    return cached[1].get(name, [])
 
 
 def _abs(path: Path) -> str:
