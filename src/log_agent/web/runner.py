@@ -290,11 +290,12 @@ def session_no_redact(store: SessionStore, name: str) -> bool:
     return bool((info.settings if info else {}).get("no_redact", (last.get("settings") or {}).get("no_redact")))
 
 
-def _open_memory(memory_path: Path | None, info: SessionInfo, settings: dict[str, Any]):
+def _open_memory(memory_path: Path | None, mode: str, info: SessionInfo):
     """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
-    from ..memory import MemorySession, MemoryStore, default_memory_path, project_key
+    from ..memory import MemorySession, MemoryStore, default_memory_path, normalize_mode, project_key
 
-    mode = str(settings.get("memory") or "suggest")
+    # serve 启动时已校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
+    mode = normalize_mode(mode) or "off"
     if mode == "off":
         return None
     try:
@@ -317,6 +318,7 @@ def run_turn(
     run_id: str,
     redact_owner: bool = True,
     memory_path: Path | None = None,
+    memory_mode: str = "suggest",
 ) -> dict[str, Any] | None:
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -351,7 +353,7 @@ def run_turn(
         max_steps = int(settings.get("max_steps") or 120)
         config = _run_config(max_steps, info.name)
 
-        memory = _open_memory(memory_path, info, settings)
+        memory = _open_memory(memory_path, memory_mode, info)
         checkpointer = SqliteSaver(conn)
         agent = agent_factory(model=info.model, checkpointer=checkpointer,
                               base_url=settings.get("base_url") or base_url, budget=budget, memory=memory)
@@ -372,11 +374,13 @@ def run_turn(
             console.quiet = quiet
         renderer.close_message()
         if memory is not None:
-            # 网页没有逐轮确认弹窗：候选全部进待确认列表，到 Memory 页面处理
+            # 候选登记进记忆库；对话页收到事件后重新拉取本会话待确认的候选，直接在对话里请用户确认
             try:
-                memory.finish_turn(question)
+                immediate = memory.finish_turn(question)
+                pending = len(memory.session_due())
             except sqlite3.Error:
-                pass
+                immediate, pending = [], 0
+            emit(custom("log_agent.memory", {"immediate": len(immediate), "pending": pending}))
 
         payload = build_payload(
             result, question=question, logs=info.logs, code=info.code, model=info.model,

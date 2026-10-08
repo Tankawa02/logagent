@@ -7,6 +7,7 @@ import type {
   MemoryItem,
   MemoryKind,
   MemorySaveResult,
+  SessionMemory,
   Meta,
   ModelList,
   Place,
@@ -129,6 +130,7 @@ export const api = {
     request<{ deleted: string }>(skillUrl(source, name), { method: 'DELETE', headers: CSRF_HEADERS }),
 
   memory: () => request<MemoryIndex>('/api/memory'),
+  sessionMemory: (name: string) => request<SessionMemory>(`/api/sessions/${encodeURIComponent(name)}/memory`),
   addMemory: (body: { text: string; kind: MemoryKind; project: string | null; replace_id?: number; force?: boolean }) =>
     request<MemorySaveResult>('/api/memory', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
   updateMemory: (id: number, text: string) =>

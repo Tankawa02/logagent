@@ -380,5 +380,18 @@ export interface MemoryIndex {
   pending: MemoryCandidate[]
 }
 
+/** 对话页：本会话每轮带上的记忆（全局 + 本项目），以及本会话里提出、等确认的候选 */
+export interface SessionMemory {
+  mode: 'suggest' | 'explicit' | 'off'
+  project: string | null
+  project_label: string
+  available: boolean
+  /** 每轮实际注入提示词的记忆 */
+  memories: MemoryItem[]
+  /** 超出提示词篇幅预算、本轮没有带上的记忆 */
+  skipped: MemoryItem[]
+  pending: MemoryCandidate[]
+}
+
 /** 发现相似记忆时不保存，返回相似项让用户选择新增还是替换 */
 export type MemorySaveResult = { saved: true; updated?: boolean; memory: MemoryItem } | { saved: false; similar: MemoryItem[] }

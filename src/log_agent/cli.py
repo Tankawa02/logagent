@@ -1164,10 +1164,15 @@ def serve(
     can_chat = not read_only and bool(os.environ.get("OPENAI_API_KEY"))
     access = None if no_token else (token or secrets.token_urlsafe(18))
     skill_dirs = tuple(str(item) for item in values.get("skills") or ())
+    from .memory import MODES, normalize_mode
+
+    memory_mode = normalize_mode(values.get("memory"))
+    if memory_mode is None:
+        _fail(f"配置项 memory 的值无效：{values.get('memory')!r}，可选 {' / '.join(MODES)}。")
     web = WebConfig(
         db_path=db_path, token=access,
         agent_factory=None if read_only else functools.partial(_web_agent_factory, skill_dirs=skill_dirs),
-        skill_dirs=skill_dirs,
+        skill_dirs=skill_dirs, memory_mode=memory_mode,
         base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
         redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
         default_model=_resolve_model(values.get("model")),

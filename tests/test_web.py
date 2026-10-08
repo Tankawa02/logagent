@@ -1050,3 +1050,13 @@ def test_owner_export_removes_legacy_connection_metadata(demo) -> None:
         response = client.get(f'/api/sessions/{SESSION}/{path}', headers=WRITE)
         assert response.status_code == 200
         assert 'base_url' not in response.json()['settings']
+
+
+@pytest.mark.parametrize("value", ['"OFFF"', "1"])
+def test_serve_rejects_invalid_memory_mode(tmp_path, monkeypatch, value: str) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(f"memory = {value}\n", encoding="utf-8")
+    monkeypatch.setenv("LOG_AGENT_CONFIG", str(config))
+    result = CliRunner().invoke(cli.app, ["serve", "--no-token"])
+    assert result.exit_code == 2
+    assert "memory" in result.output

@@ -592,3 +592,24 @@ def test_old_candidate_database_migrates_and_cleans_paraphrases(tmp_path: Path) 
         assert reopened.pending('/legacy') == []
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, "suggest"), (False, "off"), (True, "suggest"), ("OFF", "off"), (" Explicit ", "explicit"), ("nope", None), (0, None)],
+)
+def test_normalize_mode(value: object, expected: str | None) -> None:
+    from log_agent.memory import normalize_mode
+
+    assert normalize_mode(value) == expected
+
+
+def test_web_runner_unknown_mode_fails_closed(tmp_path: Path) -> None:
+    from log_agent.sessions import SessionInfo
+    from log_agent.web.runner import _open_memory
+
+    info = SessionInfo(
+        name="s", logs=[], code=[str(tmp_path)], model="m", title="", turns=0, total_tokens=0, created_at="", updated_at=""
+    )
+    assert _open_memory(tmp_path / "m.db", "bogus", info) is None
+    assert _open_memory(tmp_path / "m.db", "OFF", info) is None
