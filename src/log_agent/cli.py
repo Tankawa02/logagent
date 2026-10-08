@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 from datetime import datetime
 from enum import StrEnum
@@ -1097,12 +1098,14 @@ def sessions_rm(
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget):
+def _web_agent_factory(
+    *, model: str, checkpointer, base_url: str | None, budget, skill_dirs: tuple[str, ...] = (), memory=None,
+):
     # 调用时再取 build_agent，测试里替换 agent.build_agent 就能换成脚本化模型
     from . import agent as agent_module
 
     return agent_module.build_agent(
-        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=[], memory=None, budget=budget,
+        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=list(skill_dirs), memory=memory, budget=budget,
     )
 
 
@@ -1160,8 +1163,11 @@ def serve(
     base_url = base_url or values.get("base_url") or os.environ.get("OPENAI_BASE_URL")
     can_chat = not read_only and bool(os.environ.get("OPENAI_API_KEY"))
     access = None if no_token else (token or secrets.token_urlsafe(18))
+    skill_dirs = tuple(str(item) for item in values.get("skills") or ())
     web = WebConfig(
-        db_path=db_path, token=access, agent_factory=None if read_only else _web_agent_factory,
+        db_path=db_path, token=access,
+        agent_factory=None if read_only else functools.partial(_web_agent_factory, skill_dirs=skill_dirs),
+        skill_dirs=skill_dirs,
         base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
         redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
         default_model=_resolve_model(values.get("model")),

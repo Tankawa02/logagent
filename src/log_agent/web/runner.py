@@ -290,6 +290,20 @@ def session_no_redact(store: SessionStore, name: str) -> bool:
     return bool((info.settings if info else {}).get("no_redact", (last.get("settings") or {}).get("no_redact")))
 
 
+def _open_memory(memory_path: Path | None, info: SessionInfo, settings: dict[str, Any]):
+    """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
+    from ..memory import MemorySession, MemoryStore, default_memory_path, project_key
+
+    mode = str(settings.get("memory") or "suggest")
+    if mode == "off":
+        return None
+    try:
+        store = MemoryStore(memory_path or default_memory_path())
+    except (sqlite3.Error, OSError):
+        return None
+    return MemorySession(store=store, mode=mode, project=project_key(info.code), session=info.name)
+
+
 def run_turn(
     *,
     db_path: Path,
@@ -302,6 +316,7 @@ def run_turn(
     thread_id: str,
     run_id: str,
     redact_owner: bool = True,
+    memory_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -326,6 +341,7 @@ def run_turn(
     emit(_event("RUN_STARTED", threadId=thread_id, runId=run_id))
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     quiet = console.quiet
+    memory = None
     try:
         store = SessionStore(conn)
         no_redact = session_no_redact(store, info.name)
@@ -335,9 +351,10 @@ def run_turn(
         max_steps = int(settings.get("max_steps") or 120)
         config = _run_config(max_steps, info.name)
 
+        memory = _open_memory(memory_path, info, settings)
         checkpointer = SqliteSaver(conn)
         agent = agent_factory(model=info.model, checkpointer=checkpointer,
-                              base_url=settings.get("base_url") or base_url, budget=budget)
+                              base_url=settings.get("base_url") or base_url, budget=budget, memory=memory)
         try:
             first_turn = checkpointer.get(config) is None
         except Exception:
@@ -354,6 +371,12 @@ def run_turn(
         finally:
             console.quiet = quiet
         renderer.close_message()
+        if memory is not None:
+            # 网页没有逐轮确认弹窗：候选全部进待确认列表，到 Memory 页面处理
+            try:
+                memory.finish_turn(question)
+            except sqlite3.Error:
+                pass
 
         payload = build_payload(
             result, question=question, logs=info.logs, code=info.code, model=info.model,
@@ -378,4 +401,6 @@ def run_turn(
          timefilter._default_window, enabled) = saved_globals
         redact.set_enabled(enabled)
         console.quiet = quiet
+        if memory is not None:
+            memory.store.close()
         conn.close()

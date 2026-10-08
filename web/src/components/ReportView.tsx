@@ -206,7 +206,7 @@ function EvidenceCard({
   onOpen: (target: SourceTarget) => void
 }) {
   const status = item ? EVIDENCE[item.status] : null
-  // 行号偏移时跳到��对出的真实位置；对不上的证据仍然打开所引行，方便人工判断
+  // 行号偏移时跳到核对出的真实位置；对不上的证据仍然打开所引行，方便人工判断
   const start = item?.actual_start ?? evidence.line_start
   const end = item?.actual_end ?? evidence.line_end
   const range = `${evidence.line_start}${evidence.line_end !== evidence.line_start ? `-${evidence.line_end}` : ''}`

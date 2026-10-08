@@ -53,6 +53,10 @@ class WebConfig:
     redact_owner: bool = True
     loopback: bool = True
     default_model: str = "openai:gpt-4.1"
+    skill_dirs: tuple[str, ...] = ()
+    skills_home: Path | None = None
+    skills_cwd: Path | None = None
+    memory_path: Path | None = None
 
 
 @dataclass
@@ -490,6 +494,20 @@ def create_app(config: WebConfig) -> FastAPI:
         run_id = (body.run_id or "").strip()[:128] if body else ""
         return request_stop(scope.name, run_id or None)
 
+    # ---- Skill 与记忆管理（仅本人）-----------------------------------------
+
+    from . import manage
+
+    manage.register(
+        app,
+        require_owner=require_owner,
+        skill_dirs=config.skill_dirs,
+        skills_home=config.skills_home,
+        skills_cwd=config.skills_cwd,
+        memory_path=config.memory_path,
+        session_projects=lambda: manage.projects_from_sessions(config.db_path),
+    )
+
     # ---- 前端页面 ----------------------------------------------------------
 
     @app.get("/s/{token}")
@@ -646,7 +664,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
             run_turn(
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
-                redact_owner=config.redact_owner,
+                redact_owner=config.redact_owner, memory_path=config.memory_path,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

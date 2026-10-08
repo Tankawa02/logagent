@@ -14,7 +14,9 @@ import { AppShell } from './components/AppShell'
 import { Spinner } from './components/ui'
 import { api, ApiError } from './lib/api'
 import { AuthRequired } from './pages/AuthRequired'
+import { MemoryPage } from './pages/MemoryPage'
 import { NewSession } from './pages/NewSession'
+import { SkillsPage } from './pages/SkillsPage'
 import { TraceDetail } from './pages/TraceDetail'
 import { TraceList } from './pages/TraceList'
 import { validateWorkspaceSearch, Workspace, type WorkspaceSearch } from './pages/Workspace'
@@ -115,6 +117,10 @@ const traceDetailRoute = createRoute({
   },
 })
 
+const skillsRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/skills', component: SkillsPage })
+
+const memoryRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/memory', component: MemoryPage })
+
 const shareRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/s/$token',
@@ -137,7 +143,7 @@ const shareRoute = createRoute({
 })
 
 const router = createRouter({
-  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute]), shareRoute]),
+  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute]), shareRoute]),
   defaultPreload: false,
 })
 

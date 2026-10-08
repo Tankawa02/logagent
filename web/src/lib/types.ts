@@ -309,3 +309,76 @@ export interface SourceTarget {
   /** 来自哪条证据（issue-index），用于高亮左侧卡片 */
   evidenceKey?: string
 }
+
+export interface SkillSummary {
+  name: string
+  description: string
+  /** 非空时 deepagents 会跳过这本手册 */
+  problems: string[]
+  /** 被更高优先级来源里的同名 skill 覆盖时，为那个来源的名称 */
+  shadowed_by: string | null
+  files: number
+  updated_at: string | null
+  /** 符号链接的 skill：只能查看，需在链接目标处编辑 */
+  readonly: boolean
+}
+
+export interface SkillSource {
+  key: string
+  label: string
+  hint: string
+  directory: string
+  exists: boolean
+  skills: SkillSummary[]
+}
+
+export interface SkillDetail {
+  source: string
+  source_label: string
+  name: string
+  path: string
+  content: string
+  problems: string[]
+  files: string[]
+  updated_at: string | null
+  readonly: boolean
+}
+
+export type MemoryKind = 'preference' | 'term' | 'fact'
+
+export interface MemoryItem {
+  id: number
+  kind: MemoryKind
+  kind_label: string
+  project: string | null
+  scope_label: string
+  text: string
+  origin: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoryCandidate {
+  id: number
+  kind: MemoryKind
+  kind_label: string
+  project: string | null
+  scope_label: string
+  text: string
+  signal: string
+  reason: string
+  occurrences: number
+  first_seen: string
+  last_seen: string
+}
+
+export interface MemoryIndex {
+  path: string
+  kinds: { key: MemoryKind; label: string }[]
+  projects: { key: string; label: string }[]
+  memories: MemoryItem[]
+  pending: MemoryCandidate[]
+}
+
+/** 发现相似记忆时不保存，返回相似项让用户选择新增还是替换 */
+export type MemorySaveResult = { saved: true; updated?: boolean; memory: MemoryItem } | { saved: false; similar: MemoryItem[] }
