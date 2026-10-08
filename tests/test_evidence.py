@@ -329,7 +329,6 @@ def test_resolver_finds_code_by_file_name_or_partial_path(tmp_path: Path) -> Non
         for sub in ("a", "b"):
             (root / sub).mkdir(exist_ok=True)
             (root / sub / name).write_text("x\n")
-    evidence._name_index.clear()
     resolver = SourceResolver([], [root])
 
     # 只写文件名、半截路径都能找到；node_modules 里的同名文件不算
@@ -339,3 +338,40 @@ def test_resolver_finds_code_by_file_name_or_partial_path(tmp_path: Path) -> Non
     assert resolver.resolve("other/CheckPasswordValidityHandler.java") is None
     assert resolver.resolve("Util.java") is None
     assert resolver.resolve("../account-verification/manager/x.java") is None
+
+
+def test_registered_log_basename_wins_over_same_named_code_file(tmp_path: Path) -> None:
+    log = tmp_path / "logs" / "app.log"
+    log.parent.mkdir()
+    log.write_text("line\n")
+    root = tmp_path / "repo"
+    (root / "fixtures").mkdir(parents=True)
+    (root / "fixtures" / "app.log").write_text("fixture\n")
+
+    assert SourceResolver([log], [root]).resolve("app.log") == ("log", log)
+
+
+def test_suffix_lookup_sees_new_duplicates_on_next_request(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "a").mkdir(parents=True)
+    first = root / "a" / "Handler.java"
+    first.write_text("x\n")
+    assert SourceResolver([], [root]).resolve("Handler.java") == ("code", first.resolve())
+
+    (root / "b").mkdir()
+    (root / "b" / "Handler.java").write_text("y\n")
+    # 新的请求（新的 resolver）重新遍历，出现同名文件后不再当成唯一命中
+    assert SourceResolver([], [root]).resolve("Handler.java") is None
+
+
+def test_suffix_lookup_has_no_file_count_cutoff(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    noise = root / "aaa"
+    noise.mkdir(parents=True)
+    for i in range(300):
+        (noise / f"n{i}.txt").write_text("")
+    target = root / "zzz" / "Late.java"
+    target.parent.mkdir()
+    target.write_text("x\n")
+
+    assert SourceResolver([], [root]).resolve("zzz/Late.java:3") == ("code", target.resolve())
