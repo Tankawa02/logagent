@@ -315,3 +315,27 @@ def test_corrupt_gzip_does_not_crash_the_turn(tmp_path: Path) -> None:
     path.write_bytes(data[: len(data) // 2])
     check = check_analysis(_analysis_with(_ev("bad.log.gz", 4000, 4000, "ERROR boom 3999")), [str(path)], [])
     assert check["items"][0]["status"] in {"unresolved", "mismatch"}
+
+
+def test_resolver_finds_code_by_file_name_or_partial_path(tmp_path: Path) -> None:
+    root = tmp_path / "account-verification"
+    deep = root / "manager" / "src" / "main" / "java" / "com" / "x" / "validity"
+    deep.mkdir(parents=True)
+    target = deep / "CheckPasswordValidityHandler.java"
+    target.write_text("class A {}\n")
+    (root / "node_modules" / "dup").mkdir(parents=True)
+    (root / "node_modules" / "dup" / "CheckPasswordValidityHandler.java").write_text("x\n")
+    for name in ("Util.java",):
+        for sub in ("a", "b"):
+            (root / sub).mkdir(exist_ok=True)
+            (root / sub / name).write_text("x\n")
+    evidence._name_index.clear()
+    resolver = SourceResolver([], [root])
+
+    # 只写文件名、半截路径都能找到；node_modules 里的同名文件不算
+    assert resolver.resolve("CheckPasswordValidityHandler.java") == ("code", target.resolve())
+    assert resolver.resolve("validity/CheckPasswordValidityHandler.java:21") == ("code", target.resolve())
+    # 后缀对不上、同名不唯一、带 .. 的都不猜
+    assert resolver.resolve("other/CheckPasswordValidityHandler.java") is None
+    assert resolver.resolve("Util.java") is None
+    assert resolver.resolve("../account-verification/manager/x.java") is None
