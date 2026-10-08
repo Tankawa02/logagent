@@ -86,6 +86,12 @@ export const CHECK_STATUS: Record<EvidenceCheck['status'], { label: string; tone
   unverifiable: { label: '证据无法核对', tone: 'gray' },
 }
 
+/** 把路径拆成目录和文件名：长路径展示时文件名完整保留，目录部分可以截断或弱化 */
+export function splitPath(path: string): { dir: string; name: string } {
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return cut < 0 ? { dir: '', name: path } : { dir: path.slice(0, cut + 1), name: path.slice(cut + 1) }
+}
+
 export type Tone = 'red' | 'amber' | 'green' | 'gray' | 'blue'
 
 export const TONE_CLASS: Record<Tone, string> = {

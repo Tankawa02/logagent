@@ -6,6 +6,7 @@ import {
   EVIDENCE,
   formatDuration,
   formatGenerated,
+  splitPath,
   visibleReport,
 } from '../lib/format'
 import type { Evidence, EvidenceCheck, EvidenceItem, Issue, SourceTarget, TurnPayload } from '../lib/types'
@@ -210,6 +211,7 @@ function EvidenceCard({
   const start = item?.actual_start ?? evidence.line_start
   const end = item?.actual_end ?? evidence.line_end
   const range = `${evidence.line_start}${evidence.line_end !== evidence.line_start ? `-${evidence.line_end}` : ''}`
+  const { dir, name } = splitPath(evidence.source)
   return (
     <button
       type="button"
@@ -220,13 +222,15 @@ function EvidenceCard({
           : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40'
       }`}
     >
-      {/* 源码路径往往很长：路径占满左侧自行换行，徽标和「查看原文」固定在右侧，不被挤到下一行 */}
-      <div className="flex items-start gap-2 px-3 pt-2">
-        <span
-          className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-sky-700 dark:text-sky-300"
-          title={`${evidence.source}:${range}`}
-        >
-          {evidence.source}:{range}
+      {/* 源码路径往往很长：第一行只放文件名和行号（完整显示），目录弱化放到下一行；徽标和「查看原文」固定在右侧 */}
+      <div className="flex items-start gap-2 px-3 pt-2" title={`${evidence.source}:${range}`}>
+        <span className="min-w-0 flex-1">
+          <span className="block break-all font-mono text-xs font-semibold leading-5 text-sky-700 dark:text-sky-300">
+            {name}:{range}
+          </span>
+          {dir && (
+            <span className="block truncate font-mono text-[11px] leading-4 text-zinc-400 dark:text-zinc-500">{dir}</span>
+          )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {status && (

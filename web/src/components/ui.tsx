@@ -22,11 +22,12 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
   )
 }
 
-export function CardHeader({ title, children }: { title: ReactNode; children?: ReactNode }) {
+  /** fill：标题占满剩余宽度、可截断，操作按钮始终和标题同一行（标题是长路径等可变内容时用） */
+  export function CardHeader({ title, children, fill = false }: { title: ReactNode; children?: ReactNode; fill?: boolean }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
-      <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">{title}</h2>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+  <h2 className={`min-w-0 max-w-full text-sm font-semibold text-zinc-800 dark:text-zinc-100 ${fill ? 'flex-1 basis-0' : ''}`}>{title}</h2>
+  {children && <div className={`flex flex-wrap items-center gap-2 ${fill ? 'shrink-0' : ''}`}>{children}</div>}
     </div>
   )
 }
