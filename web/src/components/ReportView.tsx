@@ -206,7 +206,7 @@ function EvidenceCard({
   onOpen: (target: SourceTarget) => void
 }) {
   const status = item ? EVIDENCE[item.status] : null
-  // 行号偏移时跳到核对出的真实位置；对不上的证据仍然打开所引行，方便人工判断
+  // 行号偏移时跳到��对出的真实位置；对不上的证据仍然打开所引行，方便人工判断
   const start = item?.actual_start ?? evidence.line_start
   const end = item?.actual_end ?? evidence.line_end
   const range = `${evidence.line_start}${evidence.line_end !== evidence.line_start ? `-${evidence.line_end}` : ''}`
@@ -220,16 +220,22 @@ function EvidenceCard({
           : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40'
       }`}
     >
-      <div className="flex flex-wrap items-center gap-2 px-3 pt-2">
-        <span className="font-mono text-xs text-sky-700 dark:text-sky-300">
+      {/* 源码路径往往很长：路径占满左侧自行换行，徽标和「查看原文」固定在右侧，不被挤到下一行 */}
+      <div className="flex items-start gap-2 px-3 pt-2">
+        <span
+          className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-sky-700 dark:text-sky-300"
+          title={`${evidence.source}:${range}`}
+        >
           {evidence.source}:{range}
         </span>
-        {status && (
-          <Badge tone={status.tone} title={item?.note}>
-            {status.mark} {status.label}
-          </Badge>
-        )}
-        <span className="ml-auto text-[11px] text-zinc-400">查看原文 →</span>
+        <span className="flex shrink-0 items-center gap-2">
+          {status && (
+            <Badge tone={status.tone} title={item?.note}>
+              {status.mark} {status.label}
+            </Badge>
+          )}
+          <span className="whitespace-nowrap text-[11px] leading-5 text-zinc-400">查看原文 →</span>
+        </span>
       </div>
       {item?.note && <p className="px-3 pt-1 text-xs text-zinc-500 dark:text-zinc-400">{item.note}</p>}
       <pre className="mx-3 my-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-50 px-2 py-1.5 font-mono text-xs text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
