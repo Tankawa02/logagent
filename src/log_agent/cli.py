@@ -1167,7 +1167,7 @@ def serve(
     web = WebConfig(
         db_path=db_path, token=access,
         agent_factory=None if read_only else functools.partial(_web_agent_factory, skill_dirs=skill_dirs),
-        skill_dirs=skill_dirs,
+        skill_dirs=skill_dirs, memory_mode=str(values.get("memory") or "suggest"),
         base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
         redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
         default_model=_resolve_model(values.get("model")),

@@ -443,6 +443,35 @@ def register(
         return {"rejected": candidate_id}
 
 
+def session_memory(memory_path: Path | None, mode: str, info: Any) -> dict[str, Any]:
+    """会话对话页用：本会话每轮会带上的记忆，以及本会话里提出、等用户确认的候选。
+
+    范围与 runner 注入提示词时完全一致（全局 + 会话源码目录所属项目）。
+    """
+    from ..memory import MODES, project_key
+
+    mode = mode if mode in MODES else "suggest"
+    project = project_key(info.code)
+    result: dict[str, Any] = {
+        "mode": mode, "project": project, "project_label": project_label(project),
+        "available": True, "memories": [], "pending": [],
+    }
+    if mode == "off":
+        return result
+    try:
+        opened = MemoryStore(memory_path or default_memory_path())
+    except (sqlite3.Error, OSError):
+        return {**result, "available": False}
+    try:
+        result["memories"] = [_memory_dict(m) for m in opened.memories(project)]
+        result["pending"] = [_candidate_dict(c) for c in opened.pending(project) if info.name in c.sessions]
+    except sqlite3.Error:
+        result["available"] = False
+    finally:
+        opened.close()
+    return result
+
+
 def projects_from_sessions(db_path: Path) -> list[str]:
     """会话里用过的源码目录对应的项目，供新增记忆时选择范围。"""
     if not db_path.exists():

@@ -57,6 +57,7 @@ class WebConfig:
     skills_home: Path | None = None
     skills_cwd: Path | None = None
     memory_path: Path | None = None
+    memory_mode: str = "suggest"
 
 
 @dataclass
@@ -417,6 +418,14 @@ def create_app(config: WebConfig) -> FastAPI:
     def _share_base(request: Request) -> str:
         return (config.public_url or str(request.base_url)).rstrip("/") + "/s/"
 
+    @app.get("/api/sessions/{name}/memory")
+    def session_memory(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        from .manage import session_memory as describe
+
+        with _connect(config) as conn:
+            _, info = _load(conn, scope.name)
+        return describe(config.memory_path, config.memory_mode, info)
+
     @app.get("/api/sessions/{name}/shares")
     def list_shares(scope: Scope = Depends(owner_scope)) -> list[dict[str, Any]]:
         with _connect(config) as conn:
@@ -664,7 +673,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
             run_turn(
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
-                redact_owner=config.redact_owner, memory_path=config.memory_path,
+                redact_owner=config.redact_owner, memory_path=config.memory_path, memory_mode=config.memory_mode,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

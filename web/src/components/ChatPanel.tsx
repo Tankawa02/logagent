@@ -1,4 +1,5 @@
 import { useChat, type UIMessage } from '@tanstack/ai-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity as ActivityIcon, ArrowUp, Check, Copy, FileSearch, Square } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
@@ -8,6 +9,7 @@ import { takePendingQuestion } from '../lib/pending'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
 import { Markdown } from './Markdown'
+import { MemoryConfirm, MemoryStatus } from './SessionMemory'
 import { Badge, ErrorBox, Spinner } from './ui'
 
 export interface AskRequest {
@@ -69,6 +71,9 @@ export function ChatPanel({
   const [stopping, setStopping] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
+  const client = useQueryClient()
+  const memoryKey = ['memory', 'session', session]
+  const memory = useQuery({ queryKey: memoryKey, queryFn: () => api.sessionMemory(session) })
 
   // 服务端还标着「进行中」、但历史里已经有这一轮（刚存档、还没收尾）时不再接，否则同一轮会出现两遍
   const liveTurn = live?.saved_turn ?? live?.turn
@@ -109,6 +114,9 @@ export function ChatPanel({
       } else if (name === 'log_agent.turn' && typeof data.turn === 'number') {
         setSavedTurn(data.turn)
         onTurnSaved(data.turn)
+      } else if (name === 'log_agent.memory') {
+        // 本轮登记了新的候选：重新拉取，待确认的直接显示在回答下方
+        void client.invalidateQueries({ queryKey: memoryKey })
       } else if (name === 'log_agent.error') {
         setServerError(String(data.message ?? '未知错误'))
       }
@@ -169,7 +177,7 @@ export function ChatPanel({
   useEffect(() => {
     const el = scroller.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, tools.length, draft, isLoading])
+  }, [messages, tools.length, draft, isLoading, memory.data?.pending.length])
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -226,14 +234,15 @@ export function ChatPanel({
             return node
           })}
           {(serverError || error) && <ErrorBox error={serverError ?? error} />}
+          {!isLoading && memory.data && <MemoryConfirm memory={memory.data} />}
         </div>
       </div>
 
       <div className="border-t border-zinc-100 bg-white px-4 pb-4 pt-3 dark:border-zinc-900 dark:bg-zinc-950">
         <div className="mx-auto max-w-3xl space-y-2">
-          {!isLoading && messages.length > 0 && !input && (
-            <div className="flex flex-wrap gap-1.5">
-              {FOLLOW_UPS.map((s) => (
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+              {!isLoading && messages.length > 0 && !input && FOLLOW_UPS.map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -247,7 +256,8 @@ export function ChatPanel({
                 </button>
               ))}
             </div>
-          )}
+            {memory.data && <MemoryStatus memory={memory.data} />}
+          </div>
           <form
             onSubmit={onSubmit}
             className="flex items-end gap-2 rounded-2xl border border-zinc-300 bg-white p-2 shadow-xs focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-900"

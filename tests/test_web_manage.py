@@ -196,9 +196,10 @@ def test_web_turn_injects_memory_and_records_candidates(tmp_path: Path, monkeypa
         seen.append(kwargs["memory"])
         return object()
 
+    events: list[dict] = []
     monkeypatch.setattr(runner.WebStreamRenderer, "run", lambda *a, **kw: TurnResult(report="done"))
     runner.run_turn(
-        db_path=db, info=info, question="记住：测试环境叫 pre", emit=lambda e: None, cancelled=threading.Event(),
+        db_path=db, info=info, question="记住：测试环境叫 pre", emit=events.append, cancelled=threading.Event(),
         agent_factory=build, base_url=None, thread_id="s1", run_id="r", memory_path=memory_db,
     )
     assert seen and seen[0] is not None
@@ -209,3 +210,43 @@ def test_web_turn_injects_memory_and_records_candidates(tmp_path: Path, monkeypa
         assert any("测试环境叫 pre" in c.text for c in reopened.pending(all_projects=True))
     finally:
         reopened.close()
+
+    # 本轮结束通知对话页去拉取待确认的候选
+    memory_events = [e for e in events if e.get("type") == "CUSTOM" and e.get("name") == "log_agent.memory"]
+    assert memory_events and memory_events[0]["value"]["immediate"] == 1
+
+    # 对话页接口：列出本会话每轮带上的记忆，以及本会话提出、等确认的候选
+    client = TestClient(create_app(WebConfig(db_path=db, token=TOKEN, memory_path=memory_db)))
+    data = client.get("/api/sessions/s1/memory", headers=OWNER).json()
+    assert data["mode"] == "suggest" and data["available"] is True
+    assert [m["text"] for m in data["memories"]] == ["报告先写结论"]
+    assert [c["text"] for c in data["pending"]] == ["测试环境叫 pre"]
+    assert client.get("/api/sessions/s1/memory").status_code == 401
+    assert client.get("/api/sessions/missing/memory", headers=OWNER).status_code == 404
+
+
+def test_web_turn_respects_memory_off(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+    import threading
+
+    from log_agent.render import TurnResult
+    from log_agent.sessions import SessionStore
+    from log_agent.web import runner
+
+    db = tmp_path / "sessions.db"
+    with sqlite3.connect(str(db)) as conn:
+        sessions = SessionStore(conn)
+        sessions.touch("s1", [str(tmp_path / "app.log")], [str(tmp_path)], "openai:gpt-test")
+        info = sessions.get("s1")
+
+    seen: list = []
+    monkeypatch.setattr(runner.WebStreamRenderer, "run", lambda *a, **kw: TurnResult(report="done"))
+    runner.run_turn(
+        db_path=db, info=info, question="记住：测试环境叫 pre", emit=lambda e: None, cancelled=threading.Event(),
+        agent_factory=lambda **kw: seen.append(kw["memory"]) or object(), base_url=None, thread_id="s1", run_id="r",
+        memory_path=tmp_path / "memory.db", memory_mode="off",
+    )
+    assert seen == [None]
+    client = TestClient(create_app(WebConfig(db_path=db, token=TOKEN, memory_path=tmp_path / "memory.db", memory_mode="off")))
+    data = client.get("/api/sessions/s1/memory", headers=OWNER).json()
+    assert data["mode"] == "off" and data["memories"] == [] and data["pending"] == []
