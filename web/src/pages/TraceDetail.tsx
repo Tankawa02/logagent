@@ -58,7 +58,10 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
   const width = Math.max(0.6, (span.seconds / total) * 100)
   const failed = span.kind === 'tool' && span.call.failed
   const sub = span.kind === 'tool' && span.call.subagent
-  const color = span.kind === 'llm' ? 'bg-sky-500' : failed ? 'bg-red-500' : sub ? 'bg-violet-500' : 'bg-amber-500'
+  const incomplete = Boolean(span.call.incomplete)
+  const base = span.kind === 'llm' ? 'bg-sky-500' : failed ? 'bg-red-500' : sub ? 'bg-violet-500' : 'bg-amber-500'
+  // 未完成的段只量到本轮结束：用半透明 + 虚线边，和真实耗时区分开
+  const color = incomplete ? `${base} opacity-40 outline-1 outline-dashed outline-zinc-500` : base
   const Icon = span.kind === 'llm' ? Bot : Wrench
 
   return (
@@ -71,6 +74,7 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
             <span className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`} title={span.label}>
               {span.label}
             </span>
+            {incomplete && <Badge tone="amber">未完成</Badge>}
           </div>
           <div className="relative h-4 min-w-0 flex-1 rounded bg-zinc-100 dark:bg-zinc-800" aria-hidden>
             <div className={`absolute inset-y-0.5 rounded-sm ${color}`} style={{ left: `${Math.min(left, 99.4)}%`, width: `${width}%` }} />
@@ -82,13 +86,21 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
         <div className="space-y-2 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 pl-11 text-xs dark:border-zinc-800 dark:bg-zinc-900/60">
           <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-zinc-500">
             <span>开始 +{formatDuration(span.start)}</span>
-            <span>耗时 {span.seconds.toFixed(3)}s</span>
+            <span>
+              耗时 {span.seconds.toFixed(3)}s{incomplete && '（量到本轮结束，未完成）'}
+            </span>
             {span.kind === 'llm' && (
               <>
                 {span.call.first_token != null && <span>首字 {span.call.first_token.toFixed(2)}s</span>}
-                <span>输入 {span.call.input.toLocaleString()} tokens</span>
-                <span>输出 {span.call.output.toLocaleString()} tokens</span>
-                <span>发起工具 {span.call.tool_calls} 个</span>
+                {span.call.input == null || span.call.output == null ? (
+                  <span>输出中断，用量未知</span>
+                ) : (
+                  <>
+                    <span>输入 {span.call.input.toLocaleString()} tokens</span>
+                    <span>输出 {span.call.output.toLocaleString()} tokens</span>
+                  </>
+                )}
+                {span.call.tool_calls != null && <span>发起工具 {span.call.tool_calls} 个</span>}
                 {span.call.model && <span className="font-mono">{span.call.model}</span>}
                 {span.call.finish_reason && <span>结束原因 {span.call.finish_reason}</span>}
               </>

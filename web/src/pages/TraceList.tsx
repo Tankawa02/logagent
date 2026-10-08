@@ -7,6 +7,16 @@ import { api } from '../lib/api'
 import { formatDuration, formatGenerated, formatTokens, shortModel, TURN_STATUS } from '../lib/format'
 import type { TraceItem } from '../lib/types'
 
+const PAGE = 300
+const LIMIT_MAX = 2000
+
+type Measured = TraceItem & { elapsed_seconds: number; usage: NonNullable<TraceItem['usage']> }
+
+/** 旧版恢复的轮次没有保存耗时与用量，统计平均值时跳过，不能当成 0 */
+function isMeasured(item: TraceItem): item is Measured {
+  return item.elapsed_seconds != null && item.usage != null
+}
+
 const SELECT =
   'rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-950'
 
@@ -56,12 +66,15 @@ function ToolRanking({ items }: { items: TraceItem[] }) {
 
 function ModelBreakdown({ items }: { items: TraceItem[] }) {
   const rows = useMemo(() => {
-    const map = new Map<string, { turns: number; seconds: number; tokens: number }>()
+    const map = new Map<string, { turns: number; measured: number; seconds: number; tokens: number }>()
     for (const item of items) {
-      const row = map.get(item.model) ?? { turns: 0, seconds: 0, tokens: 0 }
+      const row = map.get(item.model) ?? { turns: 0, measured: 0, seconds: 0, tokens: 0 }
       row.turns += 1
-      row.seconds += item.elapsed_seconds
-      row.tokens += item.usage.total ?? 0
+      if (isMeasured(item)) {
+        row.measured += 1
+        row.seconds += item.elapsed_seconds
+        row.tokens += item.usage.total
+      }
       map.set(item.model, row)
     }
     return [...map.entries()].sort((a, b) => b[1].turns - a[1].turns)
@@ -80,8 +93,14 @@ function ModelBreakdown({ items }: { items: TraceItem[] }) {
               </div>
               <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs tabular-nums text-zinc-500">
                 <span>{row.turns} 轮</span>
-                <span>平均 {formatDuration(row.seconds / row.turns)}</span>
-                <span>平均 {formatTokens(row.tokens / row.turns)} tokens</span>
+                {row.measured ? (
+                  <>
+                    <span>平均 {formatDuration(row.seconds / row.measured)}</span>
+                    <span>平均 {formatTokens(row.tokens / row.measured)} tokens</span>
+                  </>
+                ) : (
+                  <span>耗时与用量未记录</span>
+                )}
               </div>
             </li>
           ))}
@@ -112,20 +131,26 @@ function TraceRow({ item, maxSeconds }: { item: TraceItem; maxSeconds: number })
             </span>
             <span className="font-mono">{shortModel(item.model)}</span>
             {item.failed_tools > 0 && <span className="text-red-600">{item.failed_tools} 次工具失败</span>}
+            {item.incomplete_tools > 0 && <span className="text-amber-600">{item.incomplete_tools} 个工具未完成</span>}
+            {item.legacy && <span>旧版记录</span>}
           </div>
           <div className="mt-2 flex items-center gap-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <div className="h-1.5 min-w-0 flex-1 rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden>
-                <div
-                  className={`h-full rounded-full ${item.status === 'error' ? 'bg-red-500' : 'bg-sky-500'}`}
-                  style={{ width: `${Math.max(2, (item.elapsed_seconds / maxSeconds) * 100)}%` }}
-                />
+                {item.elapsed_seconds != null && (
+                  <div
+                    className={`h-full rounded-full ${item.status === 'error' ? 'bg-red-500' : 'bg-sky-500'}`}
+                    style={{ width: `${Math.max(2, (item.elapsed_seconds / maxSeconds) * 100)}%` }}
+                  />
+                )}
               </div>
-              <span className="w-14 shrink-0 text-right font-mono">{formatDuration(item.elapsed_seconds)}</span>
+              <span className="w-14 shrink-0 text-right font-mono" title={item.elapsed_seconds == null ? '未记录耗时' : undefined}>
+                {item.elapsed_seconds == null ? '—' : formatDuration(item.elapsed_seconds)}
+              </span>
             </div>
-            <span className="flex w-14 shrink-0 items-center gap-1 font-mono" title="tokens">
+            <span className="flex w-14 shrink-0 items-center gap-1 font-mono" title={item.usage ? 'tokens' : '未记录用量'}>
               <Coins className="h-3 w-3" aria-hidden />
-              {formatTokens(item.usage.total)}
+              {item.usage ? formatTokens(item.usage.total) : '—'}
             </span>
             <span
               className={`flex w-10 shrink-0 items-center gap-1 font-mono ${item.failed_tools ? 'text-red-600' : ''}`}
@@ -146,9 +171,16 @@ export function TraceList({ session }: { session?: string }) {
   const [text, setText] = useState('')
   const [model, setModel] = useState('')
   const [status, setStatus] = useState('')
-  const trace = useQuery({ queryKey: ['trace', session ?? ''], queryFn: () => api.trace(session) })
+  const [limit, setLimit] = useState(PAGE)
+  const trace = useQuery({
+    queryKey: ['trace', session ?? '', limit],
+    queryFn: () => api.trace(session, limit),
+    placeholderData: (previous) => previous,
+  })
 
   const all = trace.data ?? []
+  // 返回条数顶到上限，说明更早的轮次没取回来：统计只覆盖最近这些
+  const capped = all.length >= limit
   const models = useMemo(() => [...new Set(all.map((t) => t.model))].sort(), [all])
   const items = useMemo(() => {
     const needle = text.trim().toLowerCase()
@@ -161,14 +193,16 @@ export function TraceList({ session }: { session?: string }) {
   }, [all, text, model, status])
 
   const totals = useMemo(() => {
-    const seconds = items.reduce((sum, t) => sum + t.elapsed_seconds, 0)
-    const tokens = items.reduce((sum, t) => sum + (t.usage.total ?? 0), 0)
+    const measured = items.filter(isMeasured)
+    const seconds = measured.reduce((sum, t) => sum + t.elapsed_seconds, 0)
+    const tokens = measured.reduce((sum, t) => sum + t.usage.total, 0)
     const tools = items.reduce((sum, t) => sum + t.tool_count, 0)
     const failed = items.reduce((sum, t) => sum + t.failed_tools, 0)
     const errors = items.filter((t) => t.status !== 'ok').length
-    return { seconds, tokens, tools, failed, errors }
+    return { measured: measured.length, unmeasured: items.length - measured.length, seconds, tokens, tools, failed, errors }
   }, [items])
-  const maxSeconds = Math.max(1, ...items.map((t) => t.elapsed_seconds))
+  const maxSeconds = Math.max(1, ...items.map((t) => t.elapsed_seconds ?? 0))
+  const unmeasuredHint = totals.unmeasured ? ` · ${totals.unmeasured} 轮旧记录未计入` : ''
 
   return (
     <main className="h-full overflow-auto">
@@ -198,19 +232,39 @@ export function TraceList({ session }: { session?: string }) {
 
         {trace.data && (
           <>
+            {capped && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                <span>仅统计最近 {all.length} 轮，更早的对话没有计入下面的数字。</span>
+                {limit < LIMIT_MAX && (
+                  <button
+                    type="button"
+                    onClick={() => setLimit((n) => Math.min(n + PAGE, LIMIT_MAX))}
+                    disabled={trace.isFetching}
+                    className="rounded-md bg-white px-2 py-1 text-xs font-medium text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100 disabled:opacity-60 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-800"
+                  >
+                    {trace.isFetching ? '加载中…' : `再加载 ${PAGE} 轮`}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat icon={Clock} label="对话轮数" value={String(items.length)} hint={totals.errors ? `${totals.errors} 轮未正常完成` : '全部正常完成'} />
+              <Stat
+                icon={Clock}
+                label={capped ? '最近对话轮数' : '对话轮数'}
+                value={String(items.length)}
+                hint={totals.errors ? `${totals.errors} 轮未正常完成` : '全部正常完成'}
+              />
               <Stat
                 icon={Clock}
                 label="平均耗时"
-                value={formatDuration(items.length ? totals.seconds / items.length : 0)}
-                hint={`合计 ${formatDuration(totals.seconds)}`}
+                value={totals.measured ? formatDuration(totals.seconds / totals.measured) : '—'}
+                hint={`合计 ${formatDuration(totals.seconds)}${unmeasuredHint}`}
               />
               <Stat
                 icon={Coins}
                 label="tokens"
                 value={formatTokens(totals.tokens)}
-                hint={`平均每轮 ${formatTokens(items.length ? totals.tokens / items.length : 0)}`}
+                hint={`平均每轮 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}${unmeasuredHint}`}
               />
               <Stat
                 icon={totals.failed ? AlertTriangle : Wrench}

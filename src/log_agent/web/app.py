@@ -39,6 +39,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 COOKIE = "log_agent_auth"
 CSRF_HEADER = "x-log-agent-request"
 SHARE_TTL_CHOICES = {None, 1, 24, 24 * 7, 24 * 30}
+TRACE_LIMIT_MAX = 2000
 
 
 @dataclass
@@ -343,32 +344,39 @@ def create_app(config: WebConfig) -> FastAPI:
         if not config.db_path.exists():
             return []
         with _connect(config) as conn:
-            rows = SessionStore(conn).recent_turns(max(1, min(limit, 1000)), session or None)
+            rows = SessionStore(conn).trace_summaries(max(1, min(limit, TRACE_LIMIT_MAX)), session or None)
         items = []
-        for name, title, number, payload in rows:
-            tools = [t for t in payload.get("tool_calls") or [] if isinstance(t, dict)]
+        for row in rows:
+            tools = [t for t in row["tools"] if isinstance(t, list) and len(t) == 4]
             counts: dict[str, int] = {}
-            for tool in tools:
-                counts[str(tool.get("name") or "?")] = counts.get(str(tool.get("name") or "?"), 0) + 1
-            llm_calls = payload.get("llm_calls")
+            for name, _, _, _ in tools:
+                counts[str(name or "?")] = counts.get(str(name or "?"), 0) + 1
+            legacy = row["provenance"] == "legacy_unknown"
+            elapsed = row["elapsed_seconds"]
+            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平均值时跳过，而不是当成 0
+            measured = not legacy and isinstance(elapsed, (int, float))
             items.append({
-                "session": name,
-                "title": title,
-                "turn": number,
-                "question": payload.get("question") or "",
-                "model": payload.get("model") or "",
-                "status": payload.get("status") or "ok",
-                "error": payload.get("error"),
-                "generated_at": payload.get("generated_at"),
-                "elapsed_seconds": payload.get("elapsed_seconds") or 0,
-                "usage": payload.get("usage") or {},
+                "session": row["session"],
+                "title": row["title"],
+                "turn": row["turn"],
+                "question": row["question"] or "",
+                "model": row["model"] or "",
+                "status": row["status"] or "ok",
+                "error": row["error"],
+                "generated_at": row["generated_at"],
+                "elapsed_seconds": elapsed if measured else None,
+                "usage": (
+                    {"input": row["input"] or 0, "output": row["output"] or 0, "total": row["total"] or 0}
+                    if measured else None
+                ),
                 "tool_count": len(tools),
-                "failed_tools": sum(1 for t in tools if t.get("failed")),
-                "tool_seconds": round(sum(float(t.get("seconds") or 0) for t in tools), 3),
+                "failed_tools": sum(1 for t in tools if t[2]),
+                "incomplete_tools": sum(1 for t in tools if t[3]),
+                "tool_seconds": round(sum(float(t[1] or 0) for t in tools), 3),
                 "tools": counts,
-                "llm_calls": len(llm_calls) if isinstance(llm_calls, list) else None,
-                "budget_hit": bool(payload.get("budget_hit")),
-                "legacy": payload.get("provenance") == "legacy_unknown",
+                "llm_calls": row["llm_calls"],
+                "budget_hit": bool(row["budget_hit"]),
+                "legacy": legacy,
             })
         return _redacted_copy(items, config.redact_owner)
 
