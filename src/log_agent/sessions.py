@@ -248,7 +248,7 @@ class SessionStore:
                 "elapsed_seconds", "input", "output", "total", "budget_hit", "provenance", "llm_calls", "tools")
         result = []
         for row in rows:
-            item = dict(zip(keys, row))
+            item = dict(zip(keys, row, strict=True))
             item["tools"] = json.loads(item["tools"] or "[]")
             result.append(item)
         return result
