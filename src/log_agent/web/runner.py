@@ -37,7 +37,158 @@ TURN_LOCK = threading.Lock()
 
 
 class TurnCancelled(KeyboardInterrupt):
-    """浏览器断开或点了停止：沿用 Ctrl+C 的中断路径，已输出的部分照常保存。"""
+    """用户点了停止：沿用 Ctrl+C 的中断路径，已输出的部分照常保存。"""
+
+
+# 跑完的轮次再保留一会儿：浏览器刚好在结束前后切回来时，仍能重放完整过程而不是 404
+LIVE_RUN_GRACE_SECONDS = 120
+
+
+class LiveRun:
+    """一轮正在进行（或刚结束）的分析：和浏览器连接解耦。
+
+    分析线程把每个 AG-UI 事件追加到 events 并推给当前所有订阅者。浏览器切到别的会话、
+    刷新页面或断网都只是退订，分析照常跑完并存档；回来时 subscribe 先拿到已有事件重放，
+    再接着收后续事件。只有显式的停止请求（cancelled）才会中断本轮。
+    """
+
+    def __init__(self, session: str, question: str, run_id: str, *, turn: int | None = None) -> None:
+        self.session = session
+        self.question = question
+        self.run_id = run_id
+        # 这一轮存档后会是第几轮：前端拿它和会话历史比对，已经存档的就不再重放，避免出现两遍
+        self.turn = turn
+        self.saved_turn: int | None = None
+        self.started = time.time()
+        self.finished_at: float | None = None
+        self.cancelled = threading.Event()
+        self.events: list[dict[str, Any]] = []
+        self._finished = threading.Event()
+        self._lock = threading.Lock()
+        self._subscribers: list[tuple[Any, Any]] = []
+
+    @property
+    def done(self) -> bool:
+        return self.finished_at is not None
+
+    def wait(self, timeout: float) -> bool:
+        return self._finished.wait(timeout)
+
+    def emit(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            self._store(event)
+            subscribers = list(self._subscribers)
+        self._push(subscribers, event)
+
+    def _store(self, event: dict[str, Any]) -> None:
+        """记下用于重放的事件，同时压缩体积：重放结果不变，但不会随输出的字数线性增长。
+
+        - 同一条回答连续的文字增量合并成一条；
+        - 草稿（log_agent.draft）每次 reset 都会清空，之前的草稿事件不再需要重放。
+        """
+        kind = event.get("type")
+        if kind == "CUSTOM" and event.get("name") == "log_agent.turn":
+            value = event.get("value") or {}
+            if isinstance(value, dict) and isinstance(value.get("turn"), int):
+                self.saved_turn = value["turn"]
+        last = self.events[-1] if self.events else None
+        if (kind == "TEXT_MESSAGE_CONTENT" and last is not None and last.get("type") == kind
+                and last.get("messageId") == event.get("messageId")):
+            # 推给订阅者的是原事件对象，这里只替换存档里的那一份，不能原地修改
+            self.events[-1] = {**last, "delta": str(last.get("delta", "")) + str(event.get("delta", ""))}
+            return
+        if kind == "CUSTOM" and event.get("name") == "log_agent.draft":
+            value = event.get("value") or {}
+            if value.get("reset"):
+                self.events = [e for e in self.events if not (e.get("type") == "CUSTOM" and e.get("name") == "log_agent.draft")]
+            elif (last is not None and last.get("type") == "CUSTOM" and last.get("name") == "log_agent.draft"
+                    and "delta" in (last.get("value") or {}) and "delta" in value):
+                merged = str(last["value"]["delta"]) + str(value["delta"])
+                self.events[-1] = {**last, "value": {**last["value"], "delta": merged}}
+                return
+        self.events.append(event)
+
+    def finish(self) -> None:
+        with self._lock:
+            self.finished_at = time.time()
+            subscribers, self._subscribers = self._subscribers, []
+        self._finished.set()
+        self._push(subscribers, None)
+        # 保留期一过就释放事件，不依赖之后还有没有人来查
+        timer = threading.Timer(LIVE_RUN_GRACE_SECONDS, discard_live_run, args=(self.session, self))
+        timer.daemon = True
+        timer.start()
+
+    def subscribe(self, loop: Any, queue: Any) -> list[dict[str, Any]]:
+        """返回到目前为止的全部事件；若还没结束，之后的事件推到 queue（结束时推 None）。"""
+        with self._lock:
+            snapshot = list(self.events)
+            if self.done:
+                queue.put_nowait(None)
+            else:
+                self._subscribers.append((loop, queue))
+        return snapshot
+
+    def unsubscribe(self, queue: Any) -> None:
+        with self._lock:
+            self._subscribers = [(lp, q) for lp, q in self._subscribers if q is not queue]
+
+    @staticmethod
+    def _push(subscribers: list[tuple[Any, Any]], event: dict[str, Any] | None) -> None:
+        for loop, queue in subscribers:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+            except RuntimeError:  # 订阅者所在的事件循环已关闭
+                pass
+
+    def describe(self) -> dict[str, Any]:
+        return {"active": not self.done, "question": self.question, "run_id": self.run_id,
+                "turn": self.turn, "saved_turn": self.saved_turn,
+                "started": self.started, "finished_at": self.finished_at}
+
+
+_LIVE_LOCK = threading.Lock()
+_LIVE_RUNS: dict[str, LiveRun] = {}
+# 停止请求比提问请求先到（刚发出就点停止）时先记下 run_id，这一轮一登记就立刻按中断处理
+_EARLY_STOPS: dict[str, float] = {}
+EARLY_STOP_TTL_SECONDS = 300
+
+
+def register_live_run(run: LiveRun) -> None:
+    with _LIVE_LOCK:
+        _LIVE_RUNS[run.session] = run
+        if _EARLY_STOPS.pop(run.run_id, None) is not None:
+            run.cancelled.set()
+
+
+def get_live_run(session: str) -> LiveRun | None:
+    with _LIVE_LOCK:
+        return _LIVE_RUNS.get(session)
+
+
+def discard_live_run(session: str, run: LiveRun | None = None) -> None:
+    """移除会话的 live run；给了 run 时只在它仍是当前登记的那一轮时才移除。"""
+    with _LIVE_LOCK:
+        if run is None or _LIVE_RUNS.get(session) is run:
+            _LIVE_RUNS.pop(session, None)
+
+
+def request_stop(session: str, run_id: str | None) -> dict[str, Any]:
+    """停止指定的一轮。还没登记的 run_id 先记下，等它开始时直接按中断处理。"""
+    with _LIVE_LOCK:
+        live = _LIVE_RUNS.get(session)
+        if live is not None and (run_id is None or live.run_id == run_id):
+            if live.done:
+                return {"stopped": False, "finished": True}
+            live.cancelled.set()
+            return {"stopped": True}
+        if run_id is None:
+            return {"stopped": False, "finished": True}
+        now = time.time()
+        for key in [k for k, t in _EARLY_STOPS.items() if now - t > EARLY_STOP_TTL_SECONDS]:
+            del _EARLY_STOPS[key]
+        _EARLY_STOPS[run_id] = now
+        return {"stopped": True, "pending": True}
 
 
 def _event(kind: str, **fields: Any) -> dict[str, Any]:

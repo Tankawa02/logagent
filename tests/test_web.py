@@ -347,6 +347,119 @@ def test_chat_streams_ag_ui_events_and_records_turn(demo, scripted_agent) -> Non
     assert client.get("/api/trace", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
+def _wait_until_done(client, name: str, timeout: float = 10.0) -> dict:
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        live = client.get(f"/api/sessions/{name}/chat/live", headers=OWNER).json()
+        if not live["active"]:
+            return live
+        time.sleep(0.05)
+    raise AssertionError("分析没有在预期时间内结束")
+
+
+def test_chat_survives_disconnect_and_can_be_rejoined(demo, scripted_agent, monkeypatch) -> None:
+    from log_agent.web import runner
+
+    monkeypatch.setattr(runner, "_LIVE_RUNS", {})  # 别的用例刚跑完的轮次还在保留期里
+    db, *_ = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    assert client.get(f"/api/sessions/{SESSION}/chat/live", headers=OWNER).json() == {"active": False}
+    assert client.get(f"/api/sessions/{SESSION}/chat/stream", headers=OWNER).status_code == 404
+
+    # 只读到第一个事件就断开（相当于切到别的会话）：分析不能因此被中断
+    with client.stream("POST", f"/api/sessions/{SESSION}/chat", json={"question": "切走再回来"}, headers=WRITE) as response:
+        first = next(line for line in response.iter_lines() if line.startswith("data:"))
+    assert json.loads(first[5:])["type"] == "RUN_STARTED"
+
+    live = _wait_until_done(client, SESSION)
+    assert live["question"] == "切走再回来" and live["finished_at"]
+    assert live["turn"] == 2 and live["saved_turn"] == 2
+    turn = client.get(f"/api/sessions/{SESSION}/turns/2", headers=OWNER).json()
+    assert turn["question"] == "切走再回来" and turn["status"] == "ok"
+
+    # 切回来：重放这一轮完整的事件，和直接看到的一样
+    with client.stream("GET", f"/api/sessions/{SESSION}/chat/stream", headers=OWNER) as response:
+        replay = sse_events(response)
+    kinds = [e["type"] for e in replay]
+    assert kinds[0] == "RUN_STARTED" and kinds[-1] == "RUN_FINISHED"
+    assert "一句话结论" in "".join(e["delta"] for e in replay if e["type"] == "TEXT_MESSAGE_CONTENT")
+    assert any(e["type"] == "CUSTOM" and e["name"] == "log_agent.turn" for e in replay)
+
+    # 只有本人能看、能停；停一个已经结束的轮次什么也不做
+    assert client.get(f"/api/sessions/{SESSION}/chat/live").status_code == 401
+    assert client.post(f"/api/sessions/{SESSION}/chat/stop", headers=OWNER).status_code == 403
+    assert client.post(f"/api/sessions/{SESSION}/chat/stop", headers=WRITE).json()["stopped"] is False
+
+
+def test_live_run_replay_is_compact_and_expires(monkeypatch) -> None:
+    from log_agent.web import runner
+
+    monkeypatch.setattr(runner, "_LIVE_RUNS", {})
+    monkeypatch.setattr(runner, "LIVE_RUN_GRACE_SECONDS", 0.05)
+    live = runner.LiveRun("s", "q", "run-1", turn=3)
+    runner.register_live_run(live)
+    for ch in "abc":
+        live.emit({"type": "CUSTOM", "name": "log_agent.draft", "value": {"delta": ch}})
+    live.emit({"type": "CUSTOM", "name": "log_agent.draft", "value": {"reset": True}})
+    for ch in "一二三":
+        live.emit({"type": "TEXT_MESSAGE_CONTENT", "messageId": "m", "delta": ch})
+    live.emit({"type": "CUSTOM", "name": "log_agent.turn", "value": {"turn": 3}})
+    assert live.events == [
+        {"type": "CUSTOM", "name": "log_agent.draft", "value": {"reset": True}},
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m", "delta": "一二三"},
+        {"type": "CUSTOM", "name": "log_agent.turn", "value": {"turn": 3}},
+    ]
+    assert live.describe()["saved_turn"] == 3
+
+    live.finish()
+    assert live.wait(1)
+    import time
+
+    deadline = time.monotonic() + 2
+    while runner.get_live_run("s") is not None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert runner.get_live_run("s") is None  # 保留期一过自动释放，不需要有人再来查
+
+
+def test_stop_before_run_registers_is_applied(monkeypatch) -> None:
+    from log_agent.web import runner
+
+    monkeypatch.setattr(runner, "_LIVE_RUNS", {})
+    monkeypatch.setattr(runner, "_EARLY_STOPS", {})
+    # 停止请求先到：记下，不影响别的 run
+    assert runner.request_stop("s", "run-early") == {"stopped": True, "pending": True}
+    other = runner.LiveRun("s", "q", "run-other")
+    runner.register_live_run(other)
+    assert not other.cancelled.is_set()
+    early = runner.LiveRun("s", "q", "run-early")
+    runner.register_live_run(early)
+    assert early.cancelled.is_set()
+
+
+def test_delete_stops_running_turn_first(demo, monkeypatch) -> None:
+    import threading
+
+    from log_agent.web import runner
+
+    monkeypatch.setattr(runner, "_LIVE_RUNS", {})
+    db, *_ = demo
+    client = client_for(db)
+    live = runner.LiveRun(SESSION, "q", "run-del")
+    runner.register_live_run(live)
+
+    def worker() -> None:
+        live.cancelled.wait(5)
+        live.finish()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    assert client.delete(f"/api/sessions/{SESSION}", headers=WRITE).json() == {"deleted": True}
+    assert live.cancelled.is_set() and live.done
+    assert runner.get_live_run(SESSION) is None
+
+
 def test_chat_accepts_plain_question_and_rejects_empty(demo, scripted_agent) -> None:
     db, *_ = demo
     client = client_for(db, agent_factory=cli._web_agent_factory)

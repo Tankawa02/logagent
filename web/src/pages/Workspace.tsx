@@ -55,7 +55,23 @@ export function Workspace({
   const [sharing, setSharing] = useState(false)
 
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta })
-  const session = useQuery({ queryKey: [...scopeKey(scope), 'session'], queryFn: () => api.session(scope), retry: false })
+  // 切回来时总要重新拉：离开期间服务端可能已经跑完并存档了一轮
+  const session = useQuery({
+    queryKey: [...scopeKey(scope), 'session'],
+    queryFn: () => api.session(scope),
+    retry: false,
+    refetchOnMount: 'always',
+  })
+  const liveName = scope.kind === 'owner' && meta.data?.can_chat ? scope.name : null
+  const live = useQuery({
+    queryKey: ['live', liveName],
+    queryFn: () => api.liveRun(liveName!),
+    enabled: !!liveName,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+    retry: false,
+  })
   const turns = session.data?.turn_list ?? []
   const turnNumber = search.turn ?? turns.at(-1)?.turn
 
@@ -132,10 +148,18 @@ export function Workspace({
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">
-          {canChat && scope.kind === 'owner' ? (
+          {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
+              否则离开期间刚跑完的一轮会缺失 */}
+          {canChat && scope.kind === 'owner' && ((live.isPending && !live.isError) || !session.isFetchedAfterMount) ? (
+            <div className="flex h-full items-center justify-center">
+              <Spinner />
+            </div>
+          ) : canChat && scope.kind === 'owner' ? (
             <ChatPanel
+              key={scope.name}
               session={scope.name}
               turns={info.turn_list}
+              live={live.data ?? null}
               ask={ask}
               onOpen={openSource}
               onShowTurn={(n) => setSearch({ ...search, turn: n, panel: 'report', ev: undefined })}

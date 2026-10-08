@@ -2,6 +2,7 @@ import type {
   CreateSessionBody,
   FsGlob,
   FsListing,
+  LiveRun,
   Meta,
   ModelList,
   Place,
@@ -86,6 +87,14 @@ export const api = {
       headers: CSRF_HEADERS,
     }),
   chatUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat`,
+  chatStreamUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat/stream`,
+  liveRun: (name: string) => request<LiveRun>(`/api/sessions/${encodeURIComponent(name)}/chat/live`),
+  stopChat: (name: string, runId: string | undefined) =>
+    request<{ stopped: boolean; pending?: boolean; finished?: boolean }>(`/api/sessions/${encodeURIComponent(name)}/chat/stop`, {
+      method: 'POST',
+      headers: { ...CSRF_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId ?? null }),
+    }),
   fsList: (path: string, opts: { hidden?: boolean; q?: string; dirs?: boolean } = {}) =>
     request<FsListing>(
       `/api/fs/list?${query({
