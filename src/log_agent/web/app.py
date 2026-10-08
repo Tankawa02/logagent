@@ -447,6 +447,35 @@ def create_app(config: WebConfig) -> FastAPI:
             raise HTTPException(409, f"会话使用的日志已不存在：{missing[0]}")
         return _start_turn(config, info, question, body)
 
+    @app.get("/api/sessions/{name}/chat/live")
+    def chat_live(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        """这个会话有没有正在进行（或刚结束）的一轮：页面切回来时据此重新接上。"""
+        from .runner import get_live_run
+
+        live = get_live_run(scope.name)
+        if live is None:
+            return {"active": False}
+        return _redacted_copy(live.describe(), config.redact_owner)
+
+    @app.get("/api/sessions/{name}/chat/stream")
+    def chat_stream(scope: Scope = Depends(owner_scope)) -> StreamingResponse:
+        from .runner import get_live_run
+
+        live = get_live_run(scope.name)
+        if live is None:
+            raise HTTPException(404, "这个会话没有正在进行的分析")
+        return _live_stream(live)
+
+    @app.post("/api/sessions/{name}/chat/stop")
+    def chat_stop(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        from .runner import get_live_run
+
+        live = get_live_run(scope.name)
+        if live is None or live.done:
+            return {"stopped": False}
+        live.cancelled.set()
+        return {"stopped": True}
+
     # ---- 前端页面 ----------------------------------------------------------
 
     @app.get("/s/{token}")
@@ -588,23 +617,20 @@ def _question_from(body: Any) -> str:
 
 
 def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[str, Any]) -> StreamingResponse:
-    from .runner import TURN_LOCK, custom, run_turn
+    from .runner import TURN_LOCK, LiveRun, custom, register_live_run, run_turn
 
     if not TURN_LOCK.acquire(blocking=False):
         raise HTTPException(409, "已有一轮分析正在进行，请等它结束后再追问")
     thread_id = str(body.get("threadId") or info.name)
     run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-    cancelled = threading.Event()
-
-    def emit(event: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, event)
+    live = LiveRun(info.name, question, run_id)
+    register_live_run(live)
+    emit = live.emit
 
     def work() -> None:
         try:
             run_turn(
-                db_path=config.db_path, info=info, question=question, emit=emit, cancelled=cancelled,
+                db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
                 redact_owner=config.redact_owner,
             )
@@ -616,12 +642,25 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
                   "message": redact_log(f"{type(exc).__name__}: {exc}", enabled=config.redact_owner)})
         finally:
             TURN_LOCK.release()
-            emit(None)
+            live.finish()
 
     threading.Thread(target=work, name=f"log-agent-turn-{info.name}", daemon=True).start()
+    return _live_stream(live)
+
+
+def _live_stream(live: Any) -> StreamingResponse:
+    """把一轮分析以 SSE 推给浏览器：先重放已有事件，再跟随后续事件直到本轮结束。
+
+    浏览器断开（切到别的会话、刷新、关页面）只是退订，不会中断分析；要中断得调用 stop 接口。
+    """
 
     async def stream():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        backlog = live.subscribe(loop, queue)
         try:
+            for event in backlog:
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
@@ -632,8 +671,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
                     break
                 yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
         finally:
-            # 浏览器断开（关页面、点停止）：通知分析线程按中断收尾，已输出部分照常存档
-            cancelled.set()
+            live.unsubscribe(queue)
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

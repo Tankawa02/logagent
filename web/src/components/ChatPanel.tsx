@@ -1,10 +1,11 @@
-import { fetchServerSentEvents, useChat, type UIMessage } from '@tanstack/ai-react'
+import { useChat, type UIMessage } from '@tanstack/ai-react'
 import { Activity as ActivityIcon, ArrowUp, Check, ChevronDown, Copy, FileSearch, Square, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { api, CSRF_HEADERS } from '../lib/api'
+import { api } from '../lib/api'
 import { ASSESSMENT, CHECK_STATUS, visibleReport } from '../lib/format'
+import { liveChatConnection } from '../lib/live-chat'
 import { takePendingQuestion } from '../lib/pending'
-import type { SourceTarget, TurnBrief } from '../lib/types'
+import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { Markdown } from './Markdown'
 import { Badge, ErrorBox, Spinner } from './ui'
 
@@ -57,6 +58,7 @@ function historyMessages(turns: TurnBrief[]): UIMessage[] {
 export function ChatPanel({
   session,
   turns,
+  live,
   ask,
   onTurnSaved,
   onShowTurn,
@@ -64,6 +66,8 @@ export function ChatPanel({
 }: {
   session: string
   turns: TurnBrief[]
+  /** 打开页面时服务端正在跑的那一轮（切走后再切回来），需要接回去继续显示 */
+  live: LiveRun | null
   ask: AskRequest | null
   onTurnSaved: (turn: number) => void
   onShowTurn: (turn: number) => void
@@ -74,15 +78,22 @@ export function ChatPanel({
   const [serverError, setServerError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [savedTurn, setSavedTurn] = useState<number | null>(null)
+  const [stopping, setStopping] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
 
+  const resumeQuestion = live?.active ? (live.question ?? '') : null
   // connection / initialMessages 变化会重建 ChatClient：只在切换会话时创建一次
-  const connection = useMemo(() => fetchServerSentEvents(api.chatUrl(session), { headers: CSRF_HEADERS }), [session])
-  const initialMessages = useMemo(() => historyMessages(turns), [session]) // eslint-disable-line react-hooks/exhaustive-deps
+  const connection = useMemo(() => liveChatConnection(session), [session])
+  const initialMessages = useMemo(() => {
+    const history = historyMessages(turns)
+    if (resumeQuestion === null) return history
+    // 还没存档的那一轮：先把问题摆上，reload() 会接回服务端的事件流，把过程和回答重放出来
+    return [...history, { id: `live-${live?.run_id ?? 'run'}-q`, role: 'user' as const, parts: [{ type: 'text' as const, content: resumeQuestion }] }]
+  }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
   const briefs = useMemo(() => new Map(turns.map((t) => [t.turn, t])), [turns])
 
-  const { messages, sendMessage, isLoading, error, stop } = useChat({
+  const { messages, sendMessage, reload, isLoading, error, stop } = useChat({
     connection,
     threadId: session,
     initialMessages,
@@ -121,6 +132,35 @@ export function ChatPanel({
     setServerError(null)
     setSavedTurn(null)
     void sendMessage(question)
+  }
+
+  // 接回切走前还没跑完的那一轮；延迟一拍，StrictMode 的二次挂载只会真正接一次
+  useEffect(() => {
+    if (resumeQuestion === null) return
+    const timer = setTimeout(() => {
+      setTools([])
+      setDraft('')
+      setServerError(null)
+      setSavedTurn(null)
+      connection.resumeNext()
+      void reload()
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!isLoading) setStopping(false)
+  }, [isLoading])
+
+  // 分析在服务端独立运行，断开连接不会中断它：停止要明确告诉服务端，然后等它按中断收尾、存档
+  function requestStop() {
+    setStopping(true)
+    api.stopChat(session).then(
+      (result) => {
+        if (!result.stopped) stop()
+      },
+      () => stop(),
+    )
   }
 
   useEffect(() => {
@@ -181,7 +221,10 @@ export function ChatPanel({
                   text={text}
                   brief={turn !== undefined ? briefs.get(turn) : undefined}
                   historic={turn !== undefined}
-                  savedTurn={message === lastAssistant && turn === undefined && !isLoading ? savedTurn : null}
+                  savedTurn={
+                    // 被中断、还没产出回答的一轮不能把「已保存」标到上一轮的回答上
+                    message === lastAssistant && index > lastUserIndex && turn === undefined && !isLoading ? savedTurn : null
+                  }
                   onOpen={onOpen}
                   onShowTurn={onShowTurn}
                   turn={turn}
@@ -235,11 +278,13 @@ export function ChatPanel({
             {isLoading ? (
               <button
                 type="button"
-                onClick={stop}
-                aria-label="停止"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900"
+                onClick={requestStop}
+                disabled={stopping}
+                aria-label={stopping ? '正在停止' : '停止'}
+                title={stopping ? '正在停止，等当前步骤结束后保存已输出的部分' : '停止本轮'}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
               >
-                <Square className="h-3.5 w-3.5 fill-current" />
+                {stopping ? <Spinner /> : <Square className="h-3.5 w-3.5 fill-current" />}
               </button>
             ) : (
               <button
@@ -252,7 +297,11 @@ export function ChatPanel({
               </button>
             )}
           </form>
-          <p className="text-center text-xs text-zinc-400">点停止或关闭页面会中断本轮，已输出的部分照常保存。</p>
+          <p className="text-center text-xs text-zinc-400">
+            {stopping
+              ? '正在停止，当前步骤结束后会保存已输出的部分。'
+              : '切到别的会话或关闭页面不会中断分析，回来可接着看；点停止才会中断本轮。'}
+          </p>
         </div>
       </div>
     </div>

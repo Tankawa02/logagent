@@ -347,6 +347,51 @@ def test_chat_streams_ag_ui_events_and_records_turn(demo, scripted_agent) -> Non
     assert client.get("/api/trace", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
+def _wait_until_done(client, name: str, timeout: float = 10.0) -> dict:
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        live = client.get(f"/api/sessions/{name}/chat/live", headers=OWNER).json()
+        if not live["active"]:
+            return live
+        time.sleep(0.05)
+    raise AssertionError("分析没有在预期时间内结束")
+
+
+def test_chat_survives_disconnect_and_can_be_rejoined(demo, scripted_agent, monkeypatch) -> None:
+    from log_agent.web import runner
+
+    monkeypatch.setattr(runner, "_LIVE_RUNS", {})  # 别的用例刚跑完的轮次还在保留期里
+    db, *_ = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    assert client.get(f"/api/sessions/{SESSION}/chat/live", headers=OWNER).json() == {"active": False}
+    assert client.get(f"/api/sessions/{SESSION}/chat/stream", headers=OWNER).status_code == 404
+
+    # 只读到第一个事件就断开（相当于切到别的会话）：分析不能因此被中断
+    with client.stream("POST", f"/api/sessions/{SESSION}/chat", json={"question": "切走再回来"}, headers=WRITE) as response:
+        first = next(line for line in response.iter_lines() if line.startswith("data:"))
+    assert json.loads(first[5:])["type"] == "RUN_STARTED"
+
+    live = _wait_until_done(client, SESSION)
+    assert live["question"] == "切走再回来" and live["finished_at"]
+    turn = client.get(f"/api/sessions/{SESSION}/turns/2", headers=OWNER).json()
+    assert turn["question"] == "切走再回来" and turn["status"] == "ok"
+
+    # 切回来：重放这一轮完整的事件，和直接看到的一样
+    with client.stream("GET", f"/api/sessions/{SESSION}/chat/stream", headers=OWNER) as response:
+        replay = sse_events(response)
+    kinds = [e["type"] for e in replay]
+    assert kinds[0] == "RUN_STARTED" and kinds[-1] == "RUN_FINISHED"
+    assert "一句话结论" in "".join(e["delta"] for e in replay if e["type"] == "TEXT_MESSAGE_CONTENT")
+    assert any(e["type"] == "CUSTOM" and e["name"] == "log_agent.turn" for e in replay)
+
+    # 只有本人能看、能停；停一个已经结束的轮次什么也不做
+    assert client.get(f"/api/sessions/{SESSION}/chat/live").status_code == 401
+    assert client.post(f"/api/sessions/{SESSION}/chat/stop", headers=OWNER).status_code == 403
+    assert client.post(f"/api/sessions/{SESSION}/chat/stop", headers=WRITE).json() == {"stopped": False}
+
+
 def test_chat_accepts_plain_question_and_rejects_empty(demo, scripted_agent) -> None:
     db, *_ = demo
     client = client_for(db, agent_factory=cli._web_agent_factory)

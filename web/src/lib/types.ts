@@ -205,6 +205,15 @@ export interface FsListing {
   truncated: boolean
 }
 
+/** 服务端正在跑（或刚跑完）的一轮，和浏览器连接无关 */
+export interface LiveRun {
+  active: boolean
+  question?: string
+  run_id?: string
+  started?: number
+  finished_at?: number | null
+}
+
 export interface FsGlob {
   files: string[]
   dir: string

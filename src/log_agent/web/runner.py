@@ -37,7 +37,90 @@ TURN_LOCK = threading.Lock()
 
 
 class TurnCancelled(KeyboardInterrupt):
-    """浏览器断开或点了停止：沿用 Ctrl+C 的中断路径，已输出的部分照常保存。"""
+    """用户点了停止：沿用 Ctrl+C 的中断路径，已输出的部分照常保存。"""
+
+
+# 跑完的轮次再保留一会儿：浏览器刚好在结束前后切回来时，仍能重放完整过程而不是 404
+LIVE_RUN_GRACE_SECONDS = 120
+
+
+class LiveRun:
+    """一轮正在进行（或刚结束）的分析：和浏览器连接解耦。
+
+    分析线程把每个 AG-UI 事件追加到 events 并推给当前所有订阅者。浏览器切到别的会话、
+    刷新页面或断网都只是退订，分析照常跑完并存档；回来时 subscribe 先拿到已有事件重放，
+    再接着收后续事件。只有显式的停止请求（cancelled）才会中断本轮。
+    """
+
+    def __init__(self, session: str, question: str, run_id: str) -> None:
+        self.session = session
+        self.question = question
+        self.run_id = run_id
+        self.started = time.time()
+        self.finished_at: float | None = None
+        self.cancelled = threading.Event()
+        self.events: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
+        self._subscribers: list[tuple[Any, Any]] = []
+
+    @property
+    def done(self) -> bool:
+        return self.finished_at is not None
+
+    def emit(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            self.events.append(event)
+            subscribers = list(self._subscribers)
+        self._push(subscribers, event)
+
+    def finish(self) -> None:
+        with self._lock:
+            self.finished_at = time.time()
+            subscribers, self._subscribers = self._subscribers, []
+        self._push(subscribers, None)
+
+    def subscribe(self, loop: Any, queue: Any) -> list[dict[str, Any]]:
+        """返回到目前为止的全部事件；若还没结束，之后的事件推到 queue（结束时推 None）。"""
+        with self._lock:
+            snapshot = list(self.events)
+            if self.done:
+                queue.put_nowait(None)
+            else:
+                self._subscribers.append((loop, queue))
+        return snapshot
+
+    def unsubscribe(self, queue: Any) -> None:
+        with self._lock:
+            self._subscribers = [(lp, q) for lp, q in self._subscribers if q is not queue]
+
+    @staticmethod
+    def _push(subscribers: list[tuple[Any, Any]], event: dict[str, Any] | None) -> None:
+        for loop, queue in subscribers:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+            except RuntimeError:  # 订阅者所在的事件循环已关闭
+                pass
+
+    def describe(self) -> dict[str, Any]:
+        return {"active": not self.done, "question": self.question, "run_id": self.run_id,
+                "started": self.started, "finished_at": self.finished_at}
+
+
+_LIVE_LOCK = threading.Lock()
+_LIVE_RUNS: dict[str, LiveRun] = {}
+
+
+def register_live_run(run: LiveRun) -> None:
+    with _LIVE_LOCK:
+        _LIVE_RUNS[run.session] = run
+
+
+def get_live_run(session: str) -> LiveRun | None:
+    with _LIVE_LOCK:
+        now = time.time()
+        for name in [n for n, r in _LIVE_RUNS.items() if r.done and now - (r.finished_at or now) > LIVE_RUN_GRACE_SECONDS]:
+            del _LIVE_RUNS[name]
+        return _LIVE_RUNS.get(session)
 
 
 def _event(kind: str, **fields: Any) -> dict[str, Any]:
