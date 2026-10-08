@@ -29,7 +29,13 @@ async function* readServerSentEvents(response: Response): AsyncGenerator<Chunk> 
 
 export interface LiveChatConnection extends ConnectConnectionAdapter {
   /** 下一次 connect 改为接回服务端正在跑的那一轮（重放已有事件 + 跟随后续），而不是发起新的一轮 */
-  resumeNext: () => void
+  resumeNext: (runId: string | undefined) => void
+  /** 当前（或最近一次）连接对应的 run_id，停止时用它指明要停哪一轮 */
+  currentRunId: () => string | undefined
+}
+
+function newRunId() {
+  return `run-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
 }
 
 /**
@@ -39,12 +45,21 @@ export interface LiveChatConnection extends ConnectConnectionAdapter {
 export function liveChatConnection(session: string): LiveChatConnection {
   const post = fetchServerSentEvents(api.chatUrl(session), { headers: CSRF_HEADERS })
   let resume = false
+  let runId: string | undefined
   return {
-    resumeNext: () => {
+    resumeNext: (id) => {
       resume = true
+      runId = id
     },
+    currentRunId: () => runId,
     connect(messages, data, abortSignal, runContext) {
-      if (!resume) return post.connect(messages, data, abortSignal, runContext)
+      if (!resume) {
+        // run_id 由浏览器先定好：请求还没到服务端时点停止，服务端也知道要停的是哪一轮
+        runId = runContext?.runId ?? newRunId()
+        // threadId 缺省时和 TanStack 自己的行为一致：随机生成
+        const threadId = runContext?.threadId ?? `thread-${crypto.randomUUID()}`
+        return post.connect(messages, data, abortSignal, { ...runContext, threadId, runId })
+      }
       resume = false
       return (async function* () {
         const response = await fetch(api.chatStreamUrl(session), {

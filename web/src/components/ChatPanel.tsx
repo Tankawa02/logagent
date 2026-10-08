@@ -82,7 +82,10 @@ export function ChatPanel({
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
 
-  const resumeQuestion = live?.active ? (live.question ?? '') : null
+  // 服务端还标着「进行中」、但历史里已经有这一轮（刚存档、还没收尾）时不再接，否则同一轮会出现两遍
+  const liveTurn = live?.saved_turn ?? live?.turn
+  const alreadySaved = typeof liveTurn === 'number' && turns.some((t) => t.turn >= liveTurn)
+  const resumeQuestion = live?.active && !alreadySaved ? (live.question ?? '') : null
   // connection / initialMessages 变化会重建 ChatClient：只在切换会话时创建一次
   const connection = useMemo(() => liveChatConnection(session), [session])
   const initialMessages = useMemo(() => {
@@ -93,7 +96,7 @@ export function ChatPanel({
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
   const briefs = useMemo(() => new Map(turns.map((t) => [t.turn, t])), [turns])
 
-  const { messages, sendMessage, reload, isLoading, error, stop } = useChat({
+  const { messages, sendMessage, reload, isLoading, error } = useChat({
     connection,
     threadId: session,
     initialMessages,
@@ -142,7 +145,7 @@ export function ChatPanel({
       setDraft('')
       setServerError(null)
       setSavedTurn(null)
-      connection.resumeNext()
+      connection.resumeNext(live?.run_id)
       void reload()
     }, 0)
     return () => clearTimeout(timer)
@@ -152,15 +155,14 @@ export function ChatPanel({
     if (!isLoading) setStopping(false)
   }, [isLoading])
 
-  // 分析在服务端独立运行，断开连接不会中断它：停止要明确告诉服务端，然后等它按中断收尾、存档
+  // 分析在服务端独立运行，断开连接不会中断它，所以不能靠断开来「停止」：
+  // 带上 run_id 明确告诉服务端停哪一轮（请求还没到也会先记下），然后继续接收，直到它按中断收尾、存档
   function requestStop() {
     setStopping(true)
-    api.stopChat(session).then(
-      (result) => {
-        if (!result.stopped) stop()
-      },
-      () => stop(),
-    )
+    api.stopChat(session, connection.currentRunId()).catch((err: unknown) => {
+      setStopping(false)
+      setServerError(`停止失败：${err instanceof Error ? err.message : String(err)}，分析仍在进行，可以再点一次停止。`)
+    })
   }
 
   useEffect(() => {

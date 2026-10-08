@@ -214,6 +214,13 @@ def _tz(info: SessionInfo):
 # ---------------------------------------------------------------------------
 
 
+DELETE_STOP_TIMEOUT_SECONDS = 30.0
+
+
+class StopRequest(BaseModel):
+    run_id: str | None = None
+
+
 class ShareRequest(BaseModel):
     ttl_hours: int | None = Field(default=24 * 7)
 
@@ -388,8 +395,18 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @app.delete("/api/sessions/{name}")
     def delete_session(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        from .runner import discard_live_run, get_live_run
+
+        # 正在跑的那一轮要先停下并收尾，否则它会一直占着分析锁，最后还往已删除的会话里存档
+        live = get_live_run(scope.name)
+        if live is not None and not live.done:
+            live.cancelled.set()
+            if not live.wait(DELETE_STOP_TIMEOUT_SECONDS):
+                raise HTTPException(409, "这个会话的分析正在收尾，请稍后再删除")
         with _connect(config) as conn:
-            return {"deleted": SessionStore(conn).delete(scope.name)}
+            deleted = SessionStore(conn).delete(scope.name)
+        discard_live_run(scope.name, live)
+        return {"deleted": deleted}
 
     # ---- 分享链接管理（仅本人）---------------------------------------------
 
@@ -467,14 +484,11 @@ def create_app(config: WebConfig) -> FastAPI:
         return _live_stream(live)
 
     @app.post("/api/sessions/{name}/chat/stop")
-    def chat_stop(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
-        from .runner import get_live_run
+    def chat_stop(body: StopRequest | None = None, scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        from .runner import request_stop
 
-        live = get_live_run(scope.name)
-        if live is None or live.done:
-            return {"stopped": False}
-        live.cancelled.set()
-        return {"stopped": True}
+        run_id = (body.run_id or "").strip()[:128] if body else ""
+        return request_stop(scope.name, run_id or None)
 
     # ---- 前端页面 ----------------------------------------------------------
 
@@ -622,8 +636,8 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
     if not TURN_LOCK.acquire(blocking=False):
         raise HTTPException(409, "已有一轮分析正在进行，请等它结束后再追问")
     thread_id = str(body.get("threadId") or info.name)
-    run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")
-    live = LiveRun(info.name, question, run_id)
+    run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")[:128]
+    live = LiveRun(info.name, question, run_id, turn=info.turns + 1)
     register_live_run(live)
     emit = live.emit
 
@@ -641,8 +655,9 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
             emit({"type": "RUN_ERROR", "threadId": thread_id, "runId": run_id,
                   "message": redact_log(f"{type(exc).__name__}: {exc}", enabled=config.redact_owner)})
         finally:
-            TURN_LOCK.release()
+            # 先标记结束再放锁：任何能开始下一轮的人看到的都是已结束的状态
             live.finish()
+            TURN_LOCK.release()
 
     threading.Thread(target=work, name=f"log-agent-turn-{info.name}", daemon=True).start()
     return _live_stream(live)

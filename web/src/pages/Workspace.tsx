@@ -148,7 +148,9 @@ export function Workspace({
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">
-          {canChat && scope.kind === 'owner' && live.isPending && !live.isError ? (
+          {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
+              否则离开期间刚跑完的一轮会缺失 */}
+          {canChat && scope.kind === 'owner' && ((live.isPending && !live.isError) || !session.isFetchedAfterMount) ? (
             <div className="flex h-full items-center justify-center">
               <Spinner />
             </div>

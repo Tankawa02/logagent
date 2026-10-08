@@ -210,6 +210,9 @@ export interface LiveRun {
   active: boolean
   question?: string
   run_id?: string
+  /** 这一轮存档后的轮次号；会话历史里已有它就说明已经存档，不用再接 */
+  turn?: number | null
+  saved_turn?: number | null
   started?: number
   finished_at?: number | null
 }
