@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import sqlite3
 import string
@@ -90,27 +91,88 @@ def list_directory(
     }
 
 
-def expand_pattern(pattern: str) -> dict[str, Any]:
-    """把路径栏里的通配符展开成文件，规则和新建会话时一致（resolve_log_inputs）。"""
-    from ..inputs import LogInputError, resolve_log_inputs
+GLOB_VISIT_BUDGET = 50_000
+GLOB_TIME_BUDGET = 3.0
 
+
+def _has_glob(value: str) -> bool:
+    return any(ch in value for ch in "*?[")
+
+
+def expand_pattern(pattern: str) -> dict[str, Any]:
+    """把路径栏里输入的路径或通配符展开成文件。
+
+    和命令行的 resolve_log_inputs 不同，这里只做有上限的文件系统匹配：
+    - 不接受 `-`（那是命令行的「读标准输入」，网页请求不能去读服务进程的 stdin）；
+    - 已存在的路径按字面打开，名字里带 `[` 的目录 / 文件也能正常进入；
+    - 不支持 `**`，并限制扫描条目数、耗时和匹配数，超了直接报错而不是悄悄截断。
+    """
     raw = pattern.strip()
     if not raw:
-        raise HTTPException(400, "请输入通配符，如 /var/log/app/*.log")
-    try:
-        files = [p for p in resolve_log_inputs([raw]) if Path(p).is_file()]
-    except LogInputError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if not files:
-        raise HTTPException(404, f"没有匹配的文件：{raw}")
-    # 浏览器跳到第一个通配段之前的目录，用户能看到这些文件在哪
+        raise HTTPException(400, "请输入路径或通配符，如 /var/log/app/*.log")
+    if raw == "-":
+        raise HTTPException(400, "网页里不能从标准输入读取日志，请输入文件路径或通配符")
+    expanded = Path(raw).expanduser()
+    if expanded.exists():
+        resolved = expanded.resolve()
+        if resolved.is_dir():
+            return {"files": [], "dir": str(resolved), "truncated": False}
+        return {"files": [str(resolved)], "dir": str(resolved.parent), "truncated": False}
+    if not _has_glob(raw):
+        raise HTTPException(404, f"路径不存在：{raw}")
+    if "**" in raw:
+        raise HTTPException(400, "网页里不支持 ** 递归匹配，请写出具体的目录层级，如 /var/log/*/app-*.log")
+
+    parts = expanded.parts
     literal: list[str] = []
-    for part in Path(raw).expanduser().parts:
-        if any(ch in part for ch in "*?["):
+    for part in parts:
+        if _has_glob(part):
             break
         literal.append(part)
-    base = Path(*literal) if literal else Path(files[0]).parent
-    return {"files": files[:MAX_ENTRIES], "dir": str(base.resolve()), "truncated": len(files) > MAX_ENTRIES}
+    base = Path(*literal) if literal else Path.cwd()
+    rest = parts[len(literal):]
+    too_broad = HTTPException(400, f"匹配范围太大，请把通配符写得更具体：{raw}")
+    deadline = time.monotonic() + GLOB_TIME_BUDGET
+    visited = 0
+    candidates = [base]
+    for index, part in enumerate(rest):
+        last = index == len(rest) - 1
+        matched: list[Path] = []
+        for directory in candidates:
+            if not _has_glob(part):
+                child = directory / part
+                if child.is_file() if last else child.is_dir():
+                    matched.append(child)
+                continue
+            try:
+                entries = os.scandir(directory)
+            except OSError:
+                continue
+            with entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > GLOB_VISIT_BUDGET or time.monotonic() > deadline:
+                        raise too_broad
+                    # 和 glob 一致：通配符不匹配隐藏文件，除非这一段本身以 . 开头
+                    if entry.name.startswith(".") and not part.startswith("."):
+                        continue
+                    if not fnmatch.fnmatch(entry.name, part):
+                        continue
+                    try:
+                        ok = entry.is_file() if last else entry.is_dir()
+                    except OSError:
+                        continue
+                    if ok:
+                        matched.append(Path(entry.path))
+        if last and len(matched) > MAX_ENTRIES:
+            raise HTTPException(400, f"匹配到的文件超过 {MAX_ENTRIES} 个，请把通配符写得更具体：{raw}")
+        candidates = matched
+        if not candidates:
+            break
+    files = sorted({str(p.resolve()) for p in candidates}) if rest and candidates else []
+    if not files:
+        raise HTTPException(404, f"没有匹配的文件：{raw}")
+    return {"files": files, "dir": str(base.resolve()), "truncated": False}
 
 
 def places(conn: sqlite3.Connection | None) -> list[dict[str, str]]:

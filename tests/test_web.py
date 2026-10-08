@@ -408,6 +408,38 @@ def test_fs_glob_expands_patterns(tmp_path, demo) -> None:
     assert missing.status_code in (400, 404)
 
 
+def test_fs_glob_is_bounded_and_filesystem_only(tmp_path, monkeypatch, demo) -> None:
+    from log_agent.web import workspace
+
+    db, _, _ = demo
+    client = client_for(db)
+
+    def glob(pattern: str):
+        return client.get("/api/fs/glob", params={"pattern": pattern}, headers=OWNER)
+
+    # `-` 是命令行的标准输入标记，网页里不能触发读 stdin
+    assert glob("-").status_code == 400
+    assert glob(str(tmp_path / "**" / "*.log")).status_code == 400
+
+    bracket = tmp_path / "app[old]"
+    bracket.mkdir()
+    (bracket / "x.log").write_text("x")
+    as_dir = glob(str(bracket)).json()
+    assert as_dir == {"files": [], "dir": str(bracket.resolve()), "truncated": False}
+    as_file = glob(str(bracket / "x.log")).json()
+    assert as_file["files"] == [str((bracket / "x.log").resolve())]
+
+    many = tmp_path / "many"
+    many.mkdir()
+    for i in range(8):
+        (many / f"f{i}.log").write_text("x")
+    monkeypatch.setattr(workspace, "MAX_ENTRIES", 5)
+    assert glob(str(many / "*.log")).status_code == 400
+    monkeypatch.setattr(workspace, "MAX_ENTRIES", 2000)
+    monkeypatch.setattr(workspace, "GLOB_VISIT_BUDGET", 3)
+    assert glob(str(many / "*.log")).status_code == 400
+
+
 def test_create_session_from_web_then_first_turn(demo, scripted_agent) -> None:
     db, log, code = demo
     client = client_for(db, agent_factory=cli._web_agent_factory, default_model="openai:gpt-test")

@@ -10,7 +10,7 @@ import { TimelinePane } from '../components/TimelinePane'
 import { Badge, Empty, ErrorBox, Spinner } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
-import { discardPendingQuestion } from '../lib/pending'
+import { discardPendingQuestion, holdPendingQuestion } from '../lib/pending'
 import type { Meta, SessionDetail, SourceTarget } from '../lib/types'
 
 type Panel = 'report' | 'source' | 'timeline'
@@ -66,6 +66,8 @@ export function Workspace({
   useEffect(() => {
     if (handoffName && chatUnavailable) discardPendingQuestion(handoffName)
   }, [handoffName, chatUnavailable])
+  // 会话还在加载时一直保留；离开这个会话页（卸载或切到别的会话）时作废
+  useEffect(() => (handoffName ? holdPendingQuestion(handoffName) : undefined), [handoffName])
 
   const target: SourceTarget | null =
     search.src && search.start ? { source: search.src, start: search.start, end: search.end ?? search.start } : null

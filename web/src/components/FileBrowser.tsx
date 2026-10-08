@@ -98,8 +98,14 @@ export function FileBrowser({
   const expand = useMutation({
     mutationFn: (pattern: string) => api.fsGlob(pattern),
     onSuccess: (result) => {
+      // 部分匹配不能悄悄当成全部：一个都不勾，让用户把通配符写具体
+      if (result.truncated) {
+        setGlobError(new Error(`匹配到的文件超过 ${result.files.length} 个，没有勾选。请把通配符写得更具体。`))
+        return
+      }
       setGlobError(null)
-      setPicked((list) => [...new Set([...list, ...result.files])])
+      // 路径本身存在（比如目录名里带 [ ]）时服务端按字面返回：目录只跳转，文件才勾选
+      if (result.files.length) setPicked((list) => [...new Set([...list, ...result.files])])
       setFilter('')
       setServerFilter('')
       setPath(result.dir)
@@ -141,7 +147,7 @@ export function FileBrowser({
     event.stopPropagation()
     const target = typed.trim()
     if (!target) return
-    // 通配符不是真实路径：先在服务端展开成文件并勾选，再跳到所在目录
+    // 带通配字符的交给服务端：真实存在的路径（如 app[old]）按字面打开，否则展开成文件并勾选
     if (mode === 'file' && GLOB_CHARS.test(target)) expand.mutate(target)
     else open(target)
   }
