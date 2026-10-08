@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { Activity, GanttChart, MessageSquare, Plus, Search, Trash2, Zap } from 'lucide-react'
+import { Activity, BookOpen, Brain, GanttChart, MessageSquare, Plus, Search, Trash2, Zap } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
@@ -33,6 +33,12 @@ const DOT: Record<string, string> = {
   gray: 'bg-zinc-300 dark:bg-zinc-600',
   blue: 'bg-sky-500',
 }
+
+const NAV = [
+  { to: '/trace', icon: GanttChart, label: 'Trace', hint: '模型 · 耗时 · 工具' },
+  { to: '/skills', icon: BookOpen, label: 'Skills', hint: '排查手册' },
+  { to: '/memory', icon: Brain, label: 'Memory', hint: '偏好 · 术语 · 事实' },
+] as const
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [text, setText] = useState('')
@@ -93,19 +99,24 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <Plus className="h-4 w-4" aria-hidden />
           新建分析
         </Link>
-        <Link
-          to="/trace"
-          onClick={onNavigate}
-          className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm ${
-            pathname.startsWith('/trace')
-              ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-              : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
-          }`}
-        >
-          <GanttChart className="h-4 w-4" aria-hidden />
-          Trace
-          <span className="ml-auto text-xs text-zinc-400">模型 · 耗时 · 工具</span>
-        </Link>
+        <nav aria-label="功能" className="space-y-0.5">
+          {NAV.map(({ to, icon: Icon, label, hint }) => (
+            <Link
+              key={to}
+              to={to}
+              onClick={onNavigate}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm ${
+                pathname.startsWith(to)
+                  ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+              {label}
+              <span className="ml-auto text-xs text-zinc-400">{hint}</span>
+            </Link>
+          ))}
+        </nav>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
           <input

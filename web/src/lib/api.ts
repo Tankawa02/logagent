@@ -3,12 +3,18 @@ import type {
   FsGlob,
   FsListing,
   LiveRun,
+  MemoryIndex,
+  MemoryItem,
+  MemoryKind,
+  MemorySaveResult,
   Meta,
   ModelList,
   Place,
   SessionDetail,
   SessionSummary,
   Share,
+  SkillDetail,
+  SkillSource,
   SourceContext,
   Timeline,
   TraceItem,
@@ -112,4 +118,36 @@ export const api = {
     request<SessionSummary>('/api/sessions', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
   deleteSession: (name: string) =>
     request<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE', headers: CSRF_HEADERS }),
+
+  skills: () => request<{ sources: SkillSource[] }>('/api/skills'),
+  skill: (source: string, name: string) => request<SkillDetail>(skillUrl(source, name)),
+  createSkill: (source: string, name: string, content: string) =>
+    request<SkillDetail>('/api/skills', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify({ source, name, content }) }),
+  saveSkill: (source: string, name: string, content: string) =>
+    request<SkillDetail>(skillUrl(source, name), { method: 'PUT', headers: CSRF_HEADERS, body: JSON.stringify({ content }) }),
+  deleteSkill: (source: string, name: string) =>
+    request<{ deleted: string }>(skillUrl(source, name), { method: 'DELETE', headers: CSRF_HEADERS }),
+
+  memory: () => request<MemoryIndex>('/api/memory'),
+  addMemory: (body: { text: string; kind: MemoryKind; project: string | null; replace_id?: number; force?: boolean }) =>
+    request<MemorySaveResult>('/api/memory', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
+  updateMemory: (id: number, text: string) =>
+    request<MemoryItem>(`/api/memory/${id}`, { method: 'PATCH', headers: CSRF_HEADERS, body: JSON.stringify({ text }) }),
+  deleteMemory: (id: number) => request<{ deleted: number }>(`/api/memory/${id}`, { method: 'DELETE', headers: CSRF_HEADERS }),
+  acceptCandidate: (id: number, body: { text?: string; replace_id?: number; force?: boolean } = {}) =>
+    request<MemorySaveResult>(`/api/memory/candidates/${id}/accept`, {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify(body),
+    }),
+  rejectCandidate: (id: number, permanent: boolean) =>
+    request<{ rejected: number }>(`/api/memory/candidates/${id}/reject`, {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ permanent }),
+    }),
+}
+
+function skillUrl(source: string, name: string): string {
+  return `/api/skills/${encodeURIComponent(source)}/${encodeURIComponent(name)}`
 }

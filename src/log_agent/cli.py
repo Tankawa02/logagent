@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 from datetime import datetime
 from enum import StrEnum
@@ -723,7 +724,7 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问题",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问���",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
     cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
@@ -1097,12 +1098,12 @@ def sessions_rm(
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget):
+def _web_agent_factory(*, model: str, checkpointer, base_url: str | None, budget, skill_dirs: tuple[str, ...] = ()):
     # 调用时再取 build_agent，测试里替换 agent.build_agent 就能换成脚本化模型
     from . import agent as agent_module
 
     return agent_module.build_agent(
-        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=[], memory=None, budget=budget,
+        model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=list(skill_dirs), memory=None, budget=budget,
     )
 
 
@@ -1160,8 +1161,11 @@ def serve(
     base_url = base_url or values.get("base_url") or os.environ.get("OPENAI_BASE_URL")
     can_chat = not read_only and bool(os.environ.get("OPENAI_API_KEY"))
     access = None if no_token else (token or secrets.token_urlsafe(18))
+    skill_dirs = tuple(str(item) for item in values.get("skills") or ())
     web = WebConfig(
-        db_path=db_path, token=access, agent_factory=None if read_only else _web_agent_factory,
+        db_path=db_path, token=access,
+        agent_factory=None if read_only else functools.partial(_web_agent_factory, skill_dirs=skill_dirs),
+        skill_dirs=skill_dirs,
         base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
         redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
         default_model=_resolve_model(values.get("model")),
