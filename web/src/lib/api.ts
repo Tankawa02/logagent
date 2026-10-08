@@ -1,5 +1,6 @@
 import type {
   CreateSessionBody,
+  FsGlob,
   FsListing,
   Meta,
   ModelList,
@@ -85,8 +86,16 @@ export const api = {
       headers: CSRF_HEADERS,
     }),
   chatUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat`,
-  fsList: (path: string, hidden = false) =>
-    request<FsListing>(`/api/fs/list?${query({ path, hidden: hidden ? 'true' : undefined })}`),
+  fsList: (path: string, opts: { hidden?: boolean; q?: string; dirs?: boolean } = {}) =>
+    request<FsListing>(
+      `/api/fs/list?${query({
+        path,
+        hidden: opts.hidden ? 'true' : undefined,
+        q: opts.q || undefined,
+        dirs: opts.dirs ? 'true' : undefined,
+      })}`,
+    ),
+  fsGlob: (pattern: string) => request<FsGlob>(`/api/fs/glob?${query({ pattern })}`),
   places: () => request<Place[]>('/api/fs/places'),
   models: () => request<ModelList>('/api/models'),
   trace: (session?: string, limit = 300) => request<TraceItem[]>(`/api/trace?${query({ session, limit })}`),

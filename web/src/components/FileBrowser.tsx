@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import {
   ArrowUp,
   Check,
@@ -29,6 +29,7 @@ const PLACE_ICON: Record<Place['kind'], typeof Home> = {
 }
 
 const LOG_HINT = /\.(log|txt|out|err|jsonl?|gz|csv)$|\.log\.\d+$/i
+const GLOB_CHARS = /[*?[]/
 
 export function formatSize(size: number | null): string {
   if (size === null) return ''
@@ -73,15 +74,37 @@ export function FileBrowser({
   const [path, setPath] = useState(initialPath ?? '')
   const [typed, setTyped] = useState(initialPath ?? '')
   const [filter, setFilter] = useState('')
+  const [serverFilter, setServerFilter] = useState('')
   const [hidden, setHidden] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
+  const [globError, setGlobError] = useState<unknown>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setServerFilter(filter.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [filter])
 
   const places = useQuery({ queryKey: ['places'], queryFn: api.places, staleTime: 60_000 })
+  // 筛选词交给服务端，在截断到 2000 条之前生效，大目录里靠后的条目也能搜到
   const listing = useQuery({
-    queryKey: ['fs', path, hidden],
-    queryFn: () => api.fsList(path, hidden),
+    queryKey: ['fs', path, hidden, serverFilter, mode],
+    queryFn: () => api.fsList(path, { hidden, q: serverFilter, dirs: mode === 'dir' }),
     placeholderData: keepPreviousData,
     retry: false,
+  })
+  // 正在换目录时手里的还是上一个目录的列表，不能拿它去「选择此目录」
+  const listingStale = listing.isPlaceholderData || listing.isFetching
+
+  const expand = useMutation({
+    mutationFn: (pattern: string) => api.fsGlob(pattern),
+    onSuccess: (result) => {
+      setGlobError(null)
+      setPicked((list) => [...new Set([...list, ...result.files])])
+      setFilter('')
+      setServerFilter('')
+      setPath(result.dir)
+    },
+    onError: (error) => setGlobError(error),
   })
 
   useEffect(() => {
@@ -103,6 +126,8 @@ export function FileBrowser({
 
   function open(next: string) {
     setFilter('')
+    setServerFilter('')
+    setGlobError(null)
     setPath(next)
   }
 
@@ -114,12 +139,16 @@ export function FileBrowser({
     event.preventDefault()
     // 对话框在 React 树里位于新建分析的表单之内，提交事件会继续冒泡到外层表单
     event.stopPropagation()
-    if (typed.trim()) open(typed.trim())
+    const target = typed.trim()
+    if (!target) return
+    // 通配符不是真实路径：先在服务端展开成文件并勾选，再跳到所在目录
+    if (mode === 'file' && GLOB_CHARS.test(target)) expand.mutate(target)
+    else open(target)
   }
 
   function confirm() {
     if (mode === 'dir') {
-      if (listing.data) onConfirm([listing.data.path])
+      if (listing.data && !listingStale) onConfirm([listing.data.path])
     } else if (picked.length) {
       onConfirm(picked)
     }
@@ -191,8 +220,15 @@ export function FileBrowser({
                 spellCheck={false}
                 className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 font-mono text-xs outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950"
               />
-              <Button type="submit">前往</Button>
+              <Button type="submit" disabled={expand.isPending}>
+                {expand.isPending ? <Spinner /> : mode === 'file' && GLOB_CHARS.test(typed) ? '匹配' : '前往'}
+              </Button>
             </form>
+            {globError != null && (
+              <div className="px-3 pt-2">
+                <ErrorBox error={globError} />
+              </div>
+            )}
 
             {listing.data && (
               <div className="flex items-center gap-0.5 overflow-x-auto px-3 py-1.5 text-xs text-zinc-500">
@@ -286,7 +322,13 @@ export function FileBrowser({
                   )
                 })}
               </ul>
-              {listing.data?.truncated && <p className="p-3 text-center text-xs text-zinc-400">条目太多，只显示前 2000 个，可用上方筛选。</p>}
+              {listing.data?.truncated && (
+                <p className="p-3 text-center text-xs text-zinc-400">
+                  {listing.data.query
+                    ? `匹配「${listing.data.query}」的有 ${listing.data.total ?? '很多'} 个，只显示前 ${listing.data.entries.length} 个，可以把筛选词写得更具体。`
+                    : `共 ${listing.data.total ?? '很多'} 个条目，只显示前 ${listing.data.entries.length} 个；用上方筛选可在整个目录里查找。`}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -295,7 +337,8 @@ export function FileBrowser({
           <p className="min-w-0 truncate text-xs text-zinc-500">
             {mode === 'dir' ? (
               <>
-                将选择：<span className="font-mono text-zinc-700 dark:text-zinc-300">{listing.data?.path ?? '…'}</span>
+                将选择：
+                <span className="font-mono text-zinc-700 dark:text-zinc-300">{listingStale || !listing.data ? '正在打开…' : listing.data.path}</span>
               </>
             ) : picked.length ? (
               `已选 ${picked.length} 个文件`
@@ -305,7 +348,11 @@ export function FileBrowser({
           </p>
           <div className="flex gap-2">
             <Button onClick={onClose}>取消</Button>
-            <Button variant="primary" onClick={confirm} disabled={mode === 'file' ? !picked.length : !listing.data}>
+            <Button
+              variant="primary"
+              onClick={confirm}
+              disabled={mode === 'file' ? !picked.length : !listing.data || listingStale || !!listing.error}
+            >
               {mode === 'dir' ? '选择此目录' : `添加${picked.length ? ` ${picked.length} 个` : ''}`}
             </Button>
           </div>

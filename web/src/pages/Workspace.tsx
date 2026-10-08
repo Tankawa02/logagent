@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { BarChart3, Copy, Download, FileCode2, FileSearch, FileText, FolderCode, GanttChart, Share2, X } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView } from '../components/ReportView'
 import { SharePanel } from '../components/SharePanel'
@@ -10,6 +10,7 @@ import { TimelinePane } from '../components/TimelinePane'
 import { Badge, Empty, ErrorBox, Spinner } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
+import { discardPendingQuestion } from '../lib/pending'
 import type { Meta, SessionDetail, SourceTarget } from '../lib/types'
 
 type Panel = 'report' | 'source' | 'timeline'
@@ -57,6 +58,14 @@ export function Workspace({
   const session = useQuery({ queryKey: [...scopeKey(scope), 'session'], queryFn: () => api.session(scope), retry: false })
   const turns = session.data?.turn_list ?? []
   const turnNumber = search.turn ?? turns.at(-1)?.turn
+
+  // 对话面板挂不上（会话加载失败 / 不能提问）时，新建页交接过来的第一个问题就作废，
+  // 免得以后再打开这个会话时被意外发出去
+  const handoffName = scope.kind === 'owner' ? scope.name : null
+  const chatUnavailable = !!session.error || (!!meta.data && !meta.data.can_chat)
+  useEffect(() => {
+    if (handoffName && chatUnavailable) discardPendingQuestion(handoffName)
+  }, [handoffName, chatUnavailable])
 
   const target: SourceTarget | null =
     search.src && search.start ? { source: search.src, start: search.start, end: search.end ?? search.start } : null

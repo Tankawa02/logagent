@@ -372,6 +372,42 @@ def test_fs_browse_is_owner_only_and_lists_dirs_first(demo) -> None:
     assert any(p["kind"] == "recent-code" and p["path"] == str(code) for p in places)
 
 
+def test_fs_filter_applies_before_truncation(tmp_path, monkeypatch, demo) -> None:
+    from log_agent.web import workspace
+
+    db, _, _ = demo
+    monkeypatch.setattr(workspace, "MAX_ENTRIES", 5)
+    big = tmp_path / "big"
+    big.mkdir()
+    for i in range(20):
+        (big / f"a{i:02d}.log").write_text("x")
+    (big / "zz-target.log").write_text("x")
+    (big / "zz-sub").mkdir()
+    client = client_for(db)
+    plain = client.get("/api/fs/list", params={"path": str(big)}, headers=OWNER).json()
+    assert plain["truncated"] and plain["total"] == 22
+    assert "zz-target.log" not in [e["name"] for e in plain["entries"]]
+    found = client.get("/api/fs/list", params={"path": str(big), "q": "TARGET"}, headers=OWNER).json()
+    assert [e["name"] for e in found["entries"]] == ["zz-target.log"] and not found["truncated"]
+    dirs = client.get("/api/fs/list", params={"path": str(big), "dirs": "true"}, headers=OWNER).json()
+    assert [e["name"] for e in dirs["entries"]] == ["zz-sub"]
+
+
+def test_fs_glob_expands_patterns(tmp_path, demo) -> None:
+    db, _, _ = demo
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    for name in ("app-1.log", "app-2.log", "other.txt"):
+        (logs / name).write_text("x")
+    client = client_for(db)
+    assert client.get("/api/fs/glob", params={"pattern": str(logs / "*.log")}).status_code == 401
+    result = client.get("/api/fs/glob", params={"pattern": str(logs / "*.log")}, headers=OWNER).json()
+    assert [Path(p).name for p in result["files"]] == ["app-1.log", "app-2.log"]
+    assert result["dir"] == str(logs.resolve())
+    missing = client.get("/api/fs/glob", params={"pattern": str(logs / "*.gz")}, headers=OWNER)
+    assert missing.status_code in (400, 404)
+
+
 def test_create_session_from_web_then_first_turn(demo, scripted_agent) -> None:
     db, log, code = demo
     client = client_for(db, agent_factory=cli._web_agent_factory, default_model="openai:gpt-test")

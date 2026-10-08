@@ -197,7 +197,17 @@ export interface FsListing {
   path: string
   parent: string | null
   sep: string
+  /** 服务端已应用的筛选词（小写） */
+  query?: string
   entries: FsEntry[]
+  /** 筛选后的条目总数，可能大于 entries.length */
+  total?: number
+  truncated: boolean
+}
+
+export interface FsGlob {
+  files: string[]
+  dir: string
   truncated: boolean
 }
 

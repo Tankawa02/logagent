@@ -50,7 +50,10 @@ def _entry(path: Path) -> dict[str, Any] | None:
     }
 
 
-def list_directory(raw: str | None, show_hidden: bool = False) -> dict[str, Any]:
+def list_directory(
+    raw: str | None, show_hidden: bool = False, query: str = "", dirs_only: bool = False
+) -> dict[str, Any]:
+    """列出目录。筛选词和「只要目录」在截断到 MAX_ENTRIES 之前生效，大目录里的条目也能被搜到。"""
     target = Path(raw).expanduser() if raw else Path.home()
     try:
         target = target.resolve()
@@ -68,16 +71,46 @@ def list_directory(raw: str | None, show_hidden: bool = False) -> dict[str, Any]
         raise HTTPException(400, f"读取目录失败：{exc}") from exc
     if not show_hidden:
         children = [c for c in children if not c.name.startswith(".")]
+    needle = query.strip().lower()
+    if needle:
+        children = [c for c in children if needle in c.name.lower()]
     entries = [e for e in (_entry(c) for c in children) if e]
+    if dirs_only:
+        entries = [e for e in entries if e["kind"] == "dir"]
     entries.sort(key=lambda e: (e["kind"] != "dir", e["name"].lower()))
     parent = target.parent if target.parent != target else None
     return {
         "path": str(target),
         "parent": str(parent) if parent else None,
         "sep": os.sep,
+        "query": needle,
         "entries": entries[:MAX_ENTRIES],
+        "total": len(entries),
         "truncated": len(entries) > MAX_ENTRIES,
     }
+
+
+def expand_pattern(pattern: str) -> dict[str, Any]:
+    """把路径栏里的通配符展开成文件，规则和新建会话时一致（resolve_log_inputs）。"""
+    from ..inputs import LogInputError, resolve_log_inputs
+
+    raw = pattern.strip()
+    if not raw:
+        raise HTTPException(400, "请输入通配符，如 /var/log/app/*.log")
+    try:
+        files = [p for p in resolve_log_inputs([raw]) if Path(p).is_file()]
+    except LogInputError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not files:
+        raise HTTPException(404, f"没有匹配的文件：{raw}")
+    # 浏览器跳到第一个通配段之前的目录，用户能看到这些文件在哪
+    literal: list[str] = []
+    for part in Path(raw).expanduser().parts:
+        if any(ch in part for ch in "*?["):
+            break
+        literal.append(part)
+    base = Path(*literal) if literal else Path(files[0]).parent
+    return {"files": files[:MAX_ENTRIES], "dir": str(base.resolve()), "truncated": len(files) > MAX_ENTRIES}
 
 
 def places(conn: sqlite3.Connection | None) -> list[dict[str, str]]:
