@@ -30,7 +30,9 @@ _PROJECT_MARKERS = (".git", "pyproject.toml", "setup.py", "pom.xml", "build.grad
                     "package.json", "go.mod", "Cargo.toml", "composer.json", "Gemfile")
 # 未识别比例超过这个值时，在配置里附上一份自定义格式模板
 _CUSTOM_FORMAT_THRESHOLD = 0.3
-_MAX_LISTED_MODELS = 15
+# 模型多于这个数时改为多列显示，避免刷屏
+_MULTI_COLUMN_THRESHOLD = 20
+_MODEL_COLUMNS = 3
 
 
 @dataclass
@@ -281,12 +283,33 @@ def _model_options(current: str, listed: list[str] | None) -> list[str]:
     names = [f"openai:{name}" for name in listed]
     preferred = [m for m in dict.fromkeys([current, *PRESET_MODELS]) if m in names]
     rest = [m for m in names if m not in preferred]
-    return (preferred + rest)[:_MAX_LISTED_MODELS]
+    # 不截断：网关上的模型可能很多，截断会把排序靠后的（如 glm / kimi）藏掉
+    return preferred + rest
 
 
 def _normalize_model(name: str) -> str:
     name = name.strip()
     return name if ":" in name else f"openai:{name}"
+
+
+def _print_model_table(options: list[str], current: str) -> None:
+    """打印带编号的模型列表；数量多时按列优先排成多列。"""
+    def cell(index: int, name: str) -> tuple[Text, Text]:
+        label = Text(name)
+        if name == current:
+            label.append(" *", style="muted")  # 用短标记，避免窄终端里被截断
+        return Text(f"  {index}", style="accent"), label
+
+    columns = _MODEL_COLUMNS if len(options) > _MULTI_COLUMN_THRESHOLD else 1
+    rows = -(-len(options) // columns)
+    table = Table.grid(padding=(0, 2))
+    for r in range(rows):
+        row: list[Text] = []
+        for c in range(columns):
+            i = c * rows + r
+            row.extend(cell(i + 1, options[i]) if i < len(options) else (Text(""), Text("")))
+        table.add_row(*row)
+    console.print(table)
 
 
 def _choose_model(current: str, given: str | None, listed: list[str] | None, ask: bool) -> str:
@@ -295,16 +318,33 @@ def _choose_model(current: str, given: str | None, listed: list[str] | None, ask
     elif not ask:
         model = current
     else:
-        options = _model_options(current, listed)
-        source = "接口返回的模型" if listed else "常用模型"
-        table = Table.grid(padding=(0, 2))
-        for index, name in enumerate(options, start=1):
-            mark = Text("（当前）", style="muted") if name == current else Text("")
-            table.add_row(Text(f"  {index}", style="accent"), Text(name), mark)
+        all_options = _model_options(current, listed)
+        options = all_options
+        source = f"接口返回的模型（共 {len(all_options)} 个，* 为当前）" if listed else "常用模型（* 为当前）"
         console.print(Text(f"  {source}：", style="muted"))
-        console.print(table)
-        raw = typer.prompt("  选择编号，或直接输入 provider:model", default="1").strip()
-        model = options[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(options) else _normalize_model(raw)
+        _print_model_table(options, current)
+        prompt = "  选择编号、输入 provider:model，或输入关键字过滤（如 glm）" if listed \
+            else "  选择编号，或直接输入 provider:model"
+        while True:
+            raw = typer.prompt(prompt, default="1").strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(options):
+                model = options[int(raw) - 1]
+                break
+            # 带 provider 前缀、或与列表中某个模型完全一致时直接采用
+            if ":" in raw or _normalize_model(raw) in all_options or not listed:
+                model = _normalize_model(raw)
+                break
+            # 否则当作关键字过滤，编号针对过滤后的列表
+            matched = [m for m in all_options if raw.lower() in m.lower()]
+            if not matched:
+                _warn(f"没有包含“{raw}”的模型；直接回车可选 1，或输入完整的 provider:model。")
+                continue
+            if len(matched) == 1:
+                model = matched[0]
+                break
+            options = matched
+            console.print(Text(f"  包含“{raw}”的模型（{len(matched)} 个）：", style="muted"))
+            _print_model_table(options, current)
     if listed and model.split(":", 1)[-1] not in listed:
         _warn(f"{model} 不在接口返回的模型列表里，请确认名称拼写。")
     _ok(f"模型：{model}")

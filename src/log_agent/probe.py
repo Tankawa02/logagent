@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -136,12 +137,18 @@ def ping(model: str, base_url: str | None, *, timeout: float = PING_TIMEOUT, cha
     return ProbeResult(True, detail, latency, served)
 
 
+def _natural_key(name: str) -> list[tuple[int, int | str]]:
+    """自然排序：数字段按数值比较，glm-5.2 排在 glm-5.10 前面。"""
+    return [(0, int(part)) if part.isdigit() else (1, part) for part in re.split(r"(\d+)", name.lower())]
+
+
 def list_models(base_url: str | None, *, timeout: float = 10.0) -> list[str]:
     """列出 OpenAI 兼容接口上可用的模型 id（网关常常只开放一部分）。失败时抛出异常，由调用方决定是否忽略。"""
     from openai import OpenAI
 
     client = OpenAI(base_url=base_url or None, timeout=timeout, max_retries=0)
-    ids = sorted({item.id for item in client.models.list()})
-    # 嵌入 / 语音 / 图片模型不能用来对话
-    skip = ("embed", "whisper", "tts", "dall-e", "moderation", "image", "audio", "transcribe", "realtime", "rerank")
+    ids = sorted({item.id for item in client.models.list()}, key=_natural_key)
+    # 嵌入 / 语音 / 图片 / 视频模型不能用来对话
+    skip = ("embed", "whisper", "tts", "dall-e", "moderation", "image", "audio", "transcribe", "realtime", "rerank",
+            "asr", "video")
     return [name for name in ids if not any(word in name.lower() for word in skip)]
