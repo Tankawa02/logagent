@@ -444,17 +444,17 @@ def register(
 
 
 def session_memory(memory_path: Path | None, mode: str, info: Any) -> dict[str, Any]:
-    """会话对话页用：本会话每轮会带上的记忆，以及本会话里提出、等用户确认的候选。
+    """会话对话页用：本会话每轮实际注入的记忆、因篇幅被跳过的记忆，以及本会话里提出、等用户确认的候选。
 
-    范围与 runner 注入提示词时完全一致（全局 + 会话源码目录所属项目）。
+    范围与挑选逻辑都与 runner 注入提示词时一致（全局 + 会话源码目录所属项目，按同一篇幅预算）。
     """
-    from ..memory import MODES, project_key
+    from ..memory import normalize_mode, project_key, select_for_prompt
 
-    mode = mode if mode in MODES else "suggest"
+    mode = normalize_mode(mode) or "off"
     project = project_key(info.code)
     result: dict[str, Any] = {
         "mode": mode, "project": project, "project_label": project_label(project),
-        "available": True, "memories": [], "pending": [],
+        "available": True, "memories": [], "skipped": [], "pending": [],
     }
     if mode == "off":
         return result
@@ -463,7 +463,9 @@ def session_memory(memory_path: Path | None, mode: str, info: Any) -> dict[str, 
     except (sqlite3.Error, OSError):
         return {**result, "available": False}
     try:
-        result["memories"] = [_memory_dict(m) for m in opened.memories(project)]
+        selected, skipped = select_for_prompt(opened.memories(project))
+        result["memories"] = [_memory_dict(m) for m in selected]
+        result["skipped"] = [_memory_dict(m) for m in skipped]
         result["pending"] = [_candidate_dict(c) for c in opened.pending(project) if info.name in c.sessions]
     except sqlite3.Error:
         result["available"] = False

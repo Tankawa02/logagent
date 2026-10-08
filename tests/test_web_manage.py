@@ -250,3 +250,34 @@ def test_web_turn_respects_memory_off(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(WebConfig(db_path=db, token=TOKEN, memory_path=tmp_path / "memory.db", memory_mode="off")))
     data = client.get("/api/sessions/s1/memory", headers=OWNER).json()
     assert data["mode"] == "off" and data["memories"] == [] and data["pending"] == []
+
+
+def test_session_memory_matches_prompt_budget(tmp_path: Path) -> None:
+    """对话页列出的“参考记忆”必须正是注入提示词的那些；超出篇幅的单独标出。"""
+    import sqlite3
+
+    from log_agent.memory import PROMPT_BUDGET, MemorySession, MemoryStore, project_key
+    from log_agent.sessions import SessionStore
+
+    db = tmp_path / "sessions.db"
+    with sqlite3.connect(str(db)) as conn:
+        SessionStore(conn).touch("s1", [str(tmp_path / "app.log")], [str(tmp_path)], "openai:gpt-test")
+    memory_db = tmp_path / "memory.db"
+    store = MemoryStore(memory_db)
+    from log_agent.memory import MAX_TEXT
+
+    for i in range(PROMPT_BUDGET // MAX_TEXT + 3):
+        store.add(f"fact-{i:02d} " + f"{i:02d}" * (MAX_TEXT // 2), "fact", None)
+    store.add("报告先写结论", "preference", None)
+    prompt = MemorySession(store=store, mode="suggest", project=project_key([str(tmp_path)]), session="s1").prompt_section() or ""
+    store.close()
+
+    client = TestClient(create_app(WebConfig(db_path=db, token=TOKEN, memory_path=memory_db)))
+    data = client.get("/api/sessions/s1/memory", headers=OWNER).json()
+    assert [m["text"] for m in data["memories"]][0] == "报告先写结论"
+    assert data["skipped"], "超出预算的记忆应单独列出"
+    for m in data["memories"]:
+        assert m["text"] in prompt
+    for m in data["skipped"]:
+        assert m["text"] not in prompt
+    assert f"另有 {len(data['skipped'])} 条" in prompt

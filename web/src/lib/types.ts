@@ -386,7 +386,10 @@ export interface SessionMemory {
   project: string | null
   project_label: string
   available: boolean
+  /** 每轮实际注入提示词的记忆 */
   memories: MemoryItem[]
+  /** 超出提示词篇幅预算、本轮没有带上的记忆 */
+  skipped: MemoryItem[]
   pending: MemoryCandidate[]
 }
 

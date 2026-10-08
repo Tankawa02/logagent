@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { Brain, ChevronDown, Lightbulb } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { SessionMemory } from '../lib/types'
+import type { MemoryItem, SessionMemory } from '../lib/types'
 import { CandidateRow, KIND_TONE } from './MemoryCandidate'
 import { Badge } from './ui'
 
@@ -29,7 +29,14 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
 
   const off = memory.mode === 'off'
   const count = memory.memories.length
-  const label = off ? '记忆已关闭' : !memory.available ? '记忆库不可用' : count ? `参考 ${count} 条记忆` : '暂无记忆'
+  const skipped = memory.skipped.length
+  const label = off
+    ? '记忆已关闭'
+    : !memory.available
+      ? '记忆库不可用'
+      : count
+        ? `参考 ${count} 条记忆${skipped ? `（${skipped} 条未带上）` : ''}`
+        : '暂无记忆'
 
   return (
     <div ref={root} className="relative">
@@ -68,19 +75,21 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
           </div>
           {!off && (
             <ul className="max-h-64 divide-y divide-zinc-100 overflow-auto dark:divide-zinc-800">
-              {count === 0 && (
+              {count === 0 && skipped === 0 && (
                 <li className="px-3 py-3 text-xs text-zinc-500">
                   还没有保存的记忆。在对话里说「记住……」，或纠正 agent 的理解，它会提议保存。
                 </li>
               )}
               {memory.memories.map((m) => (
-                <li key={m.id} className="space-y-1 px-3 py-2">
-                  <div className="flex items-center gap-1.5">
-                    <Badge tone={KIND_TONE[m.kind]}>{m.kind_label}</Badge>
-                    <span className="text-xs text-zinc-400">{m.scope_label}</span>
-                  </div>
-                  <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-200">{m.text}</p>
+                <MemoryLine key={m.id} memory={m} />
+              ))}
+              {skipped > 0 && (
+                <li className="bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-950/40">
+                  以下 {skipped} 条超出篇幅上限，本轮没有带上。可以在记忆管理里合并或删除不常用的条目。
                 </li>
+              )}
+              {memory.skipped.map((m) => (
+                <MemoryLine key={m.id} memory={m} muted />
               ))}
             </ul>
           )}
@@ -92,6 +101,19 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
         </div>
       )}
     </div>
+  )
+}
+
+function MemoryLine({ memory, muted = false }: { memory: MemoryItem; muted?: boolean }) {
+  return (
+    <li className={`space-y-1 px-3 py-2 ${muted ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-1.5">
+        <Badge tone={muted ? 'gray' : KIND_TONE[memory.kind]}>{memory.kind_label}</Badge>
+        <span className="text-xs text-zinc-400">{memory.scope_label}</span>
+        {muted && <span className="text-xs text-zinc-400">未带上</span>}
+      </div>
+      <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-200">{memory.text}</p>
+    </li>
   )
 }
 

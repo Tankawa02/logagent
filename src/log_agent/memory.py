@@ -559,23 +559,53 @@ class MemorySession:
             return None
         parts = [MEMORY_PROMPT_HEADER]
         if memories:
-            lines, used, skipped = [], 0, 0
-            ordered = sorted(memories, key=lambda m: (m.kind != "preference", m.id))
-            for memory in ordered:
-                line = f"- [{KIND_LABELS.get(memory.kind, memory.kind)}] {memory.text}"
-                if used + len(line) > PROMPT_BUDGET:
-                    skipped += 1
-                    continue
-                lines.append(line)
-                used += len(line)
+            selected, skipped = select_for_prompt(memories)
+            lines = [prompt_line(memory) for memory in selected]
             if skipped:
-                lines.append(f"-（另有 {skipped} 条因篇幅未列出）")
+                lines.append(f"-（另有 {len(skipped)} 条因篇幅未列出）")
             parts.append("<user_memory>\n" + "\n".join(lines) + "\n</user_memory>")
         else:
             parts.append("（目前还没有保存的记忆。）")
         if self.suggests:
             parts.append(SUGGEST_PROMPT)
         return "\n\n".join(parts)
+
+
+def prompt_line(memory: Memory) -> str:
+    return f"- [{KIND_LABELS.get(memory.kind, memory.kind)}] {memory.text}"
+
+
+def select_for_prompt(memories: list[Memory]) -> tuple[list[Memory], list[Memory]]:
+    """按提示词篇幅预算挑出实际注入的记忆（偏好优先，其余按创建顺序）。
+
+    返回 (注入的, 因篇幅跳过的)。agent 提示词与网页对话页共用这一份逻辑，保证页面展示的就是模型看到的。
+    """
+    selected: list[Memory] = []
+    skipped: list[Memory] = []
+    used = 0
+    for memory in sorted(memories, key=lambda m: (m.kind != "preference", m.id)):
+        size = len(prompt_line(memory))
+        if used + size > PROMPT_BUDGET:
+            skipped.append(memory)
+            continue
+        selected.append(memory)
+        used += size
+    return selected, skipped
+
+
+def normalize_mode(value: object) -> str | None:
+    """把配置文件里的 memory 值规范成 MODES 之一；无法识别时返回 None，由调用方决定报错还是关闭。
+
+    TOML 里写 memory = false 视为 off，true 视为 suggest；字符串不区分大小写。
+    """
+    if value is None:
+        return "suggest"
+    if isinstance(value, bool):
+        return "suggest" if value else "off"
+    if isinstance(value, str):
+        mode = value.strip().lower() or "suggest"
+        return mode if mode in MODES else None
+    return None
 
 
 MEMORY_PROMPT_HEADER = """## 用户记忆
