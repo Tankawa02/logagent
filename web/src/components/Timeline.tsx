@@ -62,7 +62,7 @@ export function TimelineChart({
 
   if (!n) {
     return (
-      <p className="px-4 py-8 text-center text-sm text-gray-500">
+      <p className="px-4 py-8 text-center text-sm text-zinc-500">
         日志里没有识别到时间戳，无法绘制时间线。可以在 .log-agent.toml 里用 [[log_formats]] 定义格式。
       </p>
     )
@@ -83,22 +83,22 @@ export function TimelineChart({
 
   return (
     <div className="px-4 pb-3 pt-2">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500 dark:text-zinc-400">
         <div className="flex flex-wrap items-center gap-3">
           <Legend color="bg-red-500" label={`ERROR ${data.totals.error.toLocaleString()}`} />
           <Legend color="bg-amber-400" label={`WARN ${data.totals.warn.toLocaleString()}`} />
-          {mode === 'all' && <Legend color="bg-gray-300 dark:bg-gray-600" label={`全部 ${data.totals.events.toLocaleString()}`} />}
+          {mode === 'all' && <Legend color="bg-zinc-300 dark:bg-zinc-600" label={`全部 ${data.totals.events.toLocaleString()}`} />}
           <span>
             每格 {formatWidth(data.bucket_seconds)} · 时区 {data.timezone}
           </span>
         </div>
-        <div className="inline-flex rounded-md border border-gray-200 p-0.5 dark:border-gray-700">
+        <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-700">
           {(['all', 'errors'] as const).map((value) => (
             <button
               key={value}
               type="button"
               onClick={() => setMode(value)}
-              className={`rounded px-2 py-0.5 ${mode === value ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`rounded px-2 py-0.5 ${mode === value ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
             >
               {value === 'all' ? '全部日志' : '只看错误'}
             </button>
@@ -124,7 +124,7 @@ export function TimelineChart({
                 x2={width}
                 y1={TOP + plot - plot * f}
                 y2={TOP + plot - plot * f}
-                className="stroke-gray-100 dark:stroke-gray-800"
+                className="stroke-zinc-100 dark:stroke-zinc-800"
               />
             ))}
             {buckets.map((b, i) => {
@@ -146,11 +146,11 @@ export function TimelineChart({
                         : b.spike
                           ? 'fill-red-50 dark:fill-red-950/40'
                           : i === hover
-                            ? 'fill-gray-100 dark:fill-gray-800'
+                            ? 'fill-zinc-100 dark:fill-zinc-800'
                             : 'fill-transparent'
                     }
                   />
-                  <rect x={x + gap} y={base - otherH - warnH - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={otherH} className="fill-gray-300 dark:fill-gray-600" />
+                  <rect x={x + gap} y={base - otherH - warnH - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={otherH} className="fill-zinc-300 dark:fill-zinc-600" />
                   <rect x={x + gap} y={base - warnH - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={warnH} className="fill-amber-400" />
                   <rect x={x + gap} y={base - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={errorH} className="fill-red-500" />
                   {b.spike && (
@@ -177,14 +177,14 @@ export function TimelineChart({
                 </text>
               </g>
             )}
-            <line x1={0} x2={width} y1={TOP + plot} y2={TOP + plot} className="stroke-gray-300 dark:stroke-gray-700" />
+            <line x1={0} x2={width} y1={TOP + plot} y2={TOP + plot} className="stroke-zinc-300 dark:stroke-zinc-700" />
             {ticks.map((i) => (
               <text
                 key={i}
                 x={Math.min(Math.max(i * barWidth + barWidth / 2, 24), width - 24)}
                 y={HEIGHT - 6}
                 textAnchor="middle"
-                className="fill-gray-500 text-[10px] dark:fill-gray-400"
+                className="fill-zinc-500 text-[10px] dark:fill-zinc-400"
               >
                 {tickLabel(buckets[i], spanDays, data.time_only, data.bucket_seconds)}
               </text>
@@ -193,16 +193,16 @@ export function TimelineChart({
         )}
         {active !== null && buckets[active] && width > 0 && (
           <div
-            className="pointer-events-none absolute top-0 z-10 rounded-md border border-gray-200 bg-white/95 px-2 py-1 text-xs shadow-md dark:border-gray-700 dark:bg-gray-900/95"
+            className="pointer-events-none absolute top-0 z-10 rounded-md border border-zinc-200 bg-white/95 px-2 py-1 text-xs shadow-md dark:border-zinc-700 dark:bg-zinc-900/95"
             style={{
               left: Math.min(Math.max(active * barWidth + barWidth / 2 - 90, 0), Math.max(width - 180, 0)),
               width: 180,
             }}
           >
-            <div className="font-medium text-gray-800 dark:text-gray-100">
+            <div className="font-medium text-zinc-800 dark:text-zinc-100">
               {formatRange(buckets[active].start, buckets[active].end, data.time_only)}
             </div>
-            <div className="text-gray-600 dark:text-gray-300">
+            <div className="text-zinc-600 dark:text-zinc-300">
               <span className="text-red-600 dark:text-red-400">ERROR {buckets[active].error}</span> · WARN{' '}
               {buckets[active].warn} · 共 {buckets[active].total}
             </div>

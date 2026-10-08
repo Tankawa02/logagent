@@ -13,6 +13,7 @@
     "@tanstack/ai-react": "^0.29.3",
     "@tanstack/react-query": "^5.104.0",
     "@tanstack/react-router": "^1.170.41",
+    "lucide-react": "^1.53.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

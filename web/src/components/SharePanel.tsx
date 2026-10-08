@@ -40,13 +40,13 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
       <div
         role="dialog"
         aria-label="分享会话"
-        className="w-full max-w-lg space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-900"
+        className="w-full max-w-lg space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold">分享给同事</h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               生成只读链接：能看报告、错误时间线、证据原文和导出，内容始终脱敏，不能续问、不能看其他会话。
             </p>
           </div>
@@ -64,11 +64,11 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
 
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-gray-500">有效期</span>
+            <span className="mb-1 block text-xs text-zinc-500">有效期</span>
             <select
               value={ttl === null ? 'never' : String(ttl)}
               onChange={(e) => setTtl(e.target.value === 'never' ? null : Number(e.target.value))}
-              className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-950"
+              className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
             >
               {TTL_OPTIONS.map((o) => (
                 <option key={o.label} value={o.hours === null ? 'never' : String(o.hours)}>
@@ -85,13 +85,13 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
 
         {created?.url && (
           <div className="space-y-1.5">
-            <p className="text-xs text-gray-500">链接只显示这一次，请现在复制：</p>
+            <p className="text-xs text-zinc-500">链接只显示这一次，请现在复制：</p>
             <div className="flex gap-2">
               <input
                 readOnly
                 value={created.url}
                 onFocus={(e) => e.target.select()}
-                className="min-w-0 flex-1 rounded-md border border-gray-300 bg-gray-50 px-2 py-1.5 font-mono text-xs dark:border-gray-700 dark:bg-gray-950"
+                className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-zinc-50 px-2 py-1.5 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
               />
               <Button
                 onClick={() => {
@@ -105,14 +105,14 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
         )}
 
         <div>
-          <h3 className="mb-1.5 text-xs font-semibold text-gray-500">已生成的链接</h3>
+          <h3 className="mb-1.5 text-xs font-semibold text-zinc-500">已生成的链接</h3>
           {shares.isLoading && <Spinner />}
-          {shares.data && shares.data.length === 0 && <p className="text-sm text-gray-400">暂无</p>}
-          <ul className="divide-y divide-gray-100 text-sm dark:divide-gray-800">
+          {shares.data && shares.data.length === 0 && <p className="text-sm text-zinc-400">暂无</p>}
+          <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
             {shares.data?.map((share) => (
               <li key={share.id} className="flex items-center justify-between gap-2 py-1.5">
-                <span className="font-mono text-xs text-gray-600 dark:text-gray-300">…/s/…{share.hint}</span>
-                <span className="text-xs text-gray-500">
+                <span className="font-mono text-xs text-zinc-600 dark:text-zinc-300">…/s/…{share.hint}</span>
+                <span className="text-xs text-zinc-500">
                   {share.created_at} 创建 · {share.expires_at ? `${share.expires_at} 过期` : '永久'}
                 </span>
                 <Button variant="ghost" className="text-xs text-red-600" onClick={() => revoke.mutate(share.id)}>
