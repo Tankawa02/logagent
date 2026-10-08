@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import {
   createRootRoute,
   createRoute,
@@ -10,8 +10,11 @@ import {
 } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ApiError } from './lib/api'
-import { AuthRequired, SessionsPage } from './pages/SessionsPage'
+import { AppShell } from './components/AppShell'
+import { Spinner } from './components/ui'
+import { api, ApiError } from './lib/api'
+import { AuthRequired } from './pages/AuthRequired'
+import { NewSession } from './pages/NewSession'
 import { validateWorkspaceSearch, Workspace, type WorkspaceSearch } from './pages/Workspace'
 import './styles.css'
 
@@ -29,16 +32,48 @@ const queryClient = new QueryClient({
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
   notFoundComponent: () => (
-    <div className="p-10 text-center text-sm text-gray-500">
-      页面不存在。<Link to="/" className="text-sky-700 hover:underline">返回会话列表</Link>
+    <div className="p-10 text-center text-sm text-zinc-500">
+      页面不存在。
+      <Link to="/" className="text-sky-700 hover:underline">
+        返回首页
+      </Link>
     </div>
   ),
 })
 
-const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: SessionsPage })
+function OwnerLayout() {
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta })
+  if (meta.isLoading) {
+    return (
+      <div className="flex h-dvh items-center justify-center">
+        <Spinner />
+      </div>
+    )
+  }
+  if (meta.data && !meta.data.authenticated) return <AuthRequired />
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  )
+}
+
+const ownerRoute = createRoute({ getParentRoute: () => rootRoute, id: 'owner', component: OwnerLayout })
+
+const indexRoute = createRoute({
+  getParentRoute: () => ownerRoute,
+  path: '/',
+  validateSearch: (search: Record<string, unknown>): { from?: string } => ({
+    from: typeof search.from === 'string' && search.from ? search.from : undefined,
+  }),
+  component: function Index() {
+    const { from } = indexRoute.useSearch()
+    return <NewSession key={from ?? 'new'} from={from} />
+  },
+})
 
 const sessionRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => ownerRoute,
   path: '/sessions/$name',
   validateSearch: validateWorkspaceSearch,
   component: function OwnerWorkspace() {
@@ -66,18 +101,20 @@ const shareRoute = createRoute({
     const search = shareRoute.useSearch()
     const navigate = useNavigate({ from: shareRoute.fullPath })
     return (
-      <Workspace
-        key={token}
-        scope={{ kind: 'share', token }}
-        search={search}
-        setSearch={(next: WorkspaceSearch) => void navigate({ search: next, replace: true })}
-      />
+      <div className="h-dvh bg-white dark:bg-zinc-950">
+        <Workspace
+          key={token}
+          scope={{ kind: 'share', token }}
+          search={search}
+          setSearch={(next: WorkspaceSearch) => void navigate({ search: next, replace: true })}
+        />
+      </div>
     )
   },
 })
 
 const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, sessionRoute, shareRoute]),
+  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute]), shareRoute]),
   defaultPreload: false,
 })
 

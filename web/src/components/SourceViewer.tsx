@@ -104,20 +104,20 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
                 <div
                   key={n}
                   ref={n === data.line_start ? highlight : undefined}
-                  className={`flex ${marked ? 'bg-amber-100/80 dark:bg-amber-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'}`}
+                  className={`flex ${marked ? 'bg-amber-100/80 dark:bg-amber-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}
                 >
                   <span
-                    className={`w-14 shrink-0 select-none border-r px-2 text-right tabular-nums ${marked ? 'border-amber-400 text-amber-700 dark:text-amber-300' : 'border-gray-100 text-gray-400 dark:border-gray-800'}`}
+                    className={`w-14 shrink-0 select-none border-r px-2 text-right tabular-nums ${marked ? 'border-amber-400 text-amber-700 dark:text-amber-300' : 'border-zinc-100 text-zinc-400 dark:border-zinc-800'}`}
                   >
                     {n}
                   </span>
-                  <span className="whitespace-pre-wrap break-all px-3 text-gray-800 dark:text-gray-200">{text || ' '}</span>
+                  <span className="whitespace-pre-wrap break-all px-3 text-zinc-800 dark:text-zinc-200">{text || ' '}</span>
                 </div>
               )
             })}
           </div>
           {data.has_more && after < MAX_CONTEXT && <LoadMore onClick={() => setAfter((v) => Math.min(v + STEP, MAX_CONTEXT))} label={`向下加载 ${STEP} 行`} />}
-          <p className="border-t border-gray-100 px-3 py-1.5 text-[11px] text-gray-400 dark:border-gray-800">
+          <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400 dark:border-zinc-800">
             {data.path}
             {data.total_lines ? ` · 共 ${data.total_lines.toLocaleString()} 行` : ''}
           </p>
@@ -132,7 +132,7 @@ function LoadMore({ onClick, label }: { onClick: () => void; label: string }) {
     <button
       type="button"
       onClick={onClick}
-      className="block w-full border-y border-dashed border-gray-200 py-1 text-center text-[11px] text-gray-500 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800"
+      className="block w-full border-y border-dashed border-zinc-200 py-1 text-center text-[11px] text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
     >
       {label}
     </button>

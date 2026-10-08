@@ -344,6 +344,55 @@ def test_chat_accepts_plain_question_and_rejects_empty(demo, scripted_agent) -> 
         assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
 
 
+def test_fs_browse_is_owner_only_and_lists_dirs_first(demo) -> None:
+    db, log, code = demo
+    client = client_for(db)
+    assert client.get("/api/fs/list", params={"path": str(log.parent)}).status_code == 401
+    assert client.get("/api/fs/places").status_code == 401
+    listing = client.get("/api/fs/list", params={"path": str(log.parent)}, headers=OWNER).json()
+    assert listing["path"] == str(log.parent.resolve())
+    kinds = [e["kind"] for e in listing["entries"]]
+    assert kinds == sorted(kinds, key=lambda k: k != "dir")
+    assert any(e["name"] == log.name and e["kind"] == "file" and e["size"] > 0 for e in listing["entries"])
+    # 传文件路径时列出它所在的目录
+    assert client.get("/api/fs/list", params={"path": str(log)}, headers=OWNER).json()["path"] == listing["path"]
+    assert client.get("/api/fs/list", params={"path": str(log.parent / "nope")}, headers=OWNER).status_code == 404
+    places = client.get("/api/fs/places", headers=OWNER).json()
+    assert any(p["kind"] == "recent-code" and p["path"] == str(code) for p in places)
+
+
+def test_create_session_from_web_then_first_turn(demo, scripted_agent) -> None:
+    db, log, code = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory, default_model="openai:gpt-test")
+    assert client.post("/api/sessions", json={"logs": [str(log)]}, headers=OWNER).status_code == 403  # 缺 CSRF 头
+    assert client.post("/api/sessions", json={"logs": []}, headers=WRITE).status_code == 400
+    assert client.post("/api/sessions", json={"logs": ["-"]}, headers=WRITE).status_code == 400
+    bad_code = client.post("/api/sessions", json={"logs": [str(log)], "code": [str(log.parent / "missing")]}, headers=WRITE)
+    assert bad_code.status_code == 400
+    assert client.post("/api/sessions", json={"logs": [str(log)], "timezone": "Mars/Base"}, headers=WRITE).status_code == 400
+
+    created = client.post("/api/sessions", json={
+        "logs": [str(log.parent / "*.log")], "code": [str(code)], "timezone": "+08:00",
+    }, headers=WRITE).json()
+    name = created["name"]
+    assert created["origin"] == "chat" and created["turns"] == 0 and created["model"] == "openai:gpt-test"
+    assert [entry["path"] for entry in created["logs"]] == [str(log)]  # 通配符已展开
+    with client.stream("POST", f"/api/sessions/{name}/chat", json={"question": "为什么报错？"}, headers=WRITE) as response:
+        events = sse_events(response)
+    assert events[-1]["type"] == "RUN_FINISHED"
+    turn = client.get(f"/api/sessions/{name}/turns/1", headers=OWNER).json()
+    assert turn["question"] == "为什么报错？" and turn["code"] == [str(code)]
+    assert turn["settings"]["timezone"] == "+08:00"
+    detail = client.get(f"/api/sessions/{name}", headers=OWNER).json()
+    assert detail["title"] == "为什么报错？" and detail["turns"] == 1
+
+
+def test_create_session_unavailable_without_model(demo) -> None:
+    db, log, _ = demo
+    response = client_for(db).post("/api/sessions", json={"logs": [str(log)]}, headers=WRITE)
+    assert response.status_code == 503
+
+
 def test_chat_busy_and_unavailable(demo) -> None:
     db, *_ = demo
     assert client_for(db).post(f"/api/sessions/{SESSION}/chat", json={"question": "x"}, headers=WRITE).status_code == 503

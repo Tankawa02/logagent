@@ -723,7 +723,7 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问题",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问���",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
     cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
@@ -1126,7 +1126,7 @@ def serve(
     ),
     open_browser: bool = typer.Option(False, "--open", help="启动后自动打开浏览器"),
 ) -> None:
-    """启动 Web 界面：错误时间线、报告与证据左右对照、网页续问、会话分享链接。"""
+    """启动 Web 界面：在网页里选日志 / 源码新建分析并提问，查看报告、证据原文、错误时间线，生成分享链接。"""
     try:
         import uvicorn
 
@@ -1164,6 +1164,7 @@ def serve(
         db_path=db_path, token=access, agent_factory=None if read_only else _web_agent_factory,
         base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
         redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
+        default_model=_resolve_model(values.get("model")),
     )
 
     shown_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
@@ -1171,8 +1172,8 @@ def serve(
     open_url = url + (f"?token={access}" if access else "")
     rows = [
         ("地址", Text(open_url, style="accent")),
-        ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，先用 analyze / chat 产生会话)"), style="muted")),
-        ("续问", Text("可用" if can_chat else ("只读模式" if read_only else "不可用：缺少 OPENAI_API_KEY"),
+        ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，可直接在网页里新建分析)"), style="muted")),
+        ("网页提问", Text("可用" if can_chat else ("只读模式" if read_only else "不可用：缺少 OPENAI_API_KEY"),
                       style="ok" if can_chat else "warn")),
         ("脱敏", Text("本人视图关闭，分享链接仍脱敏" if no_redact else "开启", style="warn" if no_redact else "muted")),
     ]

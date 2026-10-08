@@ -1,4 +1,16 @@
-import type { Meta, SessionDetail, SessionSummary, Share, SourceContext, Timeline, TurnPayload } from './types'
+import type {
+  CreateSessionBody,
+  FsListing,
+  Meta,
+  ModelList,
+  Place,
+  SessionDetail,
+  SessionSummary,
+  Share,
+  SourceContext,
+  Timeline,
+  TurnPayload,
+} from './types'
 
 /** 本人视图走 /api/sessions/<name>，分享链接走 /api/share/<token>，其余接口完全相同 */
 export type Scope = { kind: 'owner'; name: string } | { kind: 'share'; token: string }
@@ -72,4 +84,12 @@ export const api = {
       headers: CSRF_HEADERS,
     }),
   chatUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat`,
+  fsList: (path: string, hidden = false) =>
+    request<FsListing>(`/api/fs/list?${query({ path, hidden: hidden ? 'true' : undefined })}`),
+  places: () => request<Place[]>('/api/fs/places'),
+  models: () => request<ModelList>('/api/models'),
+  createSession: (body: CreateSessionBody) =>
+    request<SessionSummary>('/api/sessions', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
+  deleteSession: (name: string) =>
+    request<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE', headers: CSRF_HEADERS }),
 }

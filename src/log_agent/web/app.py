@@ -33,6 +33,7 @@ from ..redact import mask_private_keys, redact_log
 from ..sessions import SessionInfo, SessionStore
 from .shares import ShareStore
 from .sources import ViewSourceResolver
+from .workspace import CreateSessionRequest
 
 STATIC_DIR = Path(__file__).parent / "static"
 COOKIE = "log_agent_auth"
@@ -50,6 +51,7 @@ class WebConfig:
     public_url: str | None = None
     redact_owner: bool = True
     loopback: bool = True
+    default_model: str = "openai:gpt-4.1"
 
 
 @dataclass
@@ -272,7 +274,55 @@ def create_app(config: WebConfig) -> FastAPI:
             "share_base": _share_base(request),
             "loopback": config.loopback and not config.public_url,
             "db": str(config.db_path) if owner else None,
+            "default_model": config.default_model if owner else None,
         }
+
+    # ---- 新建分析：浏览本机文件、列出模型、登记会话（仅本人）-----------------
+
+    @app.get("/api/fs/list", dependencies=[Depends(require_owner)])
+    def fs_list(path: str = "", hidden: bool = False) -> dict[str, Any]:
+        from .workspace import list_directory
+
+        return list_directory(path or None, show_hidden=hidden)
+
+    @app.get("/api/fs/places", dependencies=[Depends(require_owner)])
+    def fs_places() -> list[dict[str, str]]:
+        from .workspace import places
+
+        if not config.db_path.exists():
+            return places(None)
+        with _connect(config) as conn:
+            return places(conn)
+
+    @app.get("/api/models", dependencies=[Depends(require_owner)])
+    def models() -> dict[str, Any]:
+        from .workspace import list_models
+
+        if not config.can_chat:
+            return {"default": config.default_model, "models": []}
+        return list_models(config.base_url, config.default_model)
+
+    @app.post("/api/sessions", dependencies=[Depends(require_owner)])
+    def create_session(body: CreateSessionRequest) -> dict[str, Any]:
+        from ..chat_session import new_session_name
+        from .workspace import validate_request
+
+        if config.agent_factory is None or not config.can_chat:
+            raise HTTPException(503, "当前服务不能新建分析：缺少 OPENAI_API_KEY，或启动时用了 --read-only")
+        logs, code, settings = validate_request(body)
+        model = (body.model or "").strip() or config.default_model
+        if ":" not in model:
+            model = f"openai:{model}"
+        name = new_session_name()
+        config.db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(config.db_path), check_same_thread=False)
+        try:
+            store = SessionStore(conn)
+            store.touch(name, logs, code, model, settings)
+            info = store.get(name)
+        finally:
+            conn.close()
+        return _session_dict(info)
 
     @app.get("/api/sessions", dependencies=[Depends(require_owner)])
     def list_sessions(q: str = "") -> list[dict[str, Any]]:

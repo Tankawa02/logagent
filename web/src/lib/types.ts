@@ -142,6 +142,45 @@ export interface Meta {
   share_base: string
   loopback: boolean
   db: string | null
+  default_model: string | null
+}
+
+export interface FsEntry {
+  name: string
+  path: string
+  kind: 'dir' | 'file'
+  size: number | null
+  mtime: number
+}
+
+export interface FsListing {
+  path: string
+  parent: string | null
+  sep: string
+  entries: FsEntry[]
+  truncated: boolean
+}
+
+export interface Place {
+  label: string
+  path: string
+  kind: 'home' | 'cwd' | 'recent-log' | 'recent-code' | 'drive' | 'root'
+}
+
+export interface ModelList {
+  default: string
+  models: string[]
+}
+
+export interface CreateSessionBody {
+  logs: string[]
+  code: string[]
+  model?: string
+  since?: string
+  until?: string
+  timezone?: string
+  baseline?: string
+  encoding?: string
 }
 
 export interface LineRef {
