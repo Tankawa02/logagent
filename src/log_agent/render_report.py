@@ -176,6 +176,10 @@ class ToolRecord:
     seconds: float
     subagent: str = ""
     note: str = ""
+    # 相对本轮开始的秒数，供 Web trace 画瀑布图；旧记录没有这个字段
+    started: float | None = None
+    # 本轮结束（中断 / 出错）时仍在运行：seconds 只量到结束那一刻，不代表工具真实耗时
+    incomplete: bool = False
 
 
 @dataclass
@@ -191,6 +195,8 @@ class TurnResult:
     summary: str = ""
     confidence: str = ""
     budget_hit: bool = False
+    # 主代理每次模型调用的时间与用量（见 StreamRenderer._on_message）
+    llm_calls: list[dict] = field(default_factory=list)
 
     analysis: dict | None = field(default=None, init=False)
     structured_status: str = field(default="missing", init=False)

@@ -36,6 +36,24 @@ export function formatDuration(seconds: number): string {
   return `${m}m${Math.round(seconds - m * 60)}s`
 }
 
+export function formatTokens(value: number | undefined | null): string {
+  const n = value ?? 0
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+  return `${(n / 1_000_000).toFixed(2)}M`
+}
+
+/** 去掉 provider 前缀，列表里更紧凑 */
+export function shortModel(model: string): string {
+  return model.replace(/^[a-z_-]+:/i, '')
+}
+
+export const TURN_STATUS: Record<string, { label: string; tone: Tone }> = {
+  ok: { label: '完成', tone: 'green' },
+  error: { label: '出错', tone: 'red' },
+  interrupted: { label: '已中断', tone: 'amber' },
+}
+
 export function formatGenerated(value: string | null | undefined): string {
   if (!value) return '时间未知'
   return value.replace('T', ' ').replace(/(\.\d+)?([+-]\d{2}:\d{2}|Z)$/, '')

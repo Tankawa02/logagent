@@ -39,6 +39,7 @@ def build_payload(
         "elapsed_seconds": result.elapsed,
         "usage": dict(result.usage),
         "tool_calls": [asdict(t) for t in result.tools],
+        "llm_calls": deepcopy(result.llm_calls),
         "report": result.report,
     }
 

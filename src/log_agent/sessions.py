@@ -215,6 +215,44 @@ class SessionStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def trace_summaries(self, limit: int = 200, name: str | None = None) -> list[dict[str, Any]]:
+        """最近保存的轮次概况（新的在前），供 Web trace 列表使用。
+
+        只用 SQLite 的 json_extract 取需要的标量和每个工具的 名称 / 耗时 / 状态，
+        不把报告正文、分析结果、工具参数读进 Python。
+        """
+        where = "AND t.name = ?" if name else ""
+        params = [name] if name else []
+        rows = self.conn.execute(
+            f"""
+            SELECT t.name, COALESCE(s.title, ''), t.turn_number,
+                   json_extract(t.payload, '$.question'), json_extract(t.payload, '$.model'),
+                   json_extract(t.payload, '$.status'), json_extract(t.payload, '$.error'),
+                   json_extract(t.payload, '$.generated_at'), json_extract(t.payload, '$.elapsed_seconds'),
+                   json_extract(t.payload, '$.usage.input'), json_extract(t.payload, '$.usage.output'),
+                   json_extract(t.payload, '$.usage.total'), json_extract(t.payload, '$.budget_hit'),
+                   json_extract(t.payload, '$.provenance'),
+                   CASE WHEN json_type(t.payload, '$.llm_calls') = 'array'
+                        THEN json_array_length(t.payload, '$.llm_calls') END,
+                   (SELECT json_group_array(json_array(
+                               json_extract(value, '$.name'), json_extract(value, '$.seconds'),
+                               json_extract(value, '$.failed'), json_extract(value, '$.incomplete')))
+                      FROM json_each(t.payload, '$.tool_calls') WHERE json_type(value) = 'object')
+              FROM log_agent_turns t JOIN log_agent_sessions s ON s.name = t.name
+             WHERE t.turn_number IS NOT NULL AND json_valid(t.payload) AND json_type(t.payload) = 'object' {where}
+             ORDER BY t.id DESC LIMIT ?
+            """,
+            (*params, limit),
+        )
+        keys = ("session", "title", "turn", "question", "model", "status", "error", "generated_at",
+                "elapsed_seconds", "input", "output", "total", "budget_hit", "provenance", "llm_calls", "tools")
+        result = []
+        for row in rows:
+            item = dict(zip(keys, row, strict=True))
+            item["tools"] = json.loads(item["tools"] or "[]")
+            result.append(item)
+        return result
+
     def delete(self, name: str) -> bool:
         with self.conn:
             cur = self.conn.execute("DELETE FROM log_agent_sessions WHERE name = ?", (name,))

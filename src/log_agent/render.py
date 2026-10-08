@@ -124,6 +124,7 @@ class StreamRenderer:
         self.interrupted = False
         self.answer_parts: list[str] = []
         self.records: list[ToolRecord] = []
+        self.llm_calls: list[dict] = []
         self.pending_note = ""
         self.tracker = SubagentTracker()
 
@@ -265,16 +266,20 @@ class StreamRenderer:
             return [p for p in (before, summary_banner(*parsed), after) if p]
         return [text]
 
-    def _record(self, run: ToolRun, subagent: str = "") -> None:
+    def _record(self, run: ToolRun, subagent: str = "", incomplete: bool = False) -> None:
         error = getattr(run.handle, "error", None)
-        if error:
+        if incomplete:
+            summary, failed = "未完成：本轮结束时仍在运行", False
+        elif error:
             summary, failed = str(error).splitlines()[0], True
         else:
             summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
-        ended = getattr(run.handle, "ended", None) or time.perf_counter()
+        ended = (None if incomplete else getattr(run.handle, "ended", None)) or time.perf_counter()
         self.records.append(
             ToolRecord(
                 run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
+                started=round(max(0.0, run.started - self.start), 3),
+                incomplete=incomplete,
             )
         )
 
@@ -304,6 +309,24 @@ class StreamRenderer:
 
     # ---- 事件处理 -----------------------------------------------------------
 
+    def _record_llm_call(self, output: Any, call_start: float, first_token: float | None,
+                         usage: dict[str, int] | None) -> None:
+        """usage 为 None 表示流在中途断了（中断 / 接口报错）：用量拿不到，记为未知而不是 0。"""
+        now = time.perf_counter()
+        metadata = getattr(output, "response_metadata", None) or {}
+        incomplete = usage is None
+        self.llm_calls.append({
+            "started": round(max(0.0, call_start - self.start), 3),
+            "seconds": round(now - call_start, 3),
+            "first_token": round(first_token - call_start, 3) if first_token is not None else None,
+            "input": None if incomplete else usage.get("input", 0),
+            "output": None if incomplete else usage.get("output", 0),
+            "tool_calls": None if incomplete else len(getattr(output, "tool_calls", None) or []),
+            "model": str(metadata.get("model_name") or metadata.get("model") or ""),
+            "finish_reason": str(metadata.get("finish_reason") or ""),
+            "incomplete": incomplete,
+        })
+
     def _on_message(self, message_stream: Any) -> None:
         self._settle_tools()
         self.pending_note = ""
@@ -313,37 +336,46 @@ class StreamRenderer:
         # 所以短文本先只放在 Live 预览里，消息结束后再决定是旁白还是报告正文。
         holding = True
         self.writing = False
-        for delta in message_stream.text:
-            if not delta:
-                continue
-            if not streamed:
-                self._settle_tools()
-            streamed = True
-            self.writing = True
-            self.rendered_any = True
-            buffer += delta
-            self.pending_chunks += 1
-            if holding and looks_like_report(buffer):
-                holding = False
-            if holding:
-                self.tail.text = buffer
-                continue
-            flushable, remainder = split_complete_blocks(buffer)
-            if flushable.strip():
-                self.tail.text = remainder
-                self._flush_answer(flushable)
-                buffer = remainder
-            else:
-                self.tail.text = buffer
+        call_start = time.perf_counter()
+        first_token: float | None = None
+        try:
+            for delta in message_stream.text:
+                if not delta:
+                    continue
+                if not streamed:
+                    first_token = time.perf_counter()
+                    self._settle_tools()
+                streamed = True
+                self.writing = True
+                self.rendered_any = True
+                buffer += delta
+                self.pending_chunks += 1
+                if holding and looks_like_report(buffer):
+                    holding = False
+                if holding:
+                    self.tail.text = buffer
+                    continue
+                flushable, remainder = split_complete_blocks(buffer)
+                if flushable.strip():
+                    self.tail.text = remainder
+                    self._flush_answer(flushable)
+                    buffer = remainder
+                else:
+                    self.tail.text = buffer
+        except BaseException:
+            # 中断（含浏览器停止）或接口报错：这次模型调用也要留在 trace 里，半截正文仍由 run() 保存
+            self._record_llm_call(None, call_start, first_token, None)
+            raise
 
         output = getattr(message_stream, "output", None)
         final_text = buffer if streamed else content_to_text(getattr(output, "content", ""))
         self.tail.text = ""
         self.writing = False
         self.pending_chunks = 0
-        if output is not None:
-            for key, value in usage_from_message(output).items():
-                self.usage[key] += value
+        call_usage = usage_from_message(output) if output is not None else {}
+        for key, value in call_usage.items():
+            self.usage[key] += value
+        self._record_llm_call(output, call_start, first_token, call_usage)
         final_text = final_text.strip()
         if holding and getattr(output, "tool_calls", None) and not looks_like_report(final_text):
             self.pending_note = condense_note(final_text)
@@ -454,6 +486,10 @@ class StreamRenderer:
         for run in self.running:
             if run.completed:
                 self._settle(run)
+            else:
+                # 已经告诉过浏览器 / 终端开始了，trace 里也得有这一段，并标成未完成
+                self._record(run, incomplete=True)
+        self.running = []
         elapsed = time.perf_counter() - self.start
         usage = self._total_usage()
         trail = None if self.verbose else tool_trail(self.records)
@@ -480,6 +516,7 @@ class StreamRenderer:
             summary=self.summary[0] if self.summary else "",
             confidence=self.summary[1] if self.summary else "",
             budget_hit=budget_hit,
+            llm_calls=list(self.llm_calls),
         )
         if result.structured_status != "valid":
             console.print(Text("未获取到有效结构化报告，保留原始回答；自动化异常判定为未知。", style="warn"))

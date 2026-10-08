@@ -15,6 +15,8 @@ import { Spinner } from './components/ui'
 import { api, ApiError } from './lib/api'
 import { AuthRequired } from './pages/AuthRequired'
 import { NewSession } from './pages/NewSession'
+import { TraceDetail } from './pages/TraceDetail'
+import { TraceList } from './pages/TraceList'
 import { validateWorkspaceSearch, Workspace, type WorkspaceSearch } from './pages/Workspace'
 import './styles.css'
 
@@ -92,6 +94,27 @@ const sessionRoute = createRoute({
   errorComponent: ({ error }) => (error instanceof ApiError && error.status === 401 ? <AuthRequired /> : <p>{String(error)}</p>),
 })
 
+const traceRoute = createRoute({
+  getParentRoute: () => ownerRoute,
+  path: '/trace',
+  validateSearch: (search: Record<string, unknown>): { session?: string } => ({
+    session: typeof search.session === 'string' && search.session ? search.session : undefined,
+  }),
+  component: function Trace() {
+    const { session } = traceRoute.useSearch()
+    return <TraceList key={session ?? 'all'} session={session} />
+  },
+})
+
+const traceDetailRoute = createRoute({
+  getParentRoute: () => ownerRoute,
+  path: '/trace/$name/$turn',
+  component: function TraceTurn() {
+    const { name, turn } = traceDetailRoute.useParams()
+    return <TraceDetail key={`${name}-${turn}`} name={name} turn={Number(turn)} />
+  },
+})
+
 const shareRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/s/$token',
@@ -114,7 +137,7 @@ const shareRoute = createRoute({
 })
 
 const router = createRouter({
-  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute]), shareRoute]),
+  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute]), shareRoute]),
   defaultPreload: false,
 })
 

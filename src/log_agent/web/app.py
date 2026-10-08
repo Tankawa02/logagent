@@ -39,6 +39,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 COOKIE = "log_agent_auth"
 CSRF_HEADER = "x-log-agent-request"
 SHARE_TTL_CHOICES = {None, 1, 24, 24 * 7, 24 * 30}
+TRACE_LIMIT_MAX = 2000
 
 
 @dataclass
@@ -336,6 +337,48 @@ def create_app(config: WebConfig) -> FastAPI:
                 last = store.last_turn(info.name)
                 result.append({**_session_dict(info), "last": _turn_brief(info.turns, last) if last else None})
             return result
+
+    @app.get("/api/trace", dependencies=[Depends(require_owner)])
+    def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
+        """每轮对话的运行概况：模型、耗时、tokens、工具调用；不含报告正文。"""
+        if not config.db_path.exists():
+            return []
+        with _connect(config) as conn:
+            rows = SessionStore(conn).trace_summaries(max(1, min(limit, TRACE_LIMIT_MAX)), session or None)
+        items = []
+        for row in rows:
+            tools = [t for t in row["tools"] if isinstance(t, list) and len(t) == 4]
+            counts: dict[str, int] = {}
+            for name, _, _, _ in tools:
+                counts[str(name or "?")] = counts.get(str(name or "?"), 0) + 1
+            legacy = row["provenance"] == "legacy_unknown"
+            elapsed = row["elapsed_seconds"]
+            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平均值时跳过，而不是当成 0
+            measured = not legacy and isinstance(elapsed, (int, float))
+            items.append({
+                "session": row["session"],
+                "title": row["title"],
+                "turn": row["turn"],
+                "question": row["question"] or "",
+                "model": row["model"] or "",
+                "status": row["status"] or "ok",
+                "error": row["error"],
+                "generated_at": row["generated_at"],
+                "elapsed_seconds": elapsed if measured else None,
+                "usage": (
+                    {"input": row["input"] or 0, "output": row["output"] or 0, "total": row["total"] or 0}
+                    if measured else None
+                ),
+                "tool_count": len(tools),
+                "failed_tools": sum(1 for t in tools if t[2]),
+                "incomplete_tools": sum(1 for t in tools if t[3]),
+                "tool_seconds": round(sum(float(t[1] or 0) for t in tools), 3),
+                "tools": counts,
+                "llm_calls": row["llm_calls"],
+                "budget_hit": bool(row["budget_hit"]),
+                "legacy": legacy,
+            })
+        return _redacted_copy(items, config.redact_owner)
 
     @app.delete("/api/sessions/{name}")
     def delete_session(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { BarChart3, Copy, Download, FileCode2, FileSearch, FileText, FolderCode, Share2, X } from 'lucide-react'
+import { BarChart3, Copy, Download, FileCode2, FileSearch, FileText, FolderCode, GanttChart, Share2, X } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView } from '../components/ReportView'
@@ -333,6 +333,17 @@ function SessionHeader({
               </div>
             )}
           </div>
+        )}
+        {scope.kind === 'owner' && (
+          <Link
+            to="/trace"
+            search={{ session: scope.name }}
+            title="查看这个会话每轮的模型、耗时与工具调用"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          >
+            <GanttChart className="h-4 w-4" aria-hidden />
+            <span className="hidden xl:inline">Trace</span>
+          </Link>
         )}
         {scope.kind === 'owner' && meta?.can_chat && (
           <Link
