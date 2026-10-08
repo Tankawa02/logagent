@@ -337,6 +337,41 @@ def create_app(config: WebConfig) -> FastAPI:
                 result.append({**_session_dict(info), "last": _turn_brief(info.turns, last) if last else None})
             return result
 
+    @app.get("/api/trace", dependencies=[Depends(require_owner)])
+    def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
+        """每轮对话的运行概况：模型、耗时、tokens、工具调用；不含报告正文。"""
+        if not config.db_path.exists():
+            return []
+        with _connect(config) as conn:
+            rows = SessionStore(conn).recent_turns(max(1, min(limit, 1000)), session or None)
+        items = []
+        for name, title, number, payload in rows:
+            tools = [t for t in payload.get("tool_calls") or [] if isinstance(t, dict)]
+            counts: dict[str, int] = {}
+            for tool in tools:
+                counts[str(tool.get("name") or "?")] = counts.get(str(tool.get("name") or "?"), 0) + 1
+            llm_calls = payload.get("llm_calls")
+            items.append({
+                "session": name,
+                "title": title,
+                "turn": number,
+                "question": payload.get("question") or "",
+                "model": payload.get("model") or "",
+                "status": payload.get("status") or "ok",
+                "error": payload.get("error"),
+                "generated_at": payload.get("generated_at"),
+                "elapsed_seconds": payload.get("elapsed_seconds") or 0,
+                "usage": payload.get("usage") or {},
+                "tool_count": len(tools),
+                "failed_tools": sum(1 for t in tools if t.get("failed")),
+                "tool_seconds": round(sum(float(t.get("seconds") or 0) for t in tools), 3),
+                "tools": counts,
+                "llm_calls": len(llm_calls) if isinstance(llm_calls, list) else None,
+                "budget_hit": bool(payload.get("budget_hit")),
+                "legacy": payload.get("provenance") == "legacy_unknown",
+            })
+        return _redacted_copy(items, config.redact_owner)
+
     @app.delete("/api/sessions/{name}")
     def delete_session(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
         with _connect(config) as conn:

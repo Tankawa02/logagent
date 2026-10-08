@@ -334,6 +334,17 @@ def test_chat_streams_ag_ui_events_and_records_turn(demo, scripted_agent) -> Non
     assert turn["evidence_check"]["verified"] == 2  # 续问的报告也经过同一套证据核对
     assert turn["settings"]["timezone"] == "+08:00"
     assert scripted_agent["model"] == "openai:gpt-test"
+    # trace：每个工具记录开始偏移，每次模型调用记录耗时，且都落在本轮总耗时之内
+    assert all(0 <= t["started"] <= turn["elapsed_seconds"] for t in turn["tool_calls"])
+    assert turn["llm_calls"] and all(c["seconds"] >= 0 and c["started"] <= turn["elapsed_seconds"] for c in turn["llm_calls"])
+
+    trace = client.get("/api/trace", headers=OWNER).json()
+    latest = trace[0]
+    assert (latest["session"], latest["turn"], latest["model"]) == (SESSION, 2, "openai:gpt-test")
+    assert latest["tool_count"] == 2 and latest["tools"] == {"log_overview": 1, "search_logs": 1}
+    assert latest["llm_calls"] == len(turn["llm_calls"]) and "report" not in latest
+    assert [t["turn"] for t in client.get(f"/api/trace?session={SESSION}", headers=OWNER).json()] == [2, 1]
+    assert client.get("/api/trace", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
 def test_chat_accepts_plain_question_and_rejects_empty(demo, scripted_agent) -> None:

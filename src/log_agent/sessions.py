@@ -215,6 +215,24 @@ class SessionStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def recent_turns(self, limit: int = 200, name: str | None = None) -> list[tuple[str, str, int, dict]]:
+        """最近保存的轮次（新的在前）：(会话名, 会话标题, 轮次, 快照)，供 Web trace 列表使用。"""
+        where, params = ("WHERE t.name = ?", [name]) if name else ("", [])
+        rows = self.conn.execute(
+            "SELECT t.name, COALESCE(s.title, ''), t.turn_number, t.payload FROM log_agent_turns t "
+            f"JOIN log_agent_sessions s ON s.name = t.name {where} ORDER BY t.id DESC LIMIT ?",
+            (*params, limit),
+        )
+        result = []
+        for session, title, number, raw in rows:
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(payload, dict) and number is not None:
+                result.append((session, title, number, payload))
+        return result
+
     def delete(self, name: str) -> bool:
         with self.conn:
             cur = self.conn.execute("DELETE FROM log_agent_sessions WHERE name = ?", (name,))

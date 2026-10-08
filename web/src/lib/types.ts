@@ -70,6 +70,39 @@ export interface ToolCall {
   seconds: number
   subagent: string
   note: string
+  /** 相对本轮开始的秒数；旧记录没有 */
+  started?: number | null
+}
+
+export interface LlmCall {
+  started: number
+  seconds: number
+  first_token: number | null
+  input: number
+  output: number
+  tool_calls: number
+  model: string
+  finish_reason: string
+}
+
+export interface TraceItem {
+  session: string
+  title: string
+  turn: number
+  question: string
+  model: string
+  status: 'ok' | 'error' | 'interrupted'
+  error: string | null
+  generated_at: string | null
+  elapsed_seconds: number
+  usage: { input?: number; output?: number; total?: number }
+  tool_count: number
+  failed_tools: number
+  tool_seconds: number
+  tools: Record<string, number>
+  llm_calls: number | null
+  budget_hit: boolean
+  legacy: boolean
 }
 
 export interface TurnPayload {
@@ -92,6 +125,7 @@ export interface TurnPayload {
   elapsed_seconds: number
   usage: { input?: number; output?: number; total?: number }
   tool_calls: ToolCall[]
+  llm_calls?: LlmCall[]
   report: string
   provenance?: string
 }

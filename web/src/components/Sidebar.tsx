@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { Activity, MessageSquare, Plus, Search, Trash2, Zap } from 'lucide-react'
+import { Activity, GanttChart, MessageSquare, Plus, Search, Trash2, Zap } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
@@ -85,6 +85,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         >
           <Plus className="h-4 w-4" aria-hidden />
           新建分析
+        </Link>
+        <Link
+          to="/trace"
+          onClick={onNavigate}
+          className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm ${
+            pathname.startsWith('/trace')
+              ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+              : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
+          }`}
+        >
+          <GanttChart className="h-4 w-4" aria-hidden />
+          Trace
+          <span className="ml-auto text-xs text-zinc-400">模型 · 耗时 · 工具</span>
         </Link>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />

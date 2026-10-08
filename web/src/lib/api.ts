@@ -9,6 +9,7 @@ import type {
   Share,
   SourceContext,
   Timeline,
+  TraceItem,
   TurnPayload,
 } from './types'
 
@@ -88,6 +89,7 @@ export const api = {
     request<FsListing>(`/api/fs/list?${query({ path, hidden: hidden ? 'true' : undefined })}`),
   places: () => request<Place[]>('/api/fs/places'),
   models: () => request<ModelList>('/api/models'),
+  trace: (session?: string, limit = 300) => request<TraceItem[]>(`/api/trace?${query({ session, limit })}`),
   createSession: (body: CreateSessionBody) =>
     request<SessionSummary>('/api/sessions', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
   deleteSession: (name: string) =>

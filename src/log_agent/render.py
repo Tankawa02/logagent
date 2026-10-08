@@ -124,6 +124,7 @@ class StreamRenderer:
         self.interrupted = False
         self.answer_parts: list[str] = []
         self.records: list[ToolRecord] = []
+        self.llm_calls: list[dict] = []
         self.pending_note = ""
         self.tracker = SubagentTracker()
 
@@ -275,6 +276,7 @@ class StreamRenderer:
         self.records.append(
             ToolRecord(
                 run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
+                started=round(max(0.0, run.started - self.start), 3),
             )
         )
 
@@ -304,6 +306,21 @@ class StreamRenderer:
 
     # ---- 事件处理 -----------------------------------------------------------
 
+    def _record_llm_call(self, output: Any, call_start: float, first_token: float | None,
+                         usage: dict[str, int]) -> None:
+        now = time.perf_counter()
+        metadata = getattr(output, "response_metadata", None) or {}
+        self.llm_calls.append({
+            "started": round(max(0.0, call_start - self.start), 3),
+            "seconds": round(now - call_start, 3),
+            "first_token": round(first_token - call_start, 3) if first_token is not None else None,
+            "input": usage.get("input", 0),
+            "output": usage.get("output", 0),
+            "tool_calls": len(getattr(output, "tool_calls", None) or []),
+            "model": str(metadata.get("model_name") or metadata.get("model") or ""),
+            "finish_reason": str(metadata.get("finish_reason") or ""),
+        })
+
     def _on_message(self, message_stream: Any) -> None:
         self._settle_tools()
         self.pending_note = ""
@@ -313,10 +330,13 @@ class StreamRenderer:
         # 所以短文本先只放在 Live 预览里，消息结束后再决定是旁白还是报告正文。
         holding = True
         self.writing = False
+        call_start = time.perf_counter()
+        first_token: float | None = None
         for delta in message_stream.text:
             if not delta:
                 continue
             if not streamed:
+                first_token = time.perf_counter()
                 self._settle_tools()
             streamed = True
             self.writing = True
@@ -341,9 +361,10 @@ class StreamRenderer:
         self.tail.text = ""
         self.writing = False
         self.pending_chunks = 0
-        if output is not None:
-            for key, value in usage_from_message(output).items():
-                self.usage[key] += value
+        call_usage = usage_from_message(output) if output is not None else {}
+        for key, value in call_usage.items():
+            self.usage[key] += value
+        self._record_llm_call(output, call_start, first_token, call_usage)
         final_text = final_text.strip()
         if holding and getattr(output, "tool_calls", None) and not looks_like_report(final_text):
             self.pending_note = condense_note(final_text)
@@ -414,7 +435,7 @@ class StreamRenderer:
                     self._settle_tools()
             except KeyboardInterrupt:
                 self.interrupted = True
-                # 已经流出来但还没固化的半个块也保留下来，用户能看到中断前的内容
+                # 已经流出来但还没固化的半个块也保留下来，用��能看到中断前的内容
                 self._flush_answer(self.tail.text)
                 self.tail.text = ""
             except GraphRecursionError:
@@ -480,6 +501,7 @@ class StreamRenderer:
             summary=self.summary[0] if self.summary else "",
             confidence=self.summary[1] if self.summary else "",
             budget_hit=budget_hit,
+            llm_calls=list(self.llm_calls),
         )
         if result.structured_status != "valid":
             console.print(Text("未获取到有效结构化报告，保留原始回答；自动化异常判定为未知。", style="warn"))
