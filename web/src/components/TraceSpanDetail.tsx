@@ -27,7 +27,11 @@ function JsonBlock({ value }: { value: unknown }) {
 function TextBlock({ text, chars, tone = 'normal' }: { text: string; chars?: number; tone?: 'normal' | 'error' | 'muted' }) {
   const truncated = chars != null && chars > text.length
   const color =
-    tone === 'error' ? 'text-red-700 dark:text-red-400' : tone === 'muted' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-200'
+    tone === 'error'
+      ? 'text-red-700 dark:text-red-400'
+      : tone === 'muted'
+        ? 'text-zinc-500 dark:text-zinc-400'
+        : 'text-zinc-800 dark:text-zinc-200'
   return (
     <div>
       <pre
@@ -169,7 +173,9 @@ function ToolOutput({ call }: { call: ToolCall }) {
   return (
     <div className="space-y-3">
       <Section title={call.failed ? '错误' : '结果摘要'}>
-        <p className={`whitespace-pre-wrap break-words ${call.failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-300'}`}>
+        <p
+          className={`whitespace-pre-wrap break-words ${call.failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-300'}`}
+        >
           {call.summary || '（无）'}
         </p>
       </Section>
@@ -237,7 +243,11 @@ export function TraceSpanDetail({ span }: { span: Span }) {
       </div>
       <div role="tabpanel">
         {span.kind === 'llm' ? (
-          tab === 'input' ? <LlmInput call={span.call} index={span.index} /> : <LlmOutput call={span.call} />
+          tab === 'input' ? (
+            <LlmInput call={span.call} index={span.index} />
+          ) : (
+            <LlmOutput call={span.call} />
+          )
         ) : tab === 'input' ? (
           <ToolInput call={span.call} />
         ) : (
@@ -253,7 +263,10 @@ export function spanPreview(span: Span): string {
   if (span.kind === 'llm') {
     const requests = span.call.tool_requests
     if (requests?.length) return `→ ${requests.map((r) => r.name).join(', ')}`
-    const text = (span.call.output_text?.text ?? '').trim().split('\n').find((line) => line.trim())
+    const text = (span.call.output_text?.text ?? '')
+      .trim()
+      .split('\n')
+      .find((line) => line.trim())
     return text ? text.replace(/^#+\s*/, '') : ''
   }
   return span.call.summary

@@ -448,7 +448,7 @@ def test_stop_before_run_registers_is_applied(monkeypatch) -> None:
 
     monkeypatch.setattr(runner, "_LIVE_RUNS", {})
     monkeypatch.setattr(runner, "_EARLY_STOPS", {})
-    # 停止请求先到：记下，不影响别的 run
+    # 停止请求先到��记下，不影响别的 run
     assert runner.request_stop("s", "run-early") == {"stopped": True, "pending": True}
     other = runner.LiveRun("s", "q", "run-other")
     runner.register_live_run(other)
@@ -743,7 +743,8 @@ def test_shared_payload_masks_pem_split_across_list_items(demo, monkeypatch, vie
         payload = store.turn(SESSION, 1)
         payload['settings']['no_redact'] = True
         payload['analysis']['next_steps'] = parts
-        payload['tool_calls'] = [{'output': [0, *parts, {'nested': parts}, None]}]
+        payload['tool_calls'] = [{'args': {'lines': [0, *parts, {'nested': parts}, None]},
+                                  'output': 'raw tool output', 'output_chars': 15, 'call_id': 'c1'}]
         store.record_turn(SESSION, 'split PEM', 0, payload)
     monkeypatch.setattr(redact, '_enabled', False)
     client = client_for(db, redact_owner=False)
@@ -756,8 +757,10 @@ def test_shared_payload_masks_pem_split_across_list_items(demo, monkeypatch, vie
     turn = client.get(f'/api/share/{token}/turns/2').json()
     assert turn['analysis']['next_steps'] == [redact.KEY_MASK, f'{redact.KEY_MASK}\n{redact.KEY_MASK}',
                                               redact.KEY_MASK, redact.KEY_MASK]
-    assert turn['tool_calls'][0]['output'][0] == 0
-    assert turn['tool_calls'][0]['output'][-1] is None
+    lines = turn['tool_calls'][0]['args']['lines']
+    assert lines[0] == 0
+    assert lines[-1] is None
+    assert not {'output', 'output_chars', 'call_id'} & turn['tool_calls'][0].keys()
     assert client.get(f'/api/sessions/{SESSION}/turns/2', headers=OWNER).json() == {'turn': 2, **payload}
     with sqlite3.connect(str(db)) as conn:
         assert SessionStore(conn).turn(SESSION, 2) == payload

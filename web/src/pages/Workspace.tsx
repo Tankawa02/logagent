@@ -385,7 +385,11 @@ function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: n
             </div>
           )}
           {owner && (
-            <div role="group" aria-label="跳转" className={turnNumber !== undefined ? 'mt-1 border-t border-zinc-200/80 pt-1 dark:border-zinc-800' : ''}>
+            <div
+              role="group"
+              aria-label="跳转"
+              className={turnNumber !== undefined ? 'mt-1 border-t border-zinc-200/80 pt-1 dark:border-zinc-800' : ''}
+            >
               <Link
                 ref={register(exportCount)}
                 role="menuitem"

@@ -67,7 +67,12 @@ function FilterSelect({
 }) {
   return (
     <div className={`relative ${className}`}>
-      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className={`${SELECT} w-full appearance-none pr-7`}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className={`${SELECT} w-full appearance-none pr-7`}
+      >
         {children}
       </select>
       <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />

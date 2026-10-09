@@ -28,9 +28,7 @@ export function ConnectionBanner() {
       className="flex animate-banner-in items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
     >
       <WifiOff className="h-4 w-4 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1">
-        {online ? '与 log-agent 服务的连接已断开，正在重试…' : '网络已断开，恢复后会自动重新连接。'}
-      </span>
+      <span className="min-w-0 flex-1">{online ? '与 log-agent 服务的连接已断开，正在重试…' : '网络已断开，恢复后会自动重新连接。'}</span>
       {online && (
         <button
           type="button"
