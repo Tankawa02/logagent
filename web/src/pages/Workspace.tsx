@@ -20,6 +20,7 @@ import { ReportView } from '../components/ReportView'
 import { SharePanel } from '../components/SharePanel'
 import { SourceViewer } from '../components/SourceViewer'
 import { TimelinePane } from '../components/TimelinePane'
+import { useToast } from '../components/Feedback'
 import { Badge, Empty, ErrorBox, PageSkeleton } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
@@ -291,6 +292,7 @@ const MENU_ITEM =
 /** 导出与低频跳转收进一个菜单，标题栏只留高频的面板切换和分享 */
 function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: number; canChat: boolean }) {
   const [open, setOpen] = useState(false)
+  const toast = useToast()
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const items = useRef<(HTMLAnchorElement | null)[]>([])
@@ -339,7 +341,7 @@ function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: n
         aria-expanded={open}
         aria-controls="more-menu"
         aria-label="更多操作"
-        title="导出、Trace 与复用来源"
+        title="导出、执行记录与复用来源"
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown' && !open) {
@@ -375,7 +377,10 @@ function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: n
                   role="menuitem"
                   tabIndex={-1}
                   href={api.exportUrl(scope, turnNumber, format, view)}
-                  onClick={() => close(false)}
+                  onClick={() => {
+                    close(false)
+                    toast(`正在导出第 ${turnNumber} 轮 · ${label}`, 'info')
+                  }}
                   className={MENU_ITEM}
                 >
                   <Download className="h-4 w-4 text-zinc-400" aria-hidden />
@@ -401,7 +406,7 @@ function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: n
               >
                 <GanttChart className="h-4 w-4 text-zinc-400" aria-hidden />
                 <span className="min-w-0 flex-1">
-                  Trace
+                  执行记录
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400">每轮的模型、耗时与工具调用</span>
                 </span>
               </Link>

@@ -37,10 +37,10 @@ const DOT: Record<string, string> = {
 }
 
 const NAV = [
-  { to: '/trace', icon: GanttChart, label: 'Trace', hint: '模型、耗时与工具调用' },
-  { to: '/skills', icon: BookOpen, label: 'Skills', hint: '排查手册' },
-  { to: '/memory', icon: Brain, label: 'Memory', hint: '偏好、术语与事实' },
-  { to: '/settings', icon: Settings, label: 'Settings', hint: '模型连接、API Key 与默认值' },
+  { to: '/trace', icon: GanttChart, label: '执行记录', hint: 'Trace · 模型、耗时与工具调用' },
+  { to: '/skills', icon: BookOpen, label: '技能', hint: 'Skills · 排查手册' },
+  { to: '/memory', icon: Brain, label: '记忆', hint: 'Memory · 偏好、术语与事实' },
+  { to: '/settings', icon: Settings, label: '设置', hint: '模型连接、API Key 与默认值' },
 ] as const
 
 const ICON_BUTTON =

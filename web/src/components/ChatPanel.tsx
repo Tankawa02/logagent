@@ -361,7 +361,7 @@ export function ChatPanel({
                     onClick={requestStop}
                     disabled={stopping}
                     aria-label={stopping ? '正在停止' : '停止'}
-                    title={stopping ? '正在停止，等当前步骤结束后保存已输���的部分' : '停止本轮'}
+                    title={stopping ? '正在停止，等当前步骤结束后保存已输出的部分' : '停止本轮'}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
                   >
                     {stopping ? <Spinner /> : <Square className="h-3.5 w-3.5 fill-current" />}

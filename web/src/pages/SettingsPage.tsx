@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, CircleAlert, Eye, EyeOff, KeyRound, Lock, PlugZap, RotateCcw, Save } from 'lucide-react'
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { ModelCombobox } from '../components/ModelCombobox'
-import { Badge, Button, Card, CardHeader, ErrorBox, Spinner } from '../components/ui'
+import { Select } from '../components/Select'
+import { Badge, Button, Card, CardHeader, ErrorBox, FormSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import type { ConnectionTestResult, SettingField, SettingKey, Settings, SettingsUpdate, SettingValue } from '../lib/types'
 
@@ -46,11 +47,7 @@ export function SettingsPage() {
             模型连接与常用默认值。保存后立即对当前 serve 生效，不用重启；命令行的 analyze / chat 也读同一份配置。
           </p>
         </header>
-        {settings.isLoading && (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        )}
+        {settings.isLoading && <FormSkeleton fields={6} label="加载设置" />}
         {settings.error && <ErrorBox error={settings.error} />}
         {/* 保存后用新数据重建表单，草稿自然回到「已保存」状态 */}
         {settings.data && <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />}
@@ -249,14 +246,13 @@ function SettingsForm({
           </Row>
           <Row label="长期记忆" field={fields.memory} hint="影响之后新开始的提问。">
             {(id) => (
-              <select id={id} value={draft.memory} onChange={(e) => set('memory')(e.target.value)} className={FIELD}>
-                <option value="">默认（主动建议）</option>
-                {MEMORY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                id={id}
+                value={draft.memory}
+                onChange={set('memory')}
+                options={[{ value: '', label: '默认（主动建议）' }, ...MEMORY_OPTIONS]}
+                size="lg"
+              />
             )}
           </Row>
         </div>

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { baseName, formatRange, stampParts } from '../lib/format'
 import type { Bucket, SourceTarget, Timeline } from '../lib/types'
+import { Select } from './Select'
 import { TimelineChart } from './Timeline'
 import { Badge, Button, Empty, ErrorBox, Spinner } from './ui'
 
@@ -57,23 +58,20 @@ export function TimelinePane({
           </span>
         )}
         {timeline.isFetching && <Spinner />}
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-zinc-500">
-          精度
-          <select
-            value={buckets}
-            onChange={(e) => {
-              setBuckets(Number(e.target.value))
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-zinc-500">
+          <label htmlFor="timeline-buckets">精度</label>
+          <Select
+            id="timeline-buckets"
+            size="sm"
+            align="right"
+            value={String(buckets)}
+            onChange={(v) => {
+              setBuckets(Number(v))
               setSelected(null)
             }}
-            className="rounded-md border border-zinc-300 bg-white px-1.5 py-0.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            {BUCKET_CHOICES.map((n) => (
-              <option key={n} value={n}>
-                约 {n} 格
-              </option>
-            ))}
-          </select>
-        </label>
+            options={BUCKET_CHOICES.map((n) => ({ value: String(n), label: `约 ${n} 格` }))}
+          />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">

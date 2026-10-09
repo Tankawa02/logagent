@@ -2,7 +2,9 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Check, Lightbulb, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import { CandidateRow, KIND_TONE, MEMORY_FIELD, SimilarPrompt, useRefreshMemory } from '../components/MemoryCandidate'
-import { Badge, Button, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
+import { useConfirm, useToast } from '../components/Feedback'
+import { Select } from '../components/Select'
+import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import type { MemoryIndex, MemoryItem, MemoryKind, MemorySaveResult } from '../lib/types'
 
@@ -73,37 +75,33 @@ function AddMemory({ index }: { index: MemoryIndex }) {
             <label htmlFor="memory-kind" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
               类型
             </label>
-            <select
+            <Select
               id="memory-kind"
               value={kind}
-              onChange={(e) => {
-                const next = e.target.value as MemoryKind
+              onChange={(v) => {
+                const next = v as MemoryKind
                 setKind(next)
                 // 表达偏好默认全局；术语、事实挂在项目上，与 CLI 的默认归类一致
                 if (next === 'preference') setScope(GLOBAL)
                 else if (scope === GLOBAL && index.projects.length === 1) setScope(index.projects[0].key)
               }}
-              className={FIELD}
-            >
-              {index.kinds.map((k) => (
-                <option key={k.key} value={k.key}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
+              options={index.kinds.map((k) => ({ value: k.key, label: k.label }))}
+              className="min-w-28"
+            />
           </div>
           <div className="min-w-48 flex-1 space-y-1">
             <label htmlFor="memory-scope" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
               范围
             </label>
-            <select id="memory-scope" value={scope} onChange={(e) => setScope(e.target.value)} className={FIELD}>
-              <option value={GLOBAL}>全局 · 所有项目生效</option>
-              {index.projects.map((p) => (
-                <option key={p.key} value={p.key} title={p.key}>
-                  {p.label} · 仅该项目
-                </option>
-              ))}
-            </select>
+            <Select
+              id="memory-scope"
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: GLOBAL, label: '全局', hint: '所有项目生效' },
+                ...index.projects.map((p) => ({ value: p.key, label: p.label, hint: '仅该项目', title: p.key })),
+              ]}
+            />
           </div>
           <Button type="submit" variant="primary" disabled={!text.trim() || save.isPending}>
             {save.isPending ? <Spinner className="h-3 w-3" /> : <Plus className="h-4 w-4" aria-hidden />}
@@ -136,14 +134,23 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
   const refresh = useRefreshMemory()
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(memory.text)
+  const confirm = useConfirm()
+  const toast = useToast()
   const update = useMutation({
     mutationFn: () => api.updateMemory(memory.id, text.trim()),
     onSuccess: () => {
       setEditing(false)
       refresh()
+      toast(`已更新记忆 #${memory.id}`)
     },
   })
-  const remove = useMutation({ mutationFn: () => api.deleteMemory(memory.id), onSuccess: refresh })
+  const remove = useMutation({
+    mutationFn: () => api.deleteMemory(memory.id),
+    onSuccess: () => {
+      refresh()
+      toast(`已删除记忆 #${memory.id}`)
+    },
+  })
 
   return (
     <li className="group flex items-start gap-3 px-4 py-3">
@@ -210,8 +217,14 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
           <button
             type="button"
             disabled={remove.isPending}
-            onClick={() => {
-              if (window.confirm(`删除记忆 #${memory.id}？下一轮对话起不再使用。`)) remove.mutate()
+            onClick={async () => {
+              const ok = await confirm({
+                title: `删除记忆 #${memory.id}？`,
+                description: '下一轮对话起不再使用这条记忆。',
+                confirmLabel: '删除',
+                danger: true,
+              })
+              if (ok) remove.mutate()
             }}
             aria-label={`删除记忆 #${memory.id}`}
             className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-red-600 dark:hover:bg-zinc-800"
@@ -278,19 +291,14 @@ function MemoryList({ index }: { index: MemoryIndex }) {
             />
           </div>
           {scopes.length > 1 && (
-            <select
+            <Select
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
-              aria-label="按范围筛选"
-              className={FIELD.replace('w-full', 'w-auto shrink-0')}
-            >
-              <option value="">全部范围</option>
-              {scopes.map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              onChange={setScope}
+              ariaLabel="按范围筛选"
+              align="right"
+              options={[{ value: '', label: '全部范围' }, ...scopes.map(([key, label]) => ({ value: key, label }))]}
+              className="w-40 shrink-0"
+            />
           )}
         </div>
       )}
@@ -317,7 +325,7 @@ export function MemoryPage() {
     <main className="h-full overflow-auto">
       <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
         <header>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Memory</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">记忆</h1>
           <p className="mt-1 text-sm text-zinc-500">
             跨会话记住你的表达偏好、术语和项目事实，每轮对话前注入给模型。表达偏好默认全局，术语和事实挂在项目上。
           </p>
@@ -328,11 +336,7 @@ export function MemoryPage() {
           )}
         </header>
 
-        {memory.isLoading && (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        )}
+        {memory.isLoading && <ListSkeleton rows={5} label="加载记忆" />}
         {memory.error && <ErrorBox error={memory.error} />}
 
         {data && (

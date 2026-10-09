@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate } from '@tanstack/react-router'
+import { createRootRoute, createRoute, createRouter, Outlet, redirect, RouterProvider, useNavigate } from '@tanstack/react-router'
 import { lazy, StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
+import { FeedbackProvider } from './components/Feedback'
+import { NotFound } from './components/NotFound'
 import { AppShell } from './components/AppShell'
-import { PageSkeleton, Spinner } from './components/ui'
+import { PageSkeleton, ShellSkeleton } from './components/ui'
 import { api, ApiError } from './lib/api'
 import { validateWorkspaceSearch, type WorkspaceSearch } from './lib/workspace-search'
 import { AuthRequired } from './pages/AuthRequired'
@@ -35,25 +37,24 @@ const queryClient = new QueryClient({
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
-  notFoundComponent: () => (
-    <div className="p-10 text-center text-sm text-zinc-500">
-      页面不存在。
-      <Link to="/" className="text-brand-700 hover:underline">
-        返回首页
-      </Link>
-    </div>
-  ),
+  notFoundComponent: NotFound,
 })
+
+/** 常见的手误写法直接转到正确页面，而不是落到 404 */
+const ALIASES = { '/traces': '/trace', '/skill': '/skills', '/memories': '/memory', '/setting': '/settings' } as const
+const aliasRoutes = Object.entries(ALIASES).map(([path, to]) =>
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path,
+    beforeLoad: ({ search }) => {
+      throw redirect({ to, search: search as never, replace: true })
+    },
+  }),
+)
 
 function OwnerLayout() {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta })
-  if (meta.isLoading) {
-    return (
-      <div className="flex h-dvh items-center justify-center">
-        <Spinner />
-      </div>
-    )
-  }
+  if (meta.isLoading) return <ShellSkeleton />
   if (meta.data && !meta.data.authenticated) return <AuthRequired />
   return (
     <AppShell>
@@ -152,6 +153,7 @@ const router = createRouter({
   routeTree: rootRoute.addChildren([
     ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute, settingsRoute]),
     shareRoute,
+    ...aliasRoutes,
   ]),
   defaultPreload: false,
 })
@@ -165,7 +167,9 @@ declare module '@tanstack/react-router' {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <FeedbackProvider>
+        <RouterProvider router={router} />
+      </FeedbackProvider>
     </QueryClientProvider>
   </StrictMode>,
 )
