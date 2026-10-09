@@ -102,6 +102,28 @@ def test_writes_need_csrf_header(demo) -> None:
     assert client.post(f"/api/sessions/{SESSION}/shares", json={}, headers=WRITE).status_code == 200
 
 
+def test_rename_and_pin_session(demo) -> None:
+    db, *_ = demo
+    client = client_for(db)
+    url = f"/api/sessions/{SESSION}"
+    assert client.patch(url, json={"title": "x"}, headers=OWNER).status_code == 403
+    assert client.patch(url, json={"title": "   "}, headers=WRITE).status_code == 400
+    assert client.patch(url, json={"title": "x" * 81}, headers=WRITE).status_code == 400
+    assert client.patch("/api/sessions/nope", json={"pinned": True}, headers=WRITE).status_code == 404
+
+    renamed = client.patch(url, json={"title": "  支付  超时 ", "pinned": True}, headers=WRITE).json()
+    assert renamed["title"] == "支付 超时" and renamed["pinned"] is True
+    listed = client.get("/api/sessions", headers=OWNER).json()[0]
+    assert listed["title"] == "支付 超时" and listed["pinned"] is True
+
+    assert client.patch(url, json={"pinned": False}, headers=WRITE).json()["pinned"] is False
+    client.patch(url, json={"pinned": True}, headers=WRITE)
+    client.delete(url, headers=WRITE)
+    conn = sqlite3.connect(db)
+    assert SessionStore(conn).pinned_names() == set()
+    conn.close()
+
+
 def test_security_headers_hide_referrer(demo) -> None:
     db, *_ = demo
     headers = client_for(db).get("/api/meta").headers

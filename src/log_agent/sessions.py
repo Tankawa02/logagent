@@ -71,6 +71,9 @@ class SessionStore:
                 "(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL)"
             )
             self.conn.execute("CREATE INDEX IF NOT EXISTS log_agent_turns_name ON log_agent_turns(name, id)")
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS log_agent_session_pins (name TEXT PRIMARY KEY, pinned_at TEXT NOT NULL)"
+            )
             columns = {r[1] for r in self.conn.execute("PRAGMA table_info(log_agent_turns)")}
             if "turn_number" not in columns:
                 self.conn.execute("ALTER TABLE log_agent_turns ADD COLUMN turn_number INTEGER")
@@ -294,11 +297,28 @@ class SessionStore:
             result.append(item)
         return result
 
+    def rename(self, name: str, title: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute("UPDATE log_agent_sessions SET title = ? WHERE name = ?", (title, name))
+        return cur.rowcount > 0
+
+    def set_pinned(self, name: str, pinned: bool) -> None:
+        with self.conn:
+            if pinned:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO log_agent_session_pins (name, pinned_at) VALUES (?, ?)", (name, _now()),
+                )
+            else:
+                self.conn.execute("DELETE FROM log_agent_session_pins WHERE name = ?", (name,))
+
+    def pinned_names(self) -> set[str]:
+        return {row[0] for row in self.conn.execute("SELECT name FROM log_agent_session_pins")}
+
     def delete(self, name: str) -> bool:
         with self.conn:
             cur = self.conn.execute("DELETE FROM log_agent_sessions WHERE name = ?", (name,))
             deleted = cur.rowcount > 0
-            for table in ("log_agent_session_settings", "log_agent_turns"):
+            for table in ("log_agent_session_settings", "log_agent_turns", "log_agent_session_pins"):
                 self.conn.execute(f"DELETE FROM {table} WHERE name = ?", (name,))
             # Web 分享链接随会话一起失效；从没开过 serve 的库里没有这张表
             try:

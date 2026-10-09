@@ -197,6 +197,8 @@ export interface SessionSummary {
   created_at: string
   updated_at: string
   settings: Record<string, unknown>
+  /** 只在会话列表里返回 */
+  pinned?: boolean
   last?: TurnBrief | null
 }
 
