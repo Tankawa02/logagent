@@ -373,7 +373,7 @@ def create_app(config: WebConfig) -> FastAPI:
                 counts[str(name or "?")] = counts.get(str(name or "?"), 0) + 1
             legacy = row["provenance"] == "legacy_unknown"
             elapsed = row["elapsed_seconds"]
-            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平���值时跳过，而不是当成 0
+            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平均值时跳过，而不是当成 0
             measured = not legacy and isinstance(elapsed, (int, float))
             items.append({
                 "session": row["session"],
@@ -697,7 +697,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
 
 
 def _live_stream(live: Any) -> StreamingResponse:
-    """把一轮分析以 SSE 推给浏览器：先重放已有事件，再跟随后续事件��到本轮结束。
+    """把一轮分析以 SSE 推给浏览器：先重放已有事件，再跟随后续事件直到本轮结束。
 
     浏览器断开（切到别的会话、刷新、关页面）只是退订，不会中断分析；要中断得调用 stop 接口。
     """

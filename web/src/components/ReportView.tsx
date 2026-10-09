@@ -356,7 +356,7 @@ function EvidenceCard({
           : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40'
       }`}
     >
-      {/* 源码路径往往很长：第一���只放文件名和行号（完整显示），目录弱化放到下一行；徽标和「查看原文」固定在右侧 */}
+      {/* 源码路径往往很长：第一行只放文件名和行号（完整显示），目录弱化放到下一行；徽标和「查看原文」固定在右侧 */}
       <div className="flex items-start gap-2 px-3 pt-2" title={`${evidence.source}:${range}`}>
         <span className="min-w-0 flex-1">
           <span className="block break-all font-mono text-xs font-semibold leading-5 text-brand-700 dark:text-brand-300">

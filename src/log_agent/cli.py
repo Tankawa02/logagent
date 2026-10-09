@@ -583,7 +583,7 @@ def chat(
             if not log:
                 missing = [p for p in stored.logs if not Path(p).is_file()]
                 if missing:
-                    _fail(f"会话 '{stored.name}' 上次使用的日志已不存在：{missing[0]}\n请用 -l 重新指定日志���件。")
+                    _fail(f"会话 '{stored.name}' 上次使用的日志已不存在：{missing[0]}\n请用 -l 重新指定日志文件。")
                 log, reused_sources = list(stored.logs), True
                 code = code or [Path(p) for p in stored.code]
     if not log:
@@ -729,10 +729,10 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="��次触发��问 agent 的问题",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发询问 agent 的问题",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
-    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报��时反复消��"),
+    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
     once: bool = typer.Option(False, "--once", help="分析一次后退出：适合复现一次问题、看完结果就走"),
     model: str = _opt_model,
     base_url: str = _opt_base_url,
@@ -900,7 +900,7 @@ def doctor(
     if local_failed:
         console.print(Text("请修正配置；依赖缺失或版本不匹配时运行 uv sync。", style="warn"))
     if ping_failed:
-        console.print(Text("按上面的提示检查 OPENAI_API_KEY、���关地址（--base-url / OPENAI_BASE_URL）和模型名（-m / LOG_AGENT_MODEL）。",
+        console.print(Text("按上面的提示检查 OPENAI_API_KEY、网关地址（--base-url / OPENAI_BASE_URL）和模型名（-m / LOG_AGENT_MODEL）。",
                            style="warn"))
     if local_failed or ping_failed:
         raise typer.Exit(1)
@@ -1056,7 +1056,7 @@ def sessions_list(
     finally:
         conn.close()
     if search and not items:
-        console.print(Text(f"没有��配 '{search}' ��会话。", style="muted"))
+        console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
         return
     if not items:
         console.print(Text("还没有任何会话。", style="muted"))
