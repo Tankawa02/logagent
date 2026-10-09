@@ -9,8 +9,14 @@ uv run pytest          # 单元测试 + 基于剧本模型的端到端测试，�
 uv run ruff check src tests
 ```
 
-Web 界面的前端在 `web/`，构建产物提交在 `src/log_agent/web/static/`，改动后需要 `cd web && npm ci && npm run build`，
-见 [Web 界面 · 开发](web.md#开发)。
+Web 界面的前端在 `web/`（需要 Node 22.12+），构建产物提交在 `src/log_agent/web/static/`，改动后需要 `cd web && npm ci && npm run build`，
+见 [Web 界面 · 开发](web.md#开发)。提交前在 `web/` 下跑一遍 CI 同款检查：
+
+```bash
+npm run lint          # ESLint（含 react-hooks 依赖检查），不允许警告
+npm run format:check  # Prettier；npm run format 自动修正
+npm test              # Vitest 单元测试
+```
 
 CI 在 Ubuntu / Windows / macOS × Python 3.11 / 3.13 上运行同一套测试。其中 `tests/test_smoke.py`
 用真实子进程跑完整的 `analyze`（只把模型换成脚本），覆盖 Windows 默认 GBK 控制台、中文 / 带空格路径、

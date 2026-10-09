@@ -13,7 +13,13 @@ export function spikeQuestion(bucket: Bucket, data: Timeline): string {
   const range = formatRange(bucket.start, bucket.end, data.time_only)
   const top = bucket.top[0]
   const where = top ? `，主要是「${top.signature}」（${top.count} 次，首次出现在 ${baseName(top.source)}:${top.line}）` : ''
-  const others = bucket.top.length > 1 ? `，另有 ${bucket.top.slice(1).map((t) => `「${t.signature}」×${t.count}`).join('、')}` : ''
+  const others =
+    bucket.top.length > 1
+      ? `，另有 ${bucket.top
+          .slice(1)
+          .map((t) => `「${t.signature}」×${t.count}`)
+          .join('、')}`
+      : ''
   return (
     `请分析 ${range}（${data.timezone}）这段时间的错误尖峰：共 ${bucket.error} 条 ERROR/FATAL${where}${others}。` +
     '这波错误的直接原因和根因是什么？与之前的结论是否一致？'
@@ -46,8 +52,8 @@ export function TimelinePane({
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
         {data && (
           <span className="text-xs text-zinc-500">
-            共 {data.totals.events.toLocaleString()} 条 · <span className="text-red-600 dark:text-red-400">ERROR {data.totals.error}</span> · WARN{' '}
-            {data.totals.warn} · {data.timezone}
+            共 {data.totals.events.toLocaleString()} 条 · <span className="text-red-600 dark:text-red-400">ERROR {data.totals.error}</span>{' '}
+            · WARN {data.totals.warn} · {data.timezone}
           </span>
         )}
         {timeline.isFetching && <Spinner />}
@@ -160,7 +166,9 @@ function BucketDetail({
       </div>
       <div className="flex flex-wrap gap-2">
         {firstError ? (
-          <Button onClick={() => onOpen({ source: firstError.source, start: firstError.line, end: firstError.line })}>跳到第一条错误</Button>
+          <Button onClick={() => onOpen({ source: firstError.source, start: firstError.line, end: firstError.line })}>
+            跳到第一条错误
+          </Button>
         ) : (
           first && <Button onClick={() => onOpen({ source: first.source, start: first.line, end: first.line })}>跳到该时段日志</Button>
         )}

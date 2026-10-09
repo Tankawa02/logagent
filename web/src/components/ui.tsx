@@ -14,20 +14,20 @@ export function Badge({ tone = 'gray', children, title }: { tone?: Tone; childre
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <section
-      className={`rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 ${className}`}
-    >
+    <section className={`rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 ${className}`}>
       {children}
     </section>
   )
 }
 
-  /** fill：标题占满剩余宽度、可截断，操作按钮始终和标题同一行（标题是长路径等可变内容时用） */
-  export function CardHeader({ title, children, fill = false }: { title: ReactNode; children?: ReactNode; fill?: boolean }) {
+/** fill：标题占满剩余宽度、可截断，操作按钮始终和标题同一行（标题是长路径等可变内容时用） */
+export function CardHeader({ title, children, fill = false }: { title: ReactNode; children?: ReactNode; fill?: boolean }) {
   return (
-  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-  <h2 className={`min-w-0 max-w-full text-sm font-semibold text-zinc-800 dark:text-zinc-100 ${fill ? 'flex-1 basis-0' : ''}`}>{title}</h2>
-  {children && <div className={`flex flex-wrap items-center gap-2 ${fill ? 'shrink-0' : ''}`}>{children}</div>}
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+      <h2 className={`min-w-0 max-w-full text-sm font-semibold text-zinc-800 dark:text-zinc-100 ${fill ? 'flex-1 basis-0' : ''}`}>
+        {title}
+      </h2>
+      {children && <div className={`flex flex-wrap items-center gap-2 ${fill ? 'shrink-0' : ''}`}>{children}</div>}
     </div>
   )
 }
@@ -57,6 +57,37 @@ export function Spinner({ className = '' }: { className?: string }) {
       aria-hidden
       className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 ${className}`}
     />
+  )
+}
+
+export function Skeleton({ className = '' }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={`block animate-pulse rounded-md bg-zinc-200/70 motion-reduce:animate-none dark:bg-zinc-800 ${className}`}
+    />
+  )
+}
+
+/** 页面级加载占位：形状接近真实内容，加载完成时不会整块跳动 */
+export function PageSkeleton({ label = '加载中' }: { label?: string }) {
+  return (
+    <div role="status" aria-label={label} className="mx-auto w-full max-w-3xl space-y-8 px-4 pt-10 sm:px-6">
+      <span className="sr-only">{label}…</span>
+      <div className="space-y-3">
+        <Skeleton className="h-7 w-2/3" />
+        <Skeleton className="h-4 w-1/3" />
+      </div>
+      <div className="space-y-2.5">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-4/5" />
+      </div>
+      <div className="space-y-2.5">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-3/4" />
+      </div>
+    </div>
   )
 }
 

@@ -9,7 +9,6 @@ export default defineConfig({
   build: {
     outDir: '../src/log_agent/web/static',
     emptyOutDir: true,
-    chunkSizeWarningLimit: 1200,
   },
   server: {
     proxy: {

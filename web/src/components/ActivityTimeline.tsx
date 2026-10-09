@@ -101,10 +101,7 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
         <span className="shrink-0 text-xs tabular-nums text-zinc-400">
           {tools.length} 步{failed > 0 && <span className="text-red-500"> · {failed} 失败</span>}
         </span>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        />
+        <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
       </button>
 
       {open && (
@@ -122,9 +119,7 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-zinc-500">正在撰写结论</p>
-                <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-500">
-                  {visibleReport(draft)}
-                </p>
+                <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-500">{visibleReport(draft)}</p>
               </div>
             </div>
           )}
@@ -165,12 +160,8 @@ function Step({ tool, last }: { tool: ToolActivity; last: boolean }) {
             {tool.note}
           </p>
         )}
-        <div
-          className={`flex min-w-0 items-center gap-1.5 text-xs leading-5 ${tool.note ? 'mt-0.5 text-zinc-400' : 'text-zinc-500'}`}
-        >
-          <span className={`shrink-0 ${tool.note ? '' : 'font-medium text-zinc-700 dark:text-zinc-200'}`}>
-            {tool.label || tool.name}
-          </span>
+        <div className={`flex min-w-0 items-center gap-1.5 text-xs leading-5 ${tool.note ? 'mt-0.5 text-zinc-400' : 'text-zinc-500'}`}>
+          <span className={`shrink-0 ${tool.note ? '' : 'font-medium text-zinc-700 dark:text-zinc-200'}`}>{tool.label || tool.name}</span>
           {tool.detail && (
             <code
               className="min-w-0 truncate rounded bg-zinc-100 px-1.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"

@@ -63,6 +63,26 @@ def test_owner_api_requires_token(demo) -> None:
     assert client.get("/api/meta").json()["authenticated"] is False
 
 
+def test_session_list_brief_matches_full_payload_brief(demo) -> None:
+    from log_agent.web.app import _turn_brief
+
+    db, *_ = demo
+    conn = sqlite3.connect(db)
+    store = SessionStore(conn)
+    store.touch("broken", [], [], "m")
+    store.record_turn("broken", "q", 0, {"question": "q"})
+    conn.execute("UPDATE log_agent_turns SET payload = 'not json' WHERE name = 'broken'")
+    conn.commit()
+    info = store.get(SESSION)
+    expected = _turn_brief(info.turns, store.last_turn(SESSION))
+    briefs = store.last_turn_briefs()
+    conn.close()
+    assert {"turn": info.turns, **briefs[SESSION]} == expected
+    assert "broken" not in briefs
+    listed = {s["name"]: s["last"] for s in client_for(db).get("/api/sessions", headers=OWNER).json()}
+    assert listed[SESSION] == expected and listed["broken"] is None
+
+
 def test_token_link_becomes_httponly_cookie(demo) -> None:
     db, *_ = demo
     client = client_for(db)

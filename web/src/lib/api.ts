@@ -40,9 +40,7 @@ export class ApiError extends Error {
 }
 
 export function scopeBase(scope: Scope): string {
-  return scope.kind === 'owner'
-    ? `/api/sessions/${encodeURIComponent(scope.name)}`
-    : `/api/share/${encodeURIComponent(scope.token)}`
+  return scope.kind === 'owner' ? `/api/sessions/${encodeURIComponent(scope.name)}` : `/api/share/${encodeURIComponent(scope.token)}`
 }
 
 export function scopeKey(scope: Scope): string[] {
@@ -121,7 +119,12 @@ export const api = {
   createSession: (body: CreateSessionBody) =>
     request<SessionSummary>('/api/sessions', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
   deleteSession: (name: string) =>
-    request<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE', headers: CSRF_HEADERS }),
+    request<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: CSRF_HEADERS,
+      // 可撤销删除在关页面时才提交，keepalive 保证卸载期间请求仍会发出
+      keepalive: true,
+    }),
 
   skills: () => request<{ sources: SkillSource[] }>('/api/skills'),
   skill: (source: string, name: string) => request<SkillDetail>(skillUrl(source, name)),

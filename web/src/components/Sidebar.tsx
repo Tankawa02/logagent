@@ -1,12 +1,13 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Trash2 } from 'lucide-react'
 import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
+import { dismissDeleteError, scheduleDelete, undoDelete, useDeferredDelete } from '../lib/deferred-delete'
 import { ASSESSMENT } from '../lib/format'
 import type { SessionSummary } from '../lib/types'
-import { ErrorBox, Spinner } from './ui'
+import { ErrorBox, Skeleton } from './ui'
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -140,25 +141,31 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
     placeholderData: keepPreviousData,
   })
 
-  const remove = useMutation({
-    mutationFn: (name: string) => api.deleteSession(name),
-    onSuccess: (_, name) => {
-      setRemoveError(null)
-      void client.invalidateQueries({ queryKey: ['sessions'] })
-      if (pathname === `/sessions/${encodeURIComponent(name)}` || pathname === `/sessions/${name}`) void navigate({ to: '/' })
-    },
-    onError: (error, name) => setRemoveError({ name, error }),
-  })
-  const [removeError, setRemoveError] = useState<{ name: string; error: unknown } | null>(null)
+  const deletion = useDeferredDelete()
+
+  function requestDelete(s: SessionSummary) {
+    const label = s.title || s.name
+    scheduleDelete({ name: s.name, label }, async () => {
+      // 真正提交时先从缓存里拿掉，免得等接口返回的这段时间它又闪回列表
+      client.setQueriesData<SessionSummary[]>({ queryKey: ['sessions'] }, (old) => old?.filter((x) => x.name !== s.name))
+      try {
+        await api.deleteSession(s.name)
+      } finally {
+        void client.invalidateQueries({ queryKey: ['sessions'] })
+      }
+    })
+    if (pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`) void navigate({ to: '/' })
+  }
 
   const groups = useMemo(() => {
     const map = new Map<string, SessionSummary[]>()
     for (const s of sessions.data ?? []) {
+      if (s.name === deletion.pending?.name) continue
       const label = groupLabel(s.updated_at)
       map.set(label, [...(map.get(label) ?? []), s])
     }
     return [...map.entries()]
-  }, [sessions.data])
+  }, [sessions.data, deletion.pending?.name])
 
   return (
     <div className="flex h-full flex-col">
@@ -217,21 +224,28 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
 
       <nav aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-3 pb-3">
         {sessions.isLoading && (
-          <div className="flex justify-center p-6">
-            <Spinner />
+          <div role="status" aria-label="加载会话列表" className="space-y-3 px-2.5 pt-1">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="space-y-1.5">
+                <Skeleton className={`h-3.5 ${i % 2 ? 'w-3/5' : 'w-4/5'}`} />
+                <Skeleton className="h-2.5 w-2/5" />
+              </div>
+            ))}
           </div>
         )}
-        {removeError && (
+        {deletion.failed && (
           <div role="alert" className="mb-2 space-y-1">
-            <ErrorBox error={`删除会话「${removeError.name}」失败：${errorText(removeError.error)}`} />
-            <button type="button" onClick={() => setRemoveError(null)} className="px-1 text-xs text-zinc-500 hover:underline">
+            <ErrorBox error={`删除会话「${deletion.failed.item.label}」失败：${errorText(deletion.failed.error)}`} />
+            <button type="button" onClick={dismissDeleteError} className="px-1 text-xs text-zinc-500 hover:underline">
               知道了
             </button>
           </div>
         )}
         {sessions.error && (
           <div role="alert" className="mb-2 space-y-1">
-            <ErrorBox error={`${sessions.data ? '刷新会话列表失败，下面是上次加载的结果' : '加载会话列表失败'}：${errorText(sessions.error)}`} />
+            <ErrorBox
+              error={`${sessions.data ? '刷新会话列表失败，下面是上次加载的结果' : '加载会话列表失败'}：${errorText(sessions.error)}`}
+            />
             <button
               type="button"
               onClick={() => void sessions.refetch()}
@@ -272,24 +286,24 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
                         {s.title || '新的分析'}
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`}
+                          title={s.last?.assessment ? ASSESSMENT[s.last.assessment].label : '暂无结论'}
+                          aria-hidden
+                        />
+                        <span className="sr-only">{s.last?.assessment ? ASSESSMENT[s.last.assessment].label : '暂无结论'}，</span>
                         <span className="truncate">
                           {s.logs[0]?.name ?? '无日志'}
-                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮
-                          {s.origin === 'analyze' ? ' · CLI' : ''}
+                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮{s.origin === 'analyze' ? ' · CLI' : ''}
                         </span>
                       </span>
                     </Link>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`删除会话「${s.title || s.name}」？对话记录与报告会一并删除，日志文件不受影响。`)) {
-                          setRemoveError(null)
-                          remove.mutate(s.name)
-                        }
-                      }}
+                      onClick={() => requestDelete(s)}
                       aria-label={`删除会话 ${s.title || s.name}`}
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-zinc-400 opacity-0 hover:bg-zinc-300/60 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-700"
+                      title="删除会话（几秒内可撤销）"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-zinc-400 opacity-0 hover:bg-zinc-300/60 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 dark:hover:bg-zinc-700"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -300,6 +314,21 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
           </div>
         ))}
       </nav>
+
+      <div aria-live="polite" className="px-3 empty:hidden">
+        {deletion.pending && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl bg-zinc-900 py-2 pl-3 pr-1.5 text-sm text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+            <span className="min-w-0 flex-1 truncate">已删除「{deletion.pending.label}」</span>
+            <button
+              type="button"
+              onClick={undoDelete}
+              className="shrink-0 rounded-lg px-2 py-1 text-sm font-medium text-brand-300 hover:bg-white/10 dark:text-brand-700 dark:hover:bg-zinc-900/10"
+            >
+              撤销
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="space-y-2 border-t border-zinc-200/70 px-3 py-3 dark:border-zinc-800">
         <ThemeToggle />

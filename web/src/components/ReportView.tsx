@@ -1,25 +1,6 @@
-import {
-  ClipboardCheck,
-  FlaskConical,
-  HelpCircle,
-  Lightbulb,
-  ListChecks,
-  Repeat,
-  Target,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react'
+import { ClipboardCheck, FlaskConical, HelpCircle, Lightbulb, ListChecks, Repeat, Target, Wrench, type LucideIcon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import {
-  ASSESSMENT,
-  CHECK_STATUS,
-  CONFIDENCE,
-  EVIDENCE,
-  formatDuration,
-  formatGenerated,
-  splitPath,
-  visibleReport,
-} from '../lib/format'
+import { ASSESSMENT, CHECK_STATUS, CONFIDENCE, EVIDENCE, formatDuration, formatGenerated, splitPath, visibleReport } from '../lib/format'
 import type { Evidence, EvidenceCheck, EvidenceItem, Issue, SourceTarget, TurnPayload } from '../lib/types'
 import { Markdown } from './Markdown'
 import { Badge, List } from './ui'
@@ -53,9 +34,7 @@ export function ReportView({
               {CHECK_STATUS[check.status].label} · {check.verified + check.shifted}/{check.total}
             </Badge>
           )}
-          {payload.status !== 'ok' && (
-            <Badge tone="amber">{payload.status === 'interrupted' ? '已中断' : payload.error || '出错'}</Badge>
-          )}
+          {payload.status !== 'ok' && <Badge tone="amber">{payload.status === 'interrupted' ? '已中断' : payload.error || '出错'}</Badge>}
           {payload.budget_hit && <Badge tone="amber">触达 tokens 预算</Badge>}
           <span>{formatGenerated(payload.generated_at)}</span>
           <span>· {payload.model}</span>
@@ -81,10 +60,7 @@ export function ReportView({
             aria-labelledby="conclusion-heading"
             className="rounded-2xl border border-brand-200 bg-brand-50/70 p-4 dark:border-brand-900 dark:bg-brand-950/30"
           >
-            <h3
-              id="conclusion-heading"
-              className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-brand-700 dark:text-brand-300"
-            >
+            <h3 id="conclusion-heading" className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-brand-700 dark:text-brand-300">
               <Target className="h-3.5 w-3.5" aria-hidden />
               结论
             </h3>
@@ -113,14 +89,7 @@ export function ReportView({
             </Section>
           )}
           {analysis.issues.map((issue, i) => (
-            <IssueCard
-              key={i}
-              issue={issue}
-              number={i + 1}
-              check={check}
-              activeEvidence={activeEvidence}
-              onOpen={onOpen}
-            />
+            <IssueCard key={i} issue={issue} number={i + 1} check={check} activeEvidence={activeEvidence} onOpen={onOpen} />
           ))}
           {analysis.open_questions.length > 0 && (
             <Section title="分析待确认项" icon={HelpCircle}>
@@ -393,9 +362,7 @@ function EvidenceCard({
           <span className="block break-all font-mono text-xs font-semibold leading-5 text-brand-700 dark:text-brand-300">
             {name}:{range}
           </span>
-          {dir && (
-            <span className="block truncate font-mono text-[11px] leading-4 text-zinc-400 dark:text-zinc-500">{dir}</span>
-          )}
+          {dir && <span className="block truncate font-mono text-[11px] leading-4 text-zinc-400 dark:text-zinc-500">{dir}</span>}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {status && (

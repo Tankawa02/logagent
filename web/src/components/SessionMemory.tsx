@@ -64,9 +64,7 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
           className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
         >
           <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
-            <p className="text-xs font-medium text-zinc-800 dark:text-zinc-100">
-              {off ? '长期记忆已关闭' : '每轮分析都会带上这些记忆'}
-            </p>
+            <p className="text-xs font-medium text-zinc-800 dark:text-zinc-100">{off ? '长期记忆已关闭' : '每轮分析都会带上这些记忆'}</p>
             <p className="mt-0.5 text-xs text-zinc-500">
               {off
                 ? '在配置文件里把 memory 设为 suggest 或 explicit 后重启服务即可开启。'

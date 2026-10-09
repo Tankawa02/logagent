@@ -150,15 +150,22 @@ export function TimelineChart({
                             : 'fill-transparent'
                     }
                   />
-                  <rect x={x + gap} y={base - otherH - warnH - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={otherH} className="fill-zinc-300 dark:fill-zinc-600" />
-                  <rect x={x + gap} y={base - warnH - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={warnH} className="fill-amber-400" />
+                  <rect
+                    x={x + gap}
+                    y={base - otherH - warnH - errorH}
+                    width={Math.max(barWidth - 2 * gap, 0.5)}
+                    height={otherH}
+                    className="fill-zinc-300 dark:fill-zinc-600"
+                  />
+                  <rect
+                    x={x + gap}
+                    y={base - warnH - errorH}
+                    width={Math.max(barWidth - 2 * gap, 0.5)}
+                    height={warnH}
+                    className="fill-amber-400"
+                  />
                   <rect x={x + gap} y={base - errorH} width={Math.max(barWidth - 2 * gap, 0.5)} height={errorH} className="fill-red-500" />
-                  {b.spike && (
-                    <path
-                      d={`M ${x + barWidth / 2 - 4} ${TOP - 1} l 4 6 l 4 -6 z`}
-                      className="fill-red-600 dark:fill-red-400"
-                    />
-                  )}
+                  {b.spike && <path d={`M ${x + barWidth / 2 - 4} ${TOP - 1} l 4 6 l 4 -6 z`} className="fill-red-600 dark:fill-red-400" />}
                 </g>
               )
             })}
@@ -203,8 +210,8 @@ export function TimelineChart({
               {formatRange(buckets[active].start, buckets[active].end, data.time_only)}
             </div>
             <div className="text-zinc-600 dark:text-zinc-300">
-              <span className="text-red-600 dark:text-red-400">ERROR {buckets[active].error}</span> · WARN{' '}
-              {buckets[active].warn} · 共 {buckets[active].total}
+              <span className="text-red-600 dark:text-red-400">ERROR {buckets[active].error}</span> · WARN {buckets[active].warn} · 共{' '}
+              {buckets[active].total}
             </div>
             {buckets[active].spike && <div className="text-red-600 dark:text-red-400">错误尖峰 · 点击查看并追问</div>}
           </div>

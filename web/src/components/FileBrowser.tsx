@@ -1,18 +1,5 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
-import {
-  ArrowUp,
-  Check,
-  ChevronRight,
-  Clock,
-  FileText,
-  Folder,
-  FolderCode,
-  HardDrive,
-  Home,
-  Search,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { ArrowUp, Check, ChevronRight, Clock, FileText, Folder, FolderCode, HardDrive, Home, Search, Terminal, X } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api'
@@ -52,7 +39,11 @@ function crumbs(path: string, sep: string): { label: string; path: string }[] {
   let acc = windows ? '' : '/'
   if (!windows) result.push({ label: '/', path: '/' })
   parts.forEach((part, i) => {
-    acc = windows ? (i === 0 ? `${part}\\` : `${acc}${acc.endsWith('\\') ? '' : '\\'}${part}`) : `${acc}${acc.endsWith('/') ? '' : '/'}${part}`
+    acc = windows
+      ? i === 0
+        ? `${part}\\`
+        : `${acc}${acc.endsWith('\\') ? '' : '\\'}${part}`
+      : `${acc}${acc.endsWith('/') ? '' : '/'}${part}`
     result.push({ label: part, path: acc })
   })
   return result
@@ -176,7 +167,9 @@ export function FileBrowser({
           <div>
             <h2 className="text-sm font-semibold">{title}</h2>
             <p className="text-xs text-zinc-500">
-              {mode === 'dir' ? '进入要分析的源码目录，然后点「选择此目录」' : '勾选一个或多个日志文件；也可以在路径栏直接输入通配符，如 /var/log/app/*.log'}
+              {mode === 'dir'
+                ? '进入要分析的源码目录，然后点「选择此目录」'
+                : '勾选一个或多个日志文件；也可以在路径栏直接输入通配符，如 /var/log/app/*.log'}
             </p>
           </div>
           <Button variant="ghost" onClick={onClose} aria-label="关闭">
@@ -185,7 +178,10 @@ export function FileBrowser({
         </header>
 
         <div className="flex min-h-0 flex-1">
-          <nav aria-label="快捷位置" className="hidden w-48 shrink-0 space-y-0.5 overflow-auto border-r border-zinc-200 p-2 sm:block dark:border-zinc-800">
+          <nav
+            aria-label="快捷位置"
+            className="hidden w-48 shrink-0 space-y-0.5 overflow-auto border-r border-zinc-200 p-2 sm:block dark:border-zinc-800"
+          >
             {places.data?.map((place) => {
               const Icon = PLACE_ICON[place.kind] ?? Folder
               const active = listing.data?.path === place.path
@@ -196,7 +192,9 @@ export function FileBrowser({
                   onClick={() => open(place.path)}
                   title={place.path}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-                    active ? 'bg-zinc-100 font-medium dark:bg-zinc-800' : 'text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
+                    active
+                      ? 'bg-zinc-100 font-medium dark:bg-zinc-800'
+                      : 'text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
                   }`}
                 >
                   <Icon className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden />
@@ -240,7 +238,11 @@ export function FileBrowser({
               <div className="flex items-center gap-0.5 overflow-x-auto px-3 py-1.5 text-xs text-zinc-500">
                 {crumbs(listing.data.path, sep).map((c, i, list) => (
                   <span key={c.path} className="flex shrink-0 items-center gap-0.5">
-                    <button type="button" onClick={() => open(c.path)} className="rounded px-1 py-0.5 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100">
+                    <button
+                      type="button"
+                      onClick={() => open(c.path)}
+                      className="rounded px-1 py-0.5 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
                       {c.label}
                     </button>
                     {i < list.length - 1 && <ChevronRight className="h-3 w-3" aria-hidden />}
@@ -287,7 +289,9 @@ export function FileBrowser({
                 </div>
               )}
               {listing.data && entries.length === 0 && (
-                <p className="p-8 text-center text-sm text-zinc-500">{filter ? '没有匹配的条目' : mode === 'dir' ? '这里没有子目录' : '空目录'}</p>
+                <p className="p-8 text-center text-sm text-zinc-500">
+                  {filter ? '没有匹配的条目' : mode === 'dir' ? '这里没有子目录' : '空目录'}
+                </p>
               )}
               <ul className={listing.isFetching && !listing.isLoading ? 'opacity-60' : ''}>
                 {entries.map((entry) => {
@@ -317,7 +321,10 @@ export function FileBrowser({
                         {isDir ? (
                           <Folder className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-400" aria-hidden />
                         ) : (
-                          <FileText className={`h-4 w-4 shrink-0 ${LOG_HINT.test(entry.name) ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-400'}`} aria-hidden />
+                          <FileText
+                            className={`h-4 w-4 shrink-0 ${LOG_HINT.test(entry.name) ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-400'}`}
+                            aria-hidden
+                          />
                         )}
                         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
                         <span className="hidden shrink-0 text-xs tabular-nums text-zinc-400 sm:inline">{formatMtime(entry.mtime)}</span>
@@ -344,7 +351,9 @@ export function FileBrowser({
             {mode === 'dir' ? (
               <>
                 将选择：
-                <span className="font-mono text-zinc-700 dark:text-zinc-300">{listingStale || !listing.data ? '正在打开…' : listing.data.path}</span>
+                <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                  {listingStale || !listing.data ? '正在打开…' : listing.data.path}
+                </span>
               </>
             ) : picked.length ? (
               `已选 ${picked.length} 个文件`

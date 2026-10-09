@@ -92,9 +92,7 @@ export function NewSession({ from }: { from?: string }) {
     <div className="h-full overflow-auto">
       <form onSubmit={onSubmit} className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-8 px-4 py-12 sm:py-16">
         <div className="space-y-3 text-center">
-          <h1 className="text-balance text-3xl font-medium tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">
-            要排查什么问题？
-          </h1>
+          <h1 className="text-balance text-3xl font-medium tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">要排查什么问题？</h1>
           <p className="mx-auto max-w-xl text-pretty text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
             选好日志和源码，用自然语言提问。agent 会自己检索日志、对照代码，给出带证据行号的结论。
           </p>
@@ -184,7 +182,12 @@ export function NewSession({ from }: { from?: string }) {
               </label>
               <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">时区</span>
-                <input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="如 Asia/Shanghai，默认 UTC" className={FIELD} />
+                <input
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  placeholder="如 Asia/Shanghai，默认 UTC"
+                  className={FIELD}
+                />
               </label>
               <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">日志编码</span>

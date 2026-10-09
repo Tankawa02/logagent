@@ -352,11 +352,11 @@ def create_app(config: WebConfig) -> FastAPI:
         with _connect(config) as conn:
             store = SessionStore(conn)
             items = store.search(q) if q.strip() else store.list()
-            result = []
-            for info in items:
-                last = store.last_turn(info.name)
-                result.append({**_session_dict(info), "last": _turn_brief(info.turns, last) if last else None})
-            return result
+            briefs = store.last_turn_briefs()
+        return [
+            {**_session_dict(info), "last": {"turn": info.turns, **briefs[info.name]} if info.name in briefs else None}
+            for info in items
+        ]
 
     @app.get("/api/trace", dependencies=[Depends(require_owner)])
     def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
@@ -697,7 +697,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
 
 
 def _live_stream(live: Any) -> StreamingResponse:
-    """把一轮分析以 SSE 推给浏览器：先重放已有事件，再跟随后续事件直到本轮结束。
+    """把一轮分析以 SSE 推给浏览器：先重放已有事件，再跟随后续事件��到本轮结束。
 
     浏览器断开（切到别的会话、刷新、关页面）只是退订，不会中断分析；要中断得调用 stop 接口。
     """

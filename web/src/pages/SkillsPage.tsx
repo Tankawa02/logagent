@@ -49,15 +49,7 @@ function byPriority(sources: SkillSource[]): SkillSource[] {
   return [...sources].reverse()
 }
 
-function SkillRow({
-  skill,
-  active,
-  onSelect,
-}: {
-  skill: SkillSummary
-  active: boolean
-  onSelect: () => void
-}) {
+function SkillRow({ skill, active, onSelect }: { skill: SkillSummary; active: boolean; onSelect: () => void }) {
   const broken = skill.problems.length > 0
   return (
     <li>
@@ -75,16 +67,16 @@ function SkillRow({
           <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
         )}
         <span className="min-w-0 flex-1">
-          <span className={`block truncate font-mono text-xs ${skill.shadowed_by ? 'text-zinc-400 line-through' : 'text-zinc-800 dark:text-zinc-100'}`}>
+          <span
+            className={`block truncate font-mono text-xs ${skill.shadowed_by ? 'text-zinc-400 line-through' : 'text-zinc-800 dark:text-zinc-100'}`}
+          >
             {skill.name}
           </span>
           <span className="line-clamp-2 text-xs text-zinc-500">
             {broken ? skill.problems[0] : skill.shadowed_by ? `被「${skill.shadowed_by}」的同名 skill 覆盖` : skill.description}
           </span>
         </span>
-        {skill.readonly && (
-          <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-label="符号链接，只读" />
-        )}
+        {skill.readonly && <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-label="符号链接，只读" />}
         <span className="shrink-0 text-xs tabular-nums text-zinc-400" title={`${skill.files} 个文件`}>
           {skill.files}
         </span>
@@ -438,7 +430,14 @@ export function SkillsPage() {
         {skills.data && (
           <div className="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
             <Card className="lg:sticky lg:top-0">
-              <CardHeader title={<span className="flex items-center gap-1.5"><Layers className="h-3.5 w-3.5" aria-hidden />来源</span>}>
+              <CardHeader
+                title={
+                  <span className="flex items-center gap-1.5">
+                    <Layers className="h-3.5 w-3.5" aria-hidden />
+                    来源
+                  </span>
+                }
+              >
                 <span className="text-xs text-zinc-400">
                   {active} / {total} 生效
                 </span>
