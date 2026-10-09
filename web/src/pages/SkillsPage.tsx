@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, BookOpen, FileText, FolderOpen, Layers, Link2, Plus, Save, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Markdown } from '../components/Markdown'
-import { Badge, Button, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
+import { useConfirm, useToast } from '../components/Feedback'
+import { Select } from '../components/Select'
+import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import type { SkillSource, SkillSummary } from '../lib/types'
 
@@ -143,11 +145,13 @@ function NewSkillForm({
   const [description, setDescription] = useState('')
   const validName = NAME_RULE.test(name) && name.length <= 64
   const target = sources.find((s) => s.key === source)
+  const toast = useToast()
   const create = useMutation({
     mutationFn: () => api.createSkill(source, name, template(name, description.trim())),
     onSuccess: (detail) => {
       void client.invalidateQueries({ queryKey: ['skills'] })
       onCreated(detail.source, detail.name)
+      toast(`已创建 skill「${detail.name}」`)
     },
   })
 
@@ -164,13 +168,13 @@ function NewSkillForm({
           <label htmlFor="skill-source" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
             保存到
           </label>
-          <select id="skill-source" value={source} onChange={(e) => setSource(e.target.value)} className={FIELD}>
-            {byPriority(sources).map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label} · {s.hint}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="skill-source"
+            value={source}
+            onChange={setSource}
+            options={byPriority(sources).map((s) => ({ value: s.key, label: s.label, hint: s.hint }))}
+            size="lg"
+          />
           {target && <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{target.directory}</p>}
         </div>
         <div className="space-y-1.5">
@@ -240,12 +244,15 @@ function SkillEditor({
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
+  const confirm = useConfirm()
+  const toast = useToast()
   const save = useMutation({
     mutationFn: () => api.saveSkill(source, name, content),
     onSuccess: (data) => {
       client.setQueryData(['skill', source, name], data)
       setDraft(null)
       void client.invalidateQueries({ queryKey: ['skills'] })
+      toast(`已保存「${name}」，下一轮对话起生效`)
     },
   })
   const remove = useMutation({
@@ -254,15 +261,12 @@ function SkillEditor({
       void client.invalidateQueries({ queryKey: ['skills'] })
       client.removeQueries({ queryKey: ['skill', source, name] })
       onDeleted()
+      toast(`已删除 skill「${name}」`)
     },
   })
 
   if (detail.isLoading) {
-    return (
-      <Card className="flex justify-center py-16">
-        <Spinner />
-      </Card>
-    )
+    return <ListSkeleton rows={6} label="加载 skill 内容" />
   }
   if (detail.error) return <ErrorBox error={detail.error} />
   const data = detail.data!
@@ -294,9 +298,15 @@ function SkillEditor({
               <Button
                 variant="danger"
                 disabled={remove.isPending}
-                onClick={() => {
-                  const extra = data.files.length > 1 ? `，目录里的 ${data.files.length} 个文件会一并删除` : ''
-                  if (window.confirm(`删除 skill「${data.name}」${extra}？此操作不可撤销。`)) remove.mutate()
+                onClick={async () => {
+                  const extra = data.files.length > 1 ? `目录里的 ${data.files.length} 个文件会一并删除，` : ''
+                  const ok = await confirm({
+                    title: `删除 skill「${data.name}」？`,
+                    description: `${extra}此操作不可撤销。`,
+                    confirmLabel: '删除',
+                    danger: true,
+                  })
+                  if (ok) remove.mutate()
                 }}
               >
                 <Trash2 className="h-4 w-4" aria-hidden />
@@ -398,8 +408,18 @@ export function SkillsPage() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
-  const select = (next: Selection) => {
-    if (dirty && !window.confirm('当前 skill 有未保存的修改，确定离开？')) return
+  const confirm = useConfirm()
+  const select = async (next: Selection) => {
+    if (dirty) {
+      const ok = await confirm({
+        title: '放弃未保存的修改？',
+        description: '当前 skill 有未保存的修改，离开后这些修改会丢失。',
+        confirmLabel: '放弃修改',
+        cancelLabel: '继续编辑',
+        danger: true,
+      })
+      if (!ok) return
+    }
     setDirty(false)
     setSelection(next)
   }
@@ -409,7 +429,7 @@ export function SkillsPage() {
       <div className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Skills</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">技能</h1>
             <p className="mt-1 text-sm text-zinc-500">
               团队写好的排查手册。模型只看名称和描述，问题相符时才读取全文，装多少本都不会撑大上下文。
             </p>
@@ -421,8 +441,9 @@ export function SkillsPage() {
         </header>
 
         {skills.isLoading && (
-          <div className="flex justify-center py-16">
-            <Spinner />
+          <div className="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
+            <ListSkeleton rows={4} label="加载 skill" />
+            <ListSkeleton rows={6} label="加载 skill" className="hidden lg:block" />
           </div>
         )}
         {skills.error && <ErrorBox error={skills.error} />}

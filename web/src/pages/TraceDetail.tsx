@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Bot, ChevronRight, MessageSquare, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Badge, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
+import { Badge, Card, CardHeader, Empty, ErrorBox, ListSkeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { baseName, formatDuration, formatGenerated, formatTokens, TURN_STATUS } from '../lib/format'
 import type { ToolCall, TurnPayload } from '../lib/types'
@@ -157,8 +157,8 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
 
   if (payload.isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner />
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <ListSkeleton rows={8} label="加载执行记录" />
       </div>
     )
   }

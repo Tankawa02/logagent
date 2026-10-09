@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { AlertTriangle, ChevronDown, ChevronRight, Clock, Coins, MessagesSquare, Search, Wrench, X } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
-import { Badge, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
+import { AlertTriangle, ChevronRight, Clock, Coins, MessagesSquare, Plus, Search, Wrench, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Select } from '../components/Select'
+import { Badge, Card, CardHeader, Empty, ErrorBox, StatsSkeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { formatDuration, formatGenerated, formatTokens, shortModel, TURN_STATUS } from '../lib/format'
 import type { TraceItem } from '../lib/types'
@@ -51,32 +52,57 @@ function Stat({
   )
 }
 
-/** 原生 select 去掉系统箭头，换成和全站一致的图标，深浅色下观感统一 */
-function FilterSelect({
-  value,
-  onChange,
-  label,
-  className = '',
-  children,
-}: {
-  value: string
-  onChange: (value: string) => void
-  label: string
-  className?: string
-  children: ReactNode
-}) {
+const TRACE_FEATURES = [
+  { icon: Clock, title: '耗时', text: '每一轮从提问到出报告用了多久' },
+  { icon: Coins, title: 'Tokens', text: '模型消耗，便于估算成本' },
+  { icon: Wrench, title: '工具调用', text: '读了哪些日志、搜了哪些代码、哪一步失败' },
+]
+
+function TraceEmpty({ session }: { session?: string }) {
   return (
-    <div className={`relative ${className}`}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label={label}
-        className={`${SELECT} w-full appearance-none pr-7`}
-      >
-        {children}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-    </div>
+    <Card className="px-6 py-12 text-center">
+      <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-brand-50 text-brand-600 ring-1 ring-inset ring-brand-100 dark:bg-brand-950/40 dark:text-brand-300 dark:ring-brand-900">
+        <MessagesSquare className="h-5 w-5" aria-hidden />
+      </span>
+      <h2 className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-50">
+        {session ? '这个会话还没有完成的对话' : '还没有执行记录'}
+      </h2>
+      <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+        {session
+          ? '在会话里提问并等这一轮结束后，这里会出现它的耗时和工具调用。'
+          : '完成一次日志分析后，这里会按轮次记录模型的执行过程，方便你回看和比较。'}
+      </p>
+      <ul className="mx-auto mt-6 grid max-w-xl gap-3 text-left sm:grid-cols-3">
+        {TRACE_FEATURES.map(({ icon: Icon, title, text }) => (
+          <li key={title} className="rounded-lg border border-zinc-200/80 px-3 py-2.5 dark:border-zinc-800">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200">
+              <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+              {title}
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{text}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        {session ? (
+          <Link
+            to="/sessions/$name"
+            params={{ name: session }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+          >
+            回到会话
+          </Link>
+        ) : (
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            新建分析
+          </Link>
+        )}
+      </div>
+    </Card>
   )
 }
 
@@ -258,7 +284,7 @@ export function TraceList({ session }: { session?: string }) {
       <div className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Trace</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">执行记录</h1>
             <p className="mt-1 text-sm text-zinc-500">每一轮对话用了哪个模型、耗时多少、调用了哪些工具。</p>
           </div>
           {session && (
@@ -272,14 +298,11 @@ export function TraceList({ session }: { session?: string }) {
           )}
         </header>
 
-        {trace.isLoading && (
-          <div className="flex justify-center py-16">
-            <Spinner />
-          </div>
-        )}
+        {trace.isLoading && <StatsSkeleton label="加载执行记录" />}
         {trace.error && <ErrorBox error={trace.error} />}
 
-        {trace.data && (
+        {trace.data && all.length === 0 && <TraceEmpty session={session} />}
+        {trace.data && all.length > 0 && (
           <>
             {capped && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
@@ -343,22 +366,24 @@ export function TraceList({ session }: { session?: string }) {
                       className={`${SELECT} w-full pl-8`}
                     />
                   </div>
-                  <FilterSelect value={model} onChange={setModel} label="按模型筛选" className="max-w-48">
-                    <option value="">全部模型</option>
-                    {models.map((m) => (
-                      <option key={m} value={m}>
-                        {shortModel(m)}
-                      </option>
-                    ))}
-                  </FilterSelect>
-                  <FilterSelect value={status} onChange={setStatus} label="按状态筛选">
-                    <option value="">全部状态</option>
-                    {Object.entries(TURN_STATUS).map(([key, s]) => (
-                      <option key={key} value={key}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </FilterSelect>
+                  <Select
+                    value={model}
+                    onChange={setModel}
+                    ariaLabel="按模型筛选"
+                    className="w-40 max-w-48"
+                    options={[{ value: '', label: '全部模型' }, ...models.map((m) => ({ value: m, label: shortModel(m), title: m }))]}
+                  />
+                  <Select
+                    value={status}
+                    onChange={setStatus}
+                    ariaLabel="按状态筛选"
+                    align="right"
+                    className="w-32"
+                    options={[
+                      { value: '', label: '全部状态' },
+                      ...Object.entries(TURN_STATUS).map(([key, s]) => ({ value: key, label: s.label })),
+                    ]}
+                  />
                 </div>
                 {items.length > 0 && (
                   <p className="flex items-center gap-1.5 border-b border-zinc-100 px-4 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">

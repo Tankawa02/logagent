@@ -4,6 +4,8 @@ import { useRef, useState } from 'react'
 import { api } from '../lib/api'
 import { useCopy, useModal } from '../lib/hooks'
 import type { Meta, Share } from '../lib/types'
+import { useToast } from './Feedback'
+import { Select } from './Select'
 import { Button, ErrorBox, Spinner } from './ui'
 
 const TTL_OPTIONS: { label: string; hours: number | null }[] = [
@@ -21,6 +23,7 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
   const { state: copyState, copy } = useCopy()
   const dialog = useRef<HTMLDivElement>(null)
   const onKeyDown = useModal(dialog, onClose)
+  const toast = useToast()
   const shares = useQuery({ queryKey: ['shares', session], queryFn: () => api.shares(session) })
 
   const create = useMutation({
@@ -35,6 +38,7 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
     onSuccess: (_, id) => {
       if (created?.id === id) setCreated(null)
       void client.invalidateQueries({ queryKey: ['shares', session] })
+      toast('已撤销分享链接，同事将无法再打开')
     },
   })
 
@@ -73,20 +77,18 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
         )}
 
         <div className="flex flex-wrap items-end gap-2">
-          <label className="text-sm">
-            <span className="mb-1 block text-xs text-zinc-500">有效期</span>
-            <select
+          <div className="text-sm">
+            <label htmlFor="share-ttl" className="mb-1 block text-xs text-zinc-500">
+              有效期
+            </label>
+            <Select
+              id="share-ttl"
               value={ttl === null ? 'never' : String(ttl)}
-              onChange={(e) => setTtl(e.target.value === 'never' ? null : Number(e.target.value))}
-              className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            >
-              {TTL_OPTIONS.map((o) => (
-                <option key={o.label} value={o.hours === null ? 'never' : String(o.hours)}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(v) => setTtl(v === 'never' ? null : Number(v))}
+              options={TTL_OPTIONS.map((o) => ({ value: o.hours === null ? 'never' : String(o.hours), label: o.label }))}
+              className="min-w-32"
+            />
+          </div>
           <Button variant="primary" onClick={() => create.mutate()} disabled={create.isPending}>
             {create.isPending && <Spinner />}生成链接
           </Button>

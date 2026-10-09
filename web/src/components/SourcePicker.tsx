@@ -92,12 +92,20 @@ export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code';
           }}
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
-          placeholder={
-            isLog ? '或粘贴路径，如 ~/logs/app.log、/var/log/*.log，回车添加' : '或粘贴目录路径，如 ~/work/order-service，回车添加'
-          }
+          placeholder={isLog ? '或粘贴路径，回车添加' : '或粘贴目录路径，回车添加'}
           className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
         />
       </div>
+      {values.length === 0 && (
+        <p className="flex flex-wrap gap-x-1.5 gap-y-0.5 px-0.5 text-xs text-zinc-400 dark:text-zinc-500">
+          <span>例如</span>
+          {(isLog ? ['~/logs/app.log', '/var/log/*.log'] : ['~/work/order-service']).map((example) => (
+            <code key={example} className="break-all font-mono">
+              {example}
+            </code>
+          ))}
+        </p>
+      )}
 
       {browsing && (
         <FileBrowser
