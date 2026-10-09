@@ -190,7 +190,14 @@ export function ChatPanel({
     return () => clearTimeout(timer)
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { atBottom, scrollToBottom } = useStickToBottom(scroller, [messages, tools.length, draft, isLoading, phase, memory.data?.pending.length])
+  const { atBottom, scrollToBottom } = useStickToBottom(scroller, [
+    messages,
+    tools.length,
+    draft,
+    isLoading,
+    phase,
+    memory.data?.pending.length,
+  ])
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()

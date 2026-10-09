@@ -42,7 +42,9 @@ export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code';
             <span className="font-normal text-zinc-500 dark:text-zinc-400">可选</span>
           )}
         </h3>
-        <p className="pl-5 text-xs text-zinc-500 dark:text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</p>
+        <p className="pl-5 text-xs text-zinc-500 dark:text-zinc-400">
+          {isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}
+        </p>
       </div>
 
       {values.length > 0 && (
