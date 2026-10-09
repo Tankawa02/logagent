@@ -1,4 +1,4 @@
-import { Brain, Wrench } from 'lucide-react'
+import { Bot, Brain, Wrench } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { formatDuration } from '../lib/format'
 import type { LlmCall, TraceMessage, ToolCall, ToolRequest } from '../lib/types'
@@ -224,8 +224,26 @@ export function TraceSpanDetail({ span }: { span: Span }) {
     { key: 'input', label: '输入' },
     { key: 'output', label: '输出' },
   ]
+  const Icon = span.kind === 'llm' ? Bot : Wrench
+  const failed = span.kind === 'tool' && span.call.failed
+  const iconTone =
+    span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : span.call.subagent ? 'text-violet-600' : 'text-amber-600'
   return (
-    <div className="space-y-3 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 text-xs sm:pl-11 dark:border-zinc-800 dark:bg-zinc-900/60">
+    <div className="space-y-3 text-xs">
+      <div className="flex items-center gap-2">
+        <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} aria-hidden />
+        <h3
+          className={`min-w-0 truncate font-mono text-sm font-semibold ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-50'}`}
+        >
+          {span.label}
+        </h3>
+        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          {span.kind === 'llm' ? '模型' : span.call.subagent ? '子代理' : '工具'}
+        </span>
+        {failed && (
+          <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-300">失败</span>
+        )}
+      </div>
       <Metadata span={span} />
       <div role="tablist" aria-label="查看内容" className="inline-flex rounded-md bg-zinc-200/70 p-0.5 dark:bg-zinc-800">
         {tabs.map((t) => (
@@ -256,18 +274,4 @@ export function TraceSpanDetail({ span }: { span: Span }) {
       </div>
     </div>
   )
-}
-
-/** 收起状态下行尾的一句预览：模型调了哪些工具 / 回了什么，工具返回了什么 */
-export function spanPreview(span: Span): string {
-  if (span.kind === 'llm') {
-    const requests = span.call.tool_requests
-    if (requests?.length) return `→ ${requests.map((r) => r.name).join(', ')}`
-    const text = (span.call.output_text?.text ?? '')
-      .trim()
-      .split('\n')
-      .find((line) => line.trim())
-    return text ? text.replace(/^#+\s*/, '') : ''
-  }
-  return span.call.summary
 }
