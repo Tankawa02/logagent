@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { Activity, BookOpen, Brain, GanttChart, MessageSquare, Plus, Search, Trash2, Zap } from 'lucide-react'
+import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
@@ -31,16 +31,93 @@ const DOT: Record<string, string> = {
   green: 'bg-emerald-500',
   amber: 'bg-amber-500',
   gray: 'bg-zinc-300 dark:bg-zinc-600',
-  blue: 'bg-sky-500',
+  blue: 'bg-brand-500',
 }
 
 const NAV = [
-  { to: '/trace', icon: GanttChart, label: 'Trace', hint: '模型 · 耗时 · 工具' },
+  { to: '/trace', icon: GanttChart, label: 'Trace', hint: '模型、耗时与工具调用' },
   { to: '/skills', icon: BookOpen, label: 'Skills', hint: '排查手册' },
-  { to: '/memory', icon: Brain, label: 'Memory', hint: '偏好 · 术语 · 事实' },
+  { to: '/memory', icon: Brain, label: 'Memory', hint: '偏好、术语与事实' },
 ] as const
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+const ICON_BUTTON =
+  'flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+
+function LogoMark({ className = 'h-7 w-7' }: { className?: string }) {
+  return (
+    <span className={`flex shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white ${className}`} aria-hidden>
+      <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
+        <path d="M3 11.5h2v-4H3zm4 0h2v-7H7zm4 0h2V8h-2z" />
+      </svg>
+    </span>
+  )
+}
+
+export function Brand() {
+  return (
+    <Link to="/" className="flex items-center gap-2 rounded-lg" aria-label="log-agent 首页">
+      <LogoMark />
+      <span className="text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">log-agent</span>
+    </Link>
+  )
+}
+
+function NewButton({ onNavigate, compact = false }: { onNavigate?: () => void; compact?: boolean }) {
+  if (compact) {
+    return (
+      <Link
+        to="/"
+        onClick={onNavigate}
+        aria-label="新建分析"
+        title="新建分析"
+        className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-700 shadow-xs hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+      >
+        <Plus className="h-4 w-4" />
+      </Link>
+    )
+  }
+  return (
+    <Link
+      to="/"
+      onClick={onNavigate}
+      className="group flex w-full items-center gap-2 rounded-full border border-zinc-200 bg-white py-2 pl-3.5 pr-2 text-sm text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-brand-700"
+    >
+      <Plus className="h-4 w-4 text-zinc-400 group-hover:text-brand-600" aria-hidden />
+      新建分析
+    </Link>
+  )
+}
+
+/** 折叠后的窄栏：只留图标入口 */
+export function SidebarRail({ onExpand }: { onExpand: () => void }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  return (
+    <div className="flex h-full flex-col items-center gap-3 py-4">
+      <Link to="/" aria-label="log-agent 首页">
+        <LogoMark className="h-8 w-8" />
+      </Link>
+      <NewButton compact />
+      <nav aria-label="功能" className="flex flex-col items-center gap-1 pt-2">
+        {NAV.map(({ to, icon: Icon, label }) => (
+          <Link
+            key={to}
+            to={to}
+            title={label}
+            aria-label={label}
+            className={`${ICON_BUTTON} ${pathname.startsWith(to) ? 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100' : ''}`}
+          >
+            <Icon className="h-[18px] w-[18px]" />
+          </Link>
+        ))}
+      </nav>
+      <button type="button" onClick={onExpand} aria-label="展开侧边栏" title="展开侧边栏" className={`${ICON_BUTTON} mt-auto`}>
+        <PanelLeftOpen className="h-[18px] w-[18px]" />
+      </button>
+    </div>
+  )
+}
+
+export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; onCollapse?: () => void }) {
   const [text, setText] = useState('')
   const [q, setQ] = useState('')
   const client = useQueryClient()
@@ -82,61 +159,67 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 px-4 pb-3 pt-4">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
-          <Activity className="h-4 w-4" aria-hidden />
-        </span>
-        <span className="font-semibold tracking-tight">log-agent</span>
-        {meta.data && <span className="ml-auto text-xs text-zinc-400">v{meta.data.version}</span>}
+      <div className="flex items-center gap-2 px-4 pb-4 pt-4">
+        <Brand />
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label="收起侧边栏"
+            title="收起侧边栏"
+            className={`${ICON_BUTTON} ml-auto h-8 w-8`}
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      <div className="space-y-2 px-3">
-        <Link
-          to="/"
-          onClick={onNavigate}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          新建分析
-        </Link>
+      <div className="space-y-4 px-3">
+        <NewButton onNavigate={onNavigate} />
         <nav aria-label="功能" className="space-y-0.5">
-          {NAV.map(({ to, icon: Icon, label, hint }) => (
-            <Link
-              key={to}
-              to={to}
-              onClick={onNavigate}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm ${
-                pathname.startsWith(to)
-                  ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/60'
-              }`}
-            >
-              <Icon className="h-4 w-4" aria-hidden />
-              {label}
-              <span className="ml-auto text-xs text-zinc-400">{hint}</span>
-            </Link>
-          ))}
+          {NAV.map(({ to, icon: Icon, label, hint }) => {
+            const active = pathname.startsWith(to)
+            return (
+              <Link
+                key={to}
+                to={to}
+                onClick={onNavigate}
+                title={hint}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+                  active
+                    ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                    : 'text-zinc-600 hover:bg-zinc-200/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100'
+                }`}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+                {label}
+              </Link>
+            )
+          })}
         </nav>
+      </div>
+
+      <div className="mt-5 px-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="搜索会话、问题或日志"
+            placeholder="搜索历史会话"
             aria-label="搜索会话"
-            className="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-950"
+            className="w-full rounded-lg bg-zinc-200/50 py-1.5 pl-8 pr-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-brand-500/25 dark:bg-zinc-900 dark:focus:bg-zinc-900"
           />
         </div>
       </div>
 
-      <nav aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-2 pb-3">
+      <nav aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-3 pb-3">
         {sessions.isLoading && (
           <div className="flex justify-center p-6">
             <Spinner />
           </div>
         )}
         {removeError && (
-          <div role="alert" className="mb-2 space-y-1 px-1">
+          <div role="alert" className="mb-2 space-y-1">
             <ErrorBox error={`删除会话「${removeError.name}」失败：${errorText(removeError.error)}`} />
             <button type="button" onClick={() => setRemoveError(null)} className="px-1 text-xs text-zinc-500 hover:underline">
               知道了
@@ -144,29 +227,30 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         )}
         {sessions.error && (
-          <div role="alert" className="mb-2 space-y-1 px-1">
+          <div role="alert" className="mb-2 space-y-1">
             <ErrorBox error={`${sessions.data ? '刷新会话列表失败，下面是上次加载的结果' : '加载会话列表失败'}：${errorText(sessions.error)}`} />
             <button
               type="button"
               onClick={() => void sessions.refetch()}
               disabled={sessions.isFetching}
-              className="px-1 text-xs text-sky-700 hover:underline disabled:opacity-60 dark:text-sky-400"
+              className="px-1 text-xs text-brand-700 hover:underline disabled:opacity-60 dark:text-brand-400"
             >
               {sessions.isFetching ? '重试中…' : '重试'}
             </button>
           </div>
         )}
         {sessions.data?.length === 0 && (
-          <p className="px-3 py-6 text-center text-xs text-zinc-500">{q ? `没有匹配「${q}」的会话` : '还没有会话，点上方「新建分析」开始'}</p>
+          <p className="px-2 py-6 text-center text-xs leading-relaxed text-zinc-500">
+            {q ? `没有匹配「${q}」的会话` : '还没有会话，点上方「新建分析」开始'}
+          </p>
         )}
         {groups.map(([label, items]) => (
-          <div key={label} className="mb-3">
-            <h3 className="px-2 pb-1 text-xs font-medium text-zinc-400">{label}</h3>
-            <ul className="space-y-0.5">
+          <div key={label} className="mb-4">
+            <h3 className="px-2.5 pb-1.5 text-xs font-medium text-zinc-400">{label}</h3>
+            <ul className="space-y-px">
               {items.map((s) => {
                 const active = pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`
                 const tone = s.last?.assessment ? ASSESSMENT[s.last.assessment].tone : 'gray'
-                const Icon = s.origin === 'analyze' ? Zap : MessageSquare
                 return (
                   <li key={s.name} className="group relative">
                     <Link
@@ -174,19 +258,22 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       params={{ name: s.name }}
                       onClick={onNavigate}
                       title={s.title || s.name}
-                      className={`flex items-start gap-2 rounded-lg px-2 py-2 pr-8 text-sm ${
-                        active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+                      aria-current={active ? 'page' : undefined}
+                      className={`block rounded-lg px-2.5 py-2 pr-8 transition-colors ${
+                        active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
                       }`}
                     >
-                      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-zinc-800 dark:text-zinc-100">{s.title || '新的分析'}</span>
-                        <span className="flex items-center gap-1.5 text-xs text-zinc-400">
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
-                          <span className="truncate">
-                            {s.logs[0]?.name ?? '无日志'}
-                            {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮
-                          </span>
+                      <span
+                        className={`block truncate text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
+                      >
+                        {s.title || '新的分析'}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
+                        <span className="truncate">
+                          {s.logs[0]?.name ?? '无日志'}
+                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮
+                          {s.origin === 'analyze' ? ' · CLI' : ''}
                         </span>
                       </span>
                     </Link>
@@ -199,7 +286,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                         }
                       }}
                       aria-label={`删除会话 ${s.title || s.name}`}
-                      className="absolute right-1.5 top-2 rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-200 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-700"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-zinc-400 opacity-0 hover:bg-zinc-300/60 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-700"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -212,16 +299,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       {meta.data && (
-        <div className="space-y-1 border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
-          <div className="flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
-            {meta.data.can_chat ? '模型已连接，可在网页提问' : '只读：未配置 API Key 或 --read-only'}
-          </div>
-          {meta.data.db && (
-            <p className="truncate font-mono text-zinc-400" title={meta.data.db}>
-              {meta.data.db}
-            </p>
-          )}
+        <div className="flex items-center gap-2 px-4 py-3 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
+          <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
+          <span className="shrink-0 font-mono text-zinc-400">v{meta.data.version}</span>
         </div>
       )}
     </div>

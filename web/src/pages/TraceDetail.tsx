@@ -59,7 +59,7 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
   const failed = span.kind === 'tool' && span.call.failed
   const sub = span.kind === 'tool' && span.call.subagent
   const incomplete = Boolean(span.call.incomplete)
-  const base = span.kind === 'llm' ? 'bg-sky-500' : failed ? 'bg-red-500' : sub ? 'bg-violet-500' : 'bg-amber-500'
+  const base = span.kind === 'llm' ? 'bg-brand-500' : failed ? 'bg-red-500' : sub ? 'bg-violet-500' : 'bg-amber-500'
   // 未完成的段只量到本轮结束：用半透明 + 虚线边，和真实耗时区分开
   const color = incomplete ? `${base} opacity-40 outline-1 outline-dashed outline-zinc-500` : base
   const Icon = span.kind === 'llm' ? Bot : Wrench
@@ -70,7 +70,7 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-90" aria-hidden />
           <div className="flex w-32 shrink-0 items-center gap-1.5 sm:w-44">
-            <Icon className={`h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-sky-600' : failed ? 'text-red-600' : 'text-amber-600'}`} aria-hidden />
+            <Icon className={`h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`} aria-hidden />
             <span className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`} title={span.label}>
               {span.label}
             </span>
@@ -267,7 +267,7 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
           <CardHeader title="执行过程">
             <span className="flex items-center gap-3 text-xs text-zinc-500">
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-sky-500" aria-hidden />
+                <span className="h-2 w-2 rounded-sm bg-brand-500" aria-hidden />
                 模型
               </span>
               <span className="flex items-center gap-1">

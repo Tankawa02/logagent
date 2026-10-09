@@ -9,7 +9,7 @@ import type { SkillSource, SkillSummary } from '../lib/types'
 type Selection = { kind: 'skill'; source: string; name: string } | { kind: 'new' } | null
 
 const FIELD =
-  'w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-950'
+  'w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950'
 const NAME_RULE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const FRONTMATTER = /^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/
 

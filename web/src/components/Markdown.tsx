@@ -20,7 +20,7 @@ export function Markdown({ text, onOpen }: { text: string; onOpen?: (target: Sou
           <button
             type="button"
             onClick={() => onOpen?.({ source: match[1], start, end })}
-            className="rounded bg-sky-50 px-1 py-0.5 font-mono text-[0.85em] text-sky-700 underline decoration-sky-300 underline-offset-2 hover:bg-sky-100 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-900/60"
+            className="rounded bg-brand-50 px-1 py-0.5 font-mono text-[0.85em] text-brand-700 underline decoration-brand-300 underline-offset-2 hover:bg-brand-100 dark:bg-brand-950/50 dark:text-brand-300 dark:hover:bg-brand-900/60"
             title="在右侧查看原文"
           >
             {value}

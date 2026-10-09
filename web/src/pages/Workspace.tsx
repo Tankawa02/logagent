@@ -113,7 +113,7 @@ export function Workspace({
       <div className="mx-auto max-w-xl p-8">
         <ErrorBox error={session.error ?? '会话不存在'} />
         {owner && (
-          <Link to="/" className="mt-4 inline-block text-sm text-sky-700 hover:underline">
+          <Link to="/" className="mt-4 inline-block text-sm text-brand-700 hover:underline">
             返回新建分析
           </Link>
         )}
@@ -172,7 +172,7 @@ export function Workspace({
           ) : (
             <div className="h-full overflow-auto">
               {scope.kind === 'share' && (
-                <div className="border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300">
+                <div className="border-b border-brand-200 bg-brand-50 px-4 py-2 text-xs text-brand-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300">
                   只读分享视图 · 日志内容已脱敏 · 由 log-agent {meta.data?.version} 提供
                 </div>
               )}
@@ -189,17 +189,19 @@ export function Workspace({
         {panel && (
           <aside
             aria-label="详情面板"
-            className="fixed inset-0 z-30 flex flex-col bg-white lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200 dark:bg-zinc-950 lg:dark:border-zinc-800"
+            className="fixed inset-0 z-30 flex flex-col bg-paper lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
           >
-            <div className="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+            <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
+              <div role="group" aria-label="切换面板" className="flex gap-0.5 rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900">
               {panels.map((p) => (
                 <PanelTab key={p} panel={p} active={panel === p} onClick={() => openPanel(p)} />
               ))}
+              </div>
               <button
                 type="button"
                 onClick={() => openPanel(undefined)}
                 aria-label="关闭面板"
-                className="ml-auto rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                className="ml-auto rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -245,10 +247,10 @@ function PanelTab({ panel, active, onClick }: { panel: Panel; active: boolean; o
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium ${
+      className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
         active
-          ? 'border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-50'
-          : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+          ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-50'
+          : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
       }`}
     >
       <Icon className="h-4 w-4" aria-hidden />
@@ -264,10 +266,10 @@ function HeaderButton({ active, onClick, children, label }: { active?: boolean; 
       onClick={onClick}
       aria-pressed={active}
       title={label}
-      className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm ${
+      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
         active
-          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-          : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+          ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
+          : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
       }`}
     >
       {children}
@@ -299,16 +301,18 @@ function SessionHeader({
   const settings = info.settings as Record<string, string | number | null>
   const range = settings.since || settings.until ? `${settings.since || '开头'} → ${settings.until || '结尾'}` : null
   return (
-    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
-      <div className="min-w-0 flex-1 space-y-1">
-        <h1 className="truncate text-sm font-semibold">{info.title || '新的分析'}</h1>
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200/70 px-4 py-3 sm:px-5 dark:border-zinc-800">
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <h1 className="truncate text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{info.title || '新的分析'}</h1>
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
           {info.logs.map((log) => (
             <span
               key={log.path}
               title={log.path}
-              className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${
-                log.exists === false ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300' : 'bg-zinc-100 dark:bg-zinc-800'
+              className={`flex items-center gap-1 rounded-full px-2 py-0.5 ring-1 ring-inset ${
+                log.exists === false
+                  ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900'
+                  : 'bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800'
               }`}
             >
               <FileText className="h-3 w-3" aria-hidden />
@@ -317,12 +321,16 @@ function SessionHeader({
             </span>
           ))}
           {info.code.map((code) => (
-            <span key={code.path} title={code.path} className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 dark:bg-zinc-800">
+            <span
+              key={code.path}
+              title={code.path}
+              className="flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
+            >
               <FolderCode className="h-3 w-3" aria-hidden />
               {code.name}
             </span>
           ))}
-          <span className="hidden sm:inline">· {info.model}</span>
+          <span className="hidden font-mono sm:inline">{info.model}</span>
           {range && <span className="hidden md:inline">· {range}</span>}
           {settings.timezone && <span className="hidden md:inline">· {String(settings.timezone)}</span>}
         </div>
@@ -345,10 +353,10 @@ function SessionHeader({
             {exportOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+                className="absolute right-0 top-full z-20 mt-1.5 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
                 onMouseLeave={() => setExportOpen(false)}
               >
-                <p className="px-3 py-1 text-xs text-zinc-400">第 {turnNumber} 轮</p>
+                <p className="px-2.5 py-1.5 text-xs text-zinc-400">第 {turnNumber} 轮</p>
                 {(
                   [
                     ['Markdown 报告', 'markdown', 'detailed'],
@@ -360,7 +368,7 @@ function SessionHeader({
                     key={label}
                     role="menuitem"
                     href={api.exportUrl(scope, turnNumber, format, view)}
-                    className="block px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    className="block rounded-lg px-2.5 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
                   >
                     {label}
                   </a>
@@ -374,7 +382,7 @@ function SessionHeader({
             to="/trace"
             search={{ session: scope.name }}
             title="查看这个会话每轮的模型、耗时与工具调用"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           >
             <GanttChart className="h-4 w-4" aria-hidden />
             <span className="hidden xl:inline">Trace</span>
@@ -385,7 +393,7 @@ function SessionHeader({
             to="/"
             search={{ from: scope.name }}
             title="用同样的日志与源码新建分析"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           >
             <Copy className="h-4 w-4" aria-hidden />
             <span className="hidden xl:inline">复用来源</span>
@@ -395,7 +403,7 @@ function SessionHeader({
           <button
             type="button"
             onClick={onShare}
-            className="ml-1 flex items-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900"
+            className="ml-1.5 flex items-center gap-1.5 rounded-full bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-brand-700"
           >
             <Share2 className="h-4 w-4" aria-hidden />
             <span className="hidden sm:inline">分享</span>
@@ -430,17 +438,17 @@ function ReportPane({
   return (
     <div>
       {info.turn_list.length > 1 && (
-        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-200/70 px-4 py-2.5 dark:border-zinc-800">
           {ordered.map((t) => (
             <button
               key={t.turn}
               type="button"
               onClick={() => onPick(t.turn)}
               title={t.question}
-              className={`flex max-w-56 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs ring-1 ring-inset ${
+              className={`flex max-w-56 shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-xs ring-1 ring-inset transition-colors ${
                 t.turn === turnNumber
-                  ? 'bg-zinc-900 text-white ring-zinc-900 dark:bg-zinc-100 dark:text-zinc-900'
-                  : 'text-zinc-600 ring-zinc-200 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800'
+                  ? 'bg-brand-50 text-brand-800 ring-brand-200 dark:bg-brand-950/50 dark:text-brand-200 dark:ring-brand-900'
+                  : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800'
               }`}
             >
               <span className="font-semibold">#{t.turn}</span>

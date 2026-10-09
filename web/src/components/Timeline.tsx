@@ -115,7 +115,7 @@ export function TimelineChart({
             aria-label="错误时间线，点击柱子查看该时段详情"
             tabIndex={0}
             onKeyDown={onKey}
-            className="block outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            className="block outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
           >
             {[0.5, 1].map((f) => (
               <line
@@ -142,7 +142,7 @@ export function TimelineChart({
                     height={plot}
                     className={
                       i === selected
-                        ? 'fill-sky-100 dark:fill-sky-950'
+                        ? 'fill-brand-100 dark:fill-brand-950'
                         : b.spike
                           ? 'fill-red-50 dark:fill-red-950/40'
                           : i === hover

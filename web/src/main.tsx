@@ -38,7 +38,7 @@ const rootRoute = createRootRoute({
   notFoundComponent: () => (
     <div className="p-10 text-center text-sm text-zinc-500">
       页面不存在。
-      <Link to="/" className="text-sky-700 hover:underline">
+      <Link to="/" className="text-brand-700 hover:underline">
         返回首页
       </Link>
     </div>

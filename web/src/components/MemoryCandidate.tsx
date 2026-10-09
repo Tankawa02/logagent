@@ -7,7 +7,7 @@ import type { MemoryCandidate, MemoryItem, MemoryKind } from '../lib/types'
 import { Badge, Button, ErrorBox } from './ui'
 
 export const MEMORY_FIELD =
-  'w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-950'
+  'w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950'
 export const KIND_TONE: Record<MemoryKind, Tone> = { preference: 'blue', term: 'green', fact: 'amber' }
 
 /** Memory 页面与对话页的查询都挂在 ['memory'] 下，失效这个前缀两边会一起刷新 */
