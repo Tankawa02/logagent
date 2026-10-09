@@ -68,14 +68,15 @@ function ModelBreakdown({ items }: { items: TraceItem[] }) {
   const rows = useMemo(() => {
     const map = new Map<string, { turns: number; measured: number; seconds: number; tokens: number }>()
     for (const item of items) {
-      const row = map.get(item.model) ?? { turns: 0, measured: 0, seconds: 0, tokens: 0 }
+      const key = shortModel(item.model)
+      const row = map.get(key) ?? { turns: 0, measured: 0, seconds: 0, tokens: 0 }
       row.turns += 1
       if (isMeasured(item)) {
         row.measured += 1
         row.seconds += item.elapsed_seconds
         row.tokens += item.usage.total
       }
-      map.set(item.model, row)
+      map.set(key, row)
     }
     return [...map.entries()].sort((a, b) => b[1].turns - a[1].turns)
   }, [items])
@@ -89,7 +90,7 @@ function ModelBreakdown({ items }: { items: TraceItem[] }) {
           {rows.map(([model, row]) => (
             <li key={model} className="px-4 py-2.5 text-sm">
               <div className="truncate font-mono text-xs text-zinc-800 dark:text-zinc-200" title={model}>
-                {shortModel(model) || '未知模型'}
+                {model || '未知模型'}
               </div>
               <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs tabular-nums text-zinc-500">
                 <span>{row.turns} 轮</span>
@@ -181,12 +182,13 @@ export function TraceList({ session }: { session?: string }) {
   const all = trace.data ?? []
   // 返回条数顶到上限，说明更早的轮次没取回来：统计只覆盖最近这些
   const capped = all.length >= limit
-  const models = useMemo(() => [...new Set(all.map((t) => t.model))].sort(), [all])
+  // 同一个模型可能带不同的 provider 前缀（openai:kimi-k3 / kimi-k3），按去掉前缀后的名字归为一类
+  const models = useMemo(() => [...new Set(all.map((t) => shortModel(t.model)))].sort(), [all])
   const items = useMemo(() => {
     const needle = text.trim().toLowerCase()
     return all.filter(
       (t) =>
-        (!model || t.model === model) &&
+        (!model || shortModel(t.model) === model) &&
         (!status || t.status === status) &&
         (!needle || `${t.question} ${t.title} ${t.session}`.toLowerCase().includes(needle)),
     )

@@ -85,7 +85,7 @@ pre,
 .markdown ol { @apply list-decimal space-y-1.5 pl-5 marker:text-zinc-400; }
 .markdown a { @apply text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-600 dark:text-brand-300 dark:decoration-brand-700; }
 .markdown blockquote { @apply border-l-2 border-brand-300 pl-4 text-zinc-600 dark:border-brand-800 dark:text-zinc-400; }
-.markdown :not(pre) > code { @apply rounded-md bg-zinc-100 px-1.5 py-0.5 text-[0.85em] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200; }
+.markdown :not(pre) > code { @apply [overflow-wrap:anywhere] [box-decoration-break:clone] rounded-md bg-zinc-100 px-1.5 py-0.5 text-[0.85em] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200; }
 .markdown pre { @apply overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed dark:border-zinc-800 dark:bg-zinc-900; }
 .markdown table { @apply block overflow-x-auto text-sm; }
 .markdown th { @apply bg-zinc-50 font-medium dark:bg-zinc-900; }
