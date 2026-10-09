@@ -44,7 +44,15 @@ log-agent init -y -l 'logs/*.log' -m openai:qwen-max --base-url https://gw.examp
 
 ## 配置 API Key
 
-每个团队成员各自设置自己的 OpenAI key（不要写进代码或仓库）。不同系统设置方式不同：
+每个团队成员各自设置自己的 OpenAI key（不要写进代码或仓库）。
+
+### 在网页里设置（使用 `serve` 时推荐）
+
+`log-agent serve` 打开后进入侧边栏「Settings」，填写 API Key、接口地址和默认模型，点「测试连接」确认后保存，立即生效。
+Key 保存在 `~/.log-agent/credentials.toml`（权限 0600），不写进 `config.toml`；命令行的 `analyze` / `chat` / `doctor` 也会读取它。
+环境变量 `OPENAI_API_KEY` 优先级更高：设置了环境变量时以环境变量为准，网页里会显示为锁定。详见 [Web 界面 · 设置](web.md#设置)。
+
+也可以照常用环境变量，不同系统设置方式不同：
 
 ### macOS / Linux
 

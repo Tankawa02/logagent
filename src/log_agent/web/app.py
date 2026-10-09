@@ -58,6 +58,8 @@ class WebConfig:
     skills_cwd: Path | None = None
     memory_path: Path | None = None
     memory_mode: str = "suggest"
+    # serve 启动时的配置快照（web/settings.py 的 SettingsContext）；为 None 时不提供设置页
+    settings: Any = None
 
 
 @dataclass
@@ -327,7 +329,7 @@ def create_app(config: WebConfig) -> FastAPI:
         from .workspace import validate_request
 
         if config.agent_factory is None or not config.can_chat:
-            raise HTTPException(503, "当前服务不能新建分析：缺少 OPENAI_API_KEY，或启动时用了 --read-only")
+            raise HTTPException(503, "当前服务不能新建分析：还没有 API Key（可在「设置」页填写），或启动时用了 --read-only")
         logs, code, settings = validate_request(body)
         model = (body.model or "").strip() or config.default_model
         if ":" not in model:
@@ -371,7 +373,7 @@ def create_app(config: WebConfig) -> FastAPI:
                 counts[str(name or "?")] = counts.get(str(name or "?"), 0) + 1
             legacy = row["provenance"] == "legacy_unknown"
             elapsed = row["elapsed_seconds"]
-            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平均值时跳过，而不是当成 0
+            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平���值时跳过，而不是当成 0
             measured = not legacy and isinstance(elapsed, (int, float))
             items.append({
                 "session": row["session"],
@@ -516,6 +518,10 @@ def create_app(config: WebConfig) -> FastAPI:
         memory_path=config.memory_path,
         session_projects=lambda: manage.projects_from_sessions(config.db_path),
     )
+
+    from . import settings as settings_routes
+
+    settings_routes.register(app, require_owner=require_owner, config=config)
 
     # ---- 前端页面 ----------------------------------------------------------
 

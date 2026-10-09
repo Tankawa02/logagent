@@ -185,6 +185,46 @@ export interface Meta {
   default_model: string | null
 }
 
+export type SettingKey = 'model' | 'base_url' | 'timeout' | 'max_retries' | 'timezone' | 'memory'
+export type SettingSource = 'default' | 'user' | 'user_section' | 'project' | 'env' | 'cli'
+export type SettingValue = string | number | null
+
+export interface SettingField {
+  /** 用户级 config.toml 顶层的值；网页保存的就是它 */
+  value: SettingValue
+  effective: SettingValue
+  default: SettingValue
+  source: SettingSource
+  origin: string | null
+  locked: boolean
+  env: string | null
+}
+
+export interface Settings {
+  config_path: string
+  credentials_path: string
+  project_config: string | null
+  read_only: boolean
+  can_chat: boolean
+  api_key: { set: boolean; masked: string | null; source: 'env' | 'file' | null; locked: boolean; saved: boolean }
+  fields: Record<SettingKey, SettingField>
+}
+
+export interface SettingsUpdate {
+  values: Partial<Record<SettingKey, SettingValue>>
+  api_key?: string
+  clear_api_key?: boolean
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  message: string
+  latency: number
+  served_model?: string
+  model: string
+  endpoint: string
+}
+
 export interface FsEntry {
   name: string
   path: string

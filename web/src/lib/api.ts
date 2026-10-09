@@ -1,4 +1,7 @@
 import type {
+  ConnectionTestResult,
+  Settings,
+  SettingsUpdate,
   CreateSessionBody,
   FsGlob,
   FsListing,
@@ -128,6 +131,12 @@ export const api = {
     request<SkillDetail>(skillUrl(source, name), { method: 'PUT', headers: CSRF_HEADERS, body: JSON.stringify({ content }) }),
   deleteSkill: (source: string, name: string) =>
     request<{ deleted: string }>(skillUrl(source, name), { method: 'DELETE', headers: CSRF_HEADERS }),
+
+  settings: () => request<Settings>('/api/settings'),
+  saveSettings: (body: SettingsUpdate) =>
+    request<Settings>('/api/settings', { method: 'PUT', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
+  testConnection: (body: { model?: string; base_url?: string; api_key?: string }) =>
+    request<ConnectionTestResult>('/api/settings/test', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
 
   memory: () => request<MemoryIndex>('/api/memory'),
   sessionMemory: (name: string) => request<SessionMemory>(`/api/sessions/${encodeURIComponent(name)}/memory`),

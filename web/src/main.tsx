@@ -16,6 +16,7 @@ import { api, ApiError } from './lib/api'
 import { AuthRequired } from './pages/AuthRequired'
 import { MemoryPage } from './pages/MemoryPage'
 import { NewSession } from './pages/NewSession'
+import { SettingsPage } from './pages/SettingsPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { TraceDetail } from './pages/TraceDetail'
 import { TraceList } from './pages/TraceList'
@@ -121,6 +122,8 @@ const skillsRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/skil
 
 const memoryRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/memory', component: MemoryPage })
 
+const settingsRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/settings', component: SettingsPage })
+
 const shareRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/s/$token',
@@ -143,7 +146,7 @@ const shareRoute = createRoute({
 })
 
 const router = createRouter({
-  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute]), shareRoute]),
+  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute, settingsRoute]), shareRoute]),
   defaultPreload: false,
 })
 

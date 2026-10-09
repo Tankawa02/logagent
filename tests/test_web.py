@@ -1060,3 +1060,37 @@ def test_serve_rejects_invalid_memory_mode(tmp_path, monkeypatch, value: str) ->
     result = CliRunner().invoke(cli.app, ["serve", "--no-token"])
     assert result.exit_code == 2
     assert "memory" in result.output
+
+
+@pytest.mark.parametrize(
+    ("env", "platform", "expected"),
+    [
+        ({"DISPLAY": ":0"}, "linux", True),
+        ({}, "linux", False),
+        ({"WAYLAND_DISPLAY": "wayland-0"}, "linux", True),
+        ({"DISPLAY": ":0", "SSH_CONNECTION": "1.2.3.4 22 5.6.7.8 22"}, "linux", False),
+        ({}, "darwin", True),
+        ({"SSH_TTY": "/dev/pts/1"}, "darwin", False),
+        ({}, "win32", True),
+    ],
+)
+def test_serve_skips_browser_when_headless(monkeypatch, env: dict[str, str], platform: str, expected: bool) -> None:
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "SSH_CONNECTION", "SSH_TTY"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(cli.sys, "platform", platform)
+    assert cli._can_open_browser() is expected
+
+
+def test_serve_opens_browser_by_default(monkeypatch) -> None:
+    import uvicorn
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_can_open_browser", lambda: True)
+    monkeypatch.setattr(cli, "_open_browser_when_ready", lambda *args: calls.append(args))
+    assert CliRunner().invoke(cli.app, ["serve", "--port", "8799"]).exit_code == 0
+    assert len(calls) == 1 and calls[0][0].startswith("http://127.0.0.1:8799/?token=")
+    assert CliRunner().invoke(cli.app, ["serve", "--no-open"]).exit_code == 0
+    assert len(calls) == 1
