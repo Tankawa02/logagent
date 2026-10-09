@@ -81,8 +81,8 @@ export const EVIDENCE: Record<EvidenceStatus, { label: string; tone: Tone; mark:
 export const CHECK_STATUS: Record<EvidenceCheck['status'], { label: string; tone: Tone }> = {
   verified: { label: '证据全部核对通过', tone: 'green' },
   incomplete: { label: '部分证据无法核对', tone: 'amber' },
-  mismatch: { label: '有证据与原文不符', tone: 'red' },
-  failed: { label: '证据均与原文不符', tone: 'red' },
+  mismatch: { label: '有证据与原文不符', tone: 'amber' },
+  failed: { label: '证据均与原文不符', tone: 'amber' },
   unverifiable: { label: '证据无法核对', tone: 'gray' },
 }
 
@@ -95,7 +95,8 @@ export function splitPath(path: string): { dir: string; name: string } {
 export type Tone = 'red' | 'amber' | 'green' | 'gray' | 'blue'
 
 export const TONE_CLASS: Record<Tone, string> = {
-  red: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/50 dark:text-red-300 dark:ring-red-900',
+  // 红色只留给「确认故障 / 出错」，做成实心让它成为唯一的强警示；证据层面的问题用琥珀色
+  red: 'bg-red-600 text-white ring-red-600 dark:bg-red-500/90 dark:text-white dark:ring-red-500/90',
   amber: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900',
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900',
   gray: 'bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700',

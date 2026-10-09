@@ -30,19 +30,19 @@ export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code';
   const last = values.at(-1)
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+      <div className="space-y-0.5">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
           <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
           {isLog ? '日志文件' : '源码目录'}
           {isLog ? (
-            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[10px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[11px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
               必填
             </span>
           ) : (
-            <span className="font-normal text-zinc-400">可选</span>
+            <span className="font-normal text-zinc-500 dark:text-zinc-400">可选</span>
           )}
         </h3>
-        <span className="text-xs text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</span>
+        <p className="pl-5 text-xs text-zinc-500 dark:text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</p>
       </div>
 
       {values.length > 0 && (

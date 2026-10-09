@@ -115,7 +115,7 @@ export function ModelCombobox({
               >
                 <span className="truncate">{m}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
-                  {m === defaultModel && <span className="font-sans text-[11px] text-zinc-400">默认</span>}
+                  {m === defaultModel && <span className="font-sans text-xs text-zinc-500">默认</span>}
                   {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
                 </span>
               </li>

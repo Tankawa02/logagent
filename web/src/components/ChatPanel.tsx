@@ -1,6 +1,6 @@
 import { useChat, type UIMessage } from '@tanstack/ai-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity as ActivityIcon, ArrowDown, ArrowUp, Check, Copy, FileSearch, ListPlus, Plus, Square, X } from 'lucide-react'
+import { Activity as ActivityIcon, ArrowDown, ArrowRight, ArrowUp, Check, Copy, FileSearch, ListPlus, Square, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { api, scopeKey } from '../lib/api'
 import { followUpsFor } from '../lib/follow-ups'
@@ -225,7 +225,7 @@ export function ChatPanel({
                 message.role === 'user' ? (
                   <h2
                     key={message.id}
-                    className={`whitespace-pre-wrap text-pretty text-xl font-medium leading-snug tracking-tight text-zinc-900 sm:text-2xl dark:text-zinc-50 ${
+                    className={`whitespace-pre-wrap text-pretty text-lg font-medium leading-snug tracking-tight text-zinc-900 sm:text-xl dark:text-zinc-50 ${
                       index > 0 ? 'mt-10 border-t border-zinc-200/80 pt-10 dark:border-zinc-800' : ''
                     }`}
                   >
@@ -271,20 +271,21 @@ export function ChatPanel({
                 <h3 id="related-heading" className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                   <ListPlus className="h-4 w-4 text-brand-600" aria-hidden />
                   相关追问
+                  <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">点击直接提问</span>
                 </h3>
                 <ul className="divide-y divide-zinc-200/80 border-y border-zinc-200/80 dark:divide-zinc-800 dark:border-zinc-800">
                   {followUps.map((s) => (
                     <li key={s}>
                       <button
                         type="button"
-                        onClick={() => {
-                          setInput(s)
-                          textarea.current?.focus()
-                        }}
+                        onClick={() => submit(s)}
                         className="group flex w-full items-center justify-between gap-3 py-3 text-left text-sm text-zinc-700 transition-colors hover:text-brand-700 dark:text-zinc-300 dark:hover:text-brand-300"
                       >
                         {s}
-                        <Plus className="h-4 w-4 shrink-0 text-zinc-400 transition-colors group-hover:text-brand-600" aria-hidden />
+                        <ArrowRight
+                          className="h-4 w-4 shrink-0 text-zinc-400 transition-all group-hover:translate-x-0.5 group-hover:text-brand-600"
+                          aria-hidden
+                        />
                       </button>
                     </li>
                   ))}
@@ -327,7 +328,7 @@ export function ChatPanel({
             <div className="flex items-center justify-between gap-2 pl-1">
               <div className="min-w-0">{memory.data && <MemoryStatus memory={memory.data} />}</div>
               <div className="flex items-center gap-3">
-                <span className="hidden text-xs text-zinc-400 sm:inline">Enter 发送 · Shift+Enter 换行</span>
+                <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">Enter 发送 · Shift+Enter 换行</span>
                 {isLoading ? (
                   <button
                     type="button"
@@ -352,7 +353,7 @@ export function ChatPanel({
               </div>
             </div>
           </form>
-          <p className="text-center text-xs text-zinc-400">
+          <p className="text-center text-xs text-zinc-500 dark:text-zinc-400">
             {stopping
               ? '正在停止，当前步骤结束后会保存已输出的部分。'
               : '切到别的会话或关闭页面不会中断分析，回来可接着看；点停止才会中断本轮。'}
@@ -400,7 +401,9 @@ function AssistantMessage({
           </div>
         )}
       </div>
-      <Markdown text={historic ? text : visibleReport(text)} onOpen={onOpen} />
+      <div className="answer-lead">
+        <Markdown text={historic ? text : visibleReport(text)} onOpen={onOpen} />
+      </div>
       <div className="-ml-2 flex flex-wrap items-center gap-1 pt-1">
         {reportTurn !== undefined && (
           <button

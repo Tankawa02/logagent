@@ -263,7 +263,7 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
         )}
         {groups.map(([label, items]) => (
           <div key={label} className="mb-4">
-            <h3 className="px-2.5 pb-1.5 text-xs font-medium text-zinc-400">{label}</h3>
+            <h3 className="px-2.5 pb-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">{label}</h3>
             <ul className="space-y-px">
               {items.map((s) => {
                 const active = pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`
@@ -334,9 +334,9 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
         <ThemeToggle />
         {meta.data && (
           <div className="flex items-center gap-2 px-1 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
+            <span className={`h-2 w-2 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
             <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
-            <span className="shrink-0 font-mono text-zinc-400">v{meta.data.version}</span>
+            <span className="shrink-0 font-mono text-zinc-500 dark:text-zinc-400">v{meta.data.version}</span>
           </div>
         )}
       </div>

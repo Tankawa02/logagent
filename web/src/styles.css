@@ -38,6 +38,51 @@
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --animate-menu-in: menu-in 120ms ease-out;
+  --animate-panel-in: panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-banner-in: banner-in 200ms ease-out;
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+  }
+  @keyframes banner-in {
+    from {
+      opacity: 0;
+      transform: translateY(-100%);
+    }
+  }
+}
+
+/* 切换主题时短暂打开颜色过渡（lib/theme.ts 加上这个类，结束后移除），平时不给所有元素挂 transition */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    fill 150ms ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 :root {
@@ -118,6 +163,10 @@ pre,
 .markdown th,
 .markdown td {
   @apply border border-zinc-200 px-3 py-1.5 text-left dark:border-zinc-800;
+}
+/* 回答的第一段通常就是结论：加粗并加强调色左边线，让它比问题标题更先被看到 */
+.answer-lead > .markdown > p:first-child {
+  @apply border-l-2 border-brand-500 pl-3 text-base font-medium text-zinc-900 dark:border-brand-400 dark:text-zinc-50;
 }
 .markdown hr {
   @apply my-6 border-zinc-200 dark:border-zinc-800;

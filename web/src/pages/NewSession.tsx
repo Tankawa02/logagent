@@ -9,10 +9,10 @@ import { api } from '../lib/api'
 import { setPendingQuestion } from '../lib/pending'
 
 const SUGGESTIONS = [
-  '这段时间有哪些错误？按影响大小排序，并给出根因',
-  '服务为什么在凌晨出现大量超时？',
-  '找出最早出现的异常，以及它引发的连锁错误',
-  '对比基线时段，这次多出来的错误是什么？',
+  { tag: '错误汇总', text: '这段时间有哪些错误？按影响大小排序，并给出根因' },
+  { tag: '性能', text: '服务为什么在凌晨出现大量超时？' },
+  { tag: '连锁故障', text: '找出最早出现的异常，以及它引发的连锁错误' },
+  { tag: '基线对比', text: '对比基线时段，这次多出来的错误是什么？' },
 ]
 
 const FIELD =
@@ -216,17 +216,20 @@ export function NewSession({ from }: { from?: string }) {
 
         {!question && (
           <div className="space-y-3">
-            <h2 className="px-1 text-xs font-medium text-zinc-400">试试这样问</h2>
+            <h2 className="px-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">试试这样问</h2>
             <div className="grid gap-2 sm:grid-cols-2">
               {SUGGESTIONS.map((s) => (
                 <button
-                  key={s}
+                  key={s.text}
                   type="button"
-                  onClick={() => setQuestion(s)}
-                  className="group flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white/60 px-4 py-3 text-left text-sm leading-relaxed text-zinc-600 transition-colors hover:border-brand-200 hover:bg-white hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300 dark:hover:border-brand-900 dark:hover:text-zinc-100"
+                  onClick={() => setQuestion(s.text)}
+                  className="group flex flex-col items-start gap-1.5 rounded-2xl border border-zinc-200/80 bg-white/60 px-4 py-3 text-left text-sm leading-relaxed text-zinc-700 transition-colors hover:border-brand-200 hover:bg-white hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300 dark:hover:border-brand-900 dark:hover:text-zinc-100"
                 >
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand-500 opacity-70 group-hover:opacity-100" aria-hidden />
-                  {s}
+                  <span className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+                    <Sparkles className="h-3 w-3" aria-hidden />
+                    {s.tag}
+                  </span>
+                  {s.text}
                 </button>
               ))}
             </div>

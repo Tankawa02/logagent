@@ -143,22 +143,22 @@ function IssueCard({
   onOpen: (target: SourceTarget) => void
 }) {
   return (
-    <article className="overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-      <header className="space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800">
+    <article className="overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-700/70 dark:bg-zinc-800/50">
+      <header className="space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-700/70">
         <h3 className="flex items-start gap-2.5 text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
-          <span className="mt-px flex h-6 shrink-0 items-center rounded-md bg-red-50 px-1.5 text-xs font-semibold tabular-nums text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900">
+          <span className="mt-px flex h-6 shrink-0 items-center rounded-md bg-zinc-100 px-1.5 text-xs font-semibold tabular-nums text-zinc-700 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-700">
             问题 {number}
           </span>
           <span className="min-w-0 text-pretty">{issue.title}</span>
         </h3>
         <dl className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-800/50">
+          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
             <dt className="text-xs font-medium text-zinc-500 dark:text-zinc-400">现象</dt>
             <dd className="mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
               <RichText text={issue.symptoms} />
             </dd>
           </div>
-          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-800/50">
+          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
             <dt className="text-xs font-medium text-zinc-500 dark:text-zinc-400">影响</dt>
             <dd className="mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
               <RichText text={issue.impact} />
@@ -204,7 +204,7 @@ function IssueCard({
 }
 
 const CONFIDENCE_STYLE = {
-  high: { bar: 'bg-red-500', badge: 'red' },
+  high: { bar: 'bg-brand-600 dark:bg-brand-400', badge: 'blue' },
   medium: { bar: 'bg-amber-500', badge: 'amber' },
   low: { bar: 'bg-zinc-300 dark:bg-zinc-600', badge: 'gray' },
 } as const
@@ -299,7 +299,7 @@ function ActionBlock({
           ))}
         </ul>
       ) : (
-        <p className="text-[13px] text-zinc-400">待确认 / 暂无信息</p>
+        <p className="text-[13px] text-zinc-500 dark:text-zinc-400">待确认 / 暂无信息</p>
       )}
     </section>
   )
@@ -362,7 +362,7 @@ function EvidenceCard({
           <span className="block break-all font-mono text-xs font-semibold leading-5 text-brand-700 dark:text-brand-300">
             {name}:{range}
           </span>
-          {dir && <span className="block truncate font-mono text-[11px] leading-4 text-zinc-400 dark:text-zinc-500">{dir}</span>}
+          {dir && <span className="block truncate font-mono text-xs leading-4 text-zinc-500 dark:text-zinc-400">{dir}</span>}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {status && (
@@ -370,7 +370,7 @@ function EvidenceCard({
               {status.mark} {status.label}
             </Badge>
           )}
-          <span className="whitespace-nowrap text-[11px] leading-5 text-zinc-400">查看原文 →</span>
+          <span className="whitespace-nowrap text-xs leading-5 text-zinc-500 dark:text-zinc-400">查看原文 →</span>
         </span>
       </div>
       {item?.note && <p className="px-3 pt-1 text-xs text-zinc-500 dark:text-zinc-400">{item.note}</p>}

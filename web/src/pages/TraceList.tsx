@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { AlertTriangle, ChevronRight, Clock, Coins, Search, Wrench, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, ChevronDown, ChevronRight, Clock, Coins, MessagesSquare, Search, Wrench, X } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Badge, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { formatDuration, formatGenerated, formatTokens, shortModel, TURN_STATUS } from '../lib/format'
@@ -20,15 +20,57 @@ function isMeasured(item: TraceItem): item is Measured {
 const SELECT =
   'rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950'
 
-function Stat({ icon: Icon, label, value, hint }: { icon: typeof Clock; label: string; value: string; hint?: string }) {
+function Stat({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  empty,
+}: {
+  icon: typeof Clock
+  label: string
+  value: string
+  hint?: string
+  empty?: boolean
+}) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
         <Icon className="h-3.5 w-3.5" aria-hidden />
         {label}
       </div>
-      <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">{value}</div>
-      {hint && <div className="mt-0.5 text-xs text-zinc-400">{hint}</div>}
+      <div
+        className={`mt-1 font-mono text-xl font-semibold tabular-nums ${
+          empty ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-900 dark:text-zinc-50'
+        }`}
+      >
+        {value}
+      </div>
+      {hint && <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">{empty ? '暂无数据' : hint}</div>}
+    </div>
+  )
+}
+
+/** 原生 select 去掉系统箭头，换成和全站一致的图标，深浅色下观感统一 */
+function FilterSelect({
+  value,
+  onChange,
+  label,
+  className = '',
+  children,
+}: {
+  value: string
+  onChange: (value: string) => void
+  label: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={`relative ${className}`}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className={`${SELECT} w-full appearance-none pr-7`}>
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
     </div>
   )
 }
@@ -251,19 +293,22 @@ export function TraceList({ session }: { session?: string }) {
             )}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Stat
-                icon={Clock}
+                icon={MessagesSquare}
+                empty={!items.length}
                 label={capped ? '最近对话轮数' : '对话轮数'}
                 value={String(items.length)}
                 hint={totals.errors ? `${totals.errors} 轮未正常完成` : '全部正常完成'}
               />
               <Stat
                 icon={Clock}
+                empty={!totals.measured}
                 label="平均耗时"
                 value={totals.measured ? formatDuration(totals.seconds / totals.measured) : '—'}
                 hint={`合计 ${formatDuration(totals.seconds)}${unmeasuredHint}`}
               />
               <Stat
                 icon={Coins}
+                empty={!totals.measured}
                 label="tokens"
                 value={formatTokens(totals.tokens)}
                 hint={`平均每轮 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}${unmeasuredHint}`}
@@ -271,6 +316,7 @@ export function TraceList({ session }: { session?: string }) {
               <Stat
                 icon={totals.failed ? AlertTriangle : Wrench}
                 label="工具调用"
+                empty={!items.length}
                 value={String(totals.tools)}
                 hint={totals.failed ? `${totals.failed} 次失败` : '无失败'}
               />
@@ -292,23 +338,29 @@ export function TraceList({ session }: { session?: string }) {
                       className={`${SELECT} w-full pl-8`}
                     />
                   </div>
-                  <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="按模型筛选" className={`${SELECT} max-w-48`}>
+                  <FilterSelect value={model} onChange={setModel} label="按模型筛选" className="max-w-48">
                     <option value="">全部模型</option>
                     {models.map((m) => (
                       <option key={m} value={m}>
                         {shortModel(m)}
                       </option>
                     ))}
-                  </select>
-                  <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="按状态筛选" className={SELECT}>
+                  </FilterSelect>
+                  <FilterSelect value={status} onChange={setStatus} label="按状态筛选">
                     <option value="">全部状态</option>
                     {Object.entries(TURN_STATUS).map(([key, s]) => (
                       <option key={key} value={key}>
                         {s.label}
                       </option>
                     ))}
-                  </select>
+                  </FilterSelect>
                 </div>
+                {items.length > 0 && (
+                  <p className="flex items-center gap-1.5 border-b border-zinc-100 px-4 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                    <span className="h-1.5 w-6 rounded-full bg-brand-500" aria-hidden />
+                    条形长度为相对耗时，最长的一轮为满格
+                  </p>
+                )}
                 {items.length === 0 ? (
                   <Empty>{all.length ? '没有符合筛选条件的对话' : '还没有对话记录，先去新建一次分析吧'}</Empty>
                 ) : (

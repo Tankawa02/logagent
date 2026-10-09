@@ -315,7 +315,7 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
             <Empty>这一轮没有模型或工具调用记录</Empty>
           ) : (
             <>
-              <div className="flex items-center gap-3 px-4 pt-2 text-[11px] tabular-nums text-zinc-400" aria-hidden>
+              <div className="flex items-center gap-3 px-4 pt-2 text-xs tabular-nums text-zinc-500 dark:text-zinc-400" aria-hidden>
                 <span className="w-3.5 shrink-0" />
                 <span className="w-32 shrink-0 sm:w-44" />
                 <span className="flex flex-1 justify-between">
