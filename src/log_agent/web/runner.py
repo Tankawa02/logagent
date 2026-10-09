@@ -200,7 +200,12 @@ def custom(name: str, value: Any) -> dict[str, Any]:
 
 
 class _TextTap:
-    """包住 message_stream：把每个增量转发给浏览器，并在这里响应取消。"""
+    """包住 message_stream：把每个增量转发给浏览器，并在这里响应取消。
+
+    还看不出是不是报告正文时（可能只是工具调用前的一句旁白），增量作为草稿推给时间线；
+    一旦判定为正文，就逐个增量直接推进助手消息，浏览器里是连续的打字机效果。
+    终端那边 StreamRenderer 仍按完整的 Markdown 块固化，存档内容不受影响。
+    """
 
     def __init__(self, inner: Any, renderer: WebStreamRenderer) -> None:
         self._inner = inner
@@ -208,12 +213,23 @@ class _TextTap:
 
     @property
     def text(self):
+        from ..render_report import looks_like_report
+
         renderer = self._renderer
         renderer.emit(custom("log_agent.draft", {"reset": True}))
+        buffer = ""
         for delta in self._inner.text:
             renderer.check_cancelled()
             if delta:
-                renderer.emit(custom("log_agent.draft", {"delta": delta}))
+                buffer += delta
+                if renderer.live_answer:
+                    renderer.emit_answer(delta)
+                elif looks_like_report(buffer):
+                    renderer.live_answer = True
+                    renderer.emit(custom("log_agent.draft", {"reset": True}))
+                    renderer.emit_answer(buffer.lstrip(), new_block=True)
+                else:
+                    renderer.emit(custom("log_agent.draft", {"delta": delta}))
             yield delta
 
     def __getattr__(self, name: str) -> Any:
@@ -230,14 +246,31 @@ class WebStreamRenderer(StreamRenderer):
         self.cancelled = cancelled
         self.message_id = f"msg-{uuid.uuid4().hex[:12]}"
         self.message_open = False
+        # 当前这次模型输出已经在逐字推给浏览器：_flush_answer 只做存档记账，不再重复推送
+        self.live_answer = False
+        self.sent_any = False
 
     def check_cancelled(self) -> None:
         if self.cancelled.is_set():
             raise TurnCancelled()
 
+    def emit_answer(self, text: str, *, new_block: bool = False) -> None:
+        if not text:
+            return
+        if not self.message_open:
+            self.emit(_event("TEXT_MESSAGE_START", messageId=self.message_id, role="assistant"))
+            self.message_open = True
+        separator = "\n\n" if new_block and self.sent_any else ""
+        self.emit(_event("TEXT_MESSAGE_CONTENT", messageId=self.message_id, delta=separator + text))
+        self.sent_any = True
+
     def _on_message(self, message_stream: Any) -> None:
         self.check_cancelled()
-        super()._on_message(_TextTap(message_stream, self))
+        self.live_answer = False
+        try:
+            super()._on_message(_TextTap(message_stream, self))
+        finally:
+            self.live_answer = False
         self.emit(custom("log_agent.draft", {"reset": True}))
 
     def _on_tool(self, tool_stream: Any) -> None:
@@ -258,13 +291,9 @@ class WebStreamRenderer(StreamRenderer):
     def _flush_answer(self, text: str) -> None:
         before = len(self.answer_parts)
         super()._flush_answer(text)
-        if len(self.answer_parts) == before:
+        if len(self.answer_parts) == before or self.live_answer:
             return
-        if not self.message_open:
-            self.emit(_event("TEXT_MESSAGE_START", messageId=self.message_id, role="assistant"))
-            self.message_open = True
-        separator = "\n\n" if before else ""
-        self.emit(_event("TEXT_MESSAGE_CONTENT", messageId=self.message_id, delta=separator + text))
+        self.emit_answer(text, new_block=True)
 
     def close_message(self) -> None:
         if self.message_open:

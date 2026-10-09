@@ -1,3 +1,4 @@
+import { memo, useDeferredValue, useMemo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CITATION } from '../lib/format'
@@ -15,8 +16,23 @@ function shortCitation(source: string, full: string): string {
  * 点了在右侧原文面板打开（和终端里的 OSC 8 超链接是同一套写法）。
  * 不渲染原始 HTML：报告内容来自模型，可能夹带日志里的任意文本。
  */
-export function Markdown({ text, onOpen }: { text: string; onOpen?: (target: SourceTarget) => void }) {
-  const components: Components = {
+export const Markdown = memo(function Markdown({ text, onOpen }: { text: string; onOpen?: (target: SourceTarget) => void }) {
+  // 流式输出时每个字都会更新 text：解析让位给输入与滚动，跟不上时合并成下一帧再渲染，而不是逐字卡住主线程
+  const deferred = useDeferredValue(text)
+  const components = useMemo(() => buildComponents(onOpen), [onOpen])
+  return (
+    <div className="markdown">
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+        {deferred}
+      </ReactMarkdown>
+    </div>
+  )
+})
+
+const REMARK_PLUGINS = [remarkGfm]
+
+function buildComponents(onOpen?: (target: SourceTarget) => void): Components {
+  return {
     code({ children, className }) {
       const value = String(children ?? '')
       const match = !className && onOpen ? CITATION.exec(value.trim()) : null
@@ -53,11 +69,4 @@ export function Markdown({ text, onOpen }: { text: string; onOpen?: (target: Sou
       )
     },
   }
-  return (
-    <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
 }

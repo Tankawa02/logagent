@@ -1,9 +1,16 @@
 import type { Assessment, Confidence, EvidenceCheck, EvidenceStatus } from './types'
 
 /** 与 report.visible_report 一致：隐藏机器可读附录（包括还在流式输出中的半个围栏） */
+const REPORT_FENCE = '```log-agent-report'
+
 export function visibleReport(text: string): string {
   const match = /^```log-agent-report\s*$/m.exec(text)
-  return match ? text.slice(0, match.index).trimEnd() : text
+  if (match) return text.slice(0, match.index).trimEnd()
+  // 逐字输出时围栏行还没打完（如 "```log-ag"）：先藏起来，免得一闪而过一个空代码块
+  const lastBreak = text.lastIndexOf('\n')
+  const tail = text.slice(lastBreak + 1)
+  if (tail.startsWith('`') && REPORT_FENCE.startsWith(tail.trimEnd())) return text.slice(0, Math.max(lastBreak, 0)).trimEnd()
+  return text
 }
 
 /**
