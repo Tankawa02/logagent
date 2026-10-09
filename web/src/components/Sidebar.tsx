@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Trash2 } from 'lucide-react'
+import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
@@ -110,7 +111,8 @@ export function SidebarRail({ onExpand }: { onExpand: () => void }) {
           </Link>
         ))}
       </nav>
-      <button type="button" onClick={onExpand} aria-label="展开侧边栏" title="展开侧边栏" className={`${ICON_BUTTON} mt-auto`}>
+      <ThemeCycleButton className={`${ICON_BUTTON} mt-auto`} />
+      <button type="button" onClick={onExpand} aria-label="展开侧边栏" title="展开侧边栏" className={ICON_BUTTON}>
         <PanelLeftOpen className="h-[18px] w-[18px]" />
       </button>
     </div>
@@ -298,13 +300,16 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
         ))}
       </nav>
 
-      {meta.data && (
-        <div className="flex items-center gap-2 px-4 py-3 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
-          <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
-          <span className="shrink-0 font-mono text-zinc-400">v{meta.data.version}</span>
-        </div>
-      )}
+      <div className="space-y-2 border-t border-zinc-200/70 px-3 py-3 dark:border-zinc-800">
+        <ThemeToggle />
+        {meta.data && (
+          <div className="flex items-center gap-2 px-1 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
+            <span className="shrink-0 font-mono text-zinc-400">v{meta.data.version}</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
