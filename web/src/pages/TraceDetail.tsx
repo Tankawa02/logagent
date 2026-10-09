@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, Bot, ChevronRight, MessageSquare, Wrench } from 'lucide-react'
+import { ArrowLeft, MessageSquare } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Badge, Card, CardHeader, Empty, ErrorBox, ListSkeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { baseName, formatDuration, formatGenerated, formatTokens, TURN_STATUS } from '../lib/format'
 import type { ToolCall, TurnPayload } from '../lib/types'
-import { spanPreview, TraceSpanDetail, type Span } from '../components/TraceSpanDetail'
+import { TraceSpanDetail, type Span } from '../components/TraceSpanDetail'
+import { groupSpans, TraceTree } from '../components/TraceTree'
 
 function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; approximate: boolean } {
   const llm = payload.llm_calls ?? []
@@ -40,60 +41,6 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
       <dd className="mt-0.5 truncate font-mono text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">{value}</dd>
       {hint && <dd className="truncate text-xs text-zinc-400">{hint}</dd>}
     </div>
-  )
-}
-
-function SpanRow({ span, total }: { span: Span; total: number }) {
-  const left = (span.start / total) * 100
-  const width = Math.max(0.6, (span.seconds / total) * 100)
-  const failed = span.kind === 'tool' && span.call.failed
-  const sub = span.kind === 'tool' && span.call.subagent
-  const incomplete = Boolean(span.call.incomplete)
-  const base = span.kind === 'llm' ? 'bg-brand-500' : failed ? 'bg-red-500' : sub ? 'bg-violet-500' : 'bg-amber-500'
-  // 未完成的段只量到本轮结束：用半透明 + 虚线边，和真实耗时区分开
-  const color = incomplete ? `${base} opacity-40 outline-1 outline-dashed outline-zinc-500` : base
-  const Icon = span.kind === 'llm' ? Bot : Wrench
-  const preview = spanPreview(span)
-  // 详情懒渲染：几十个 span、每个带上万字原文，一次性全部挂进 DOM 会拖慢页面
-  const [open, setOpen] = useState(false)
-
-  return (
-    <li>
-      <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 [&::-webkit-details-marker]:hidden">
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-90" aria-hidden />
-          <div className="flex w-36 shrink-0 items-start gap-1.5 sm:w-56">
-            <Icon
-              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`}
-              aria-hidden
-            />
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`}
-                  title={span.label}
-                >
-                  {span.label}
-                </span>
-                {incomplete && <Badge tone="amber">未完成</Badge>}
-              </div>
-              {preview && (
-                <p className="truncate text-[11px] leading-4 text-zinc-500 dark:text-zinc-400" title={preview}>
-                  {preview}
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="relative h-4 min-w-0 flex-1 rounded bg-zinc-100 dark:bg-zinc-800" aria-hidden>
-            <div className={`absolute inset-y-0.5 rounded-sm ${color}`} style={{ left: `${Math.min(left, 99.4)}%`, width: `${width}%` }} />
-          </div>
-          <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-            {formatDuration(span.seconds)}
-          </span>
-        </summary>
-        {open && <TraceSpanDetail span={span} />}
-      </details>
-    </li>
   )
 }
 
@@ -154,6 +101,9 @@ const SETTING_LABELS: Record<string, string> = {
 export function TraceDetail({ name, turn }: { name: string; turn: number }) {
   const payload = useQuery({ queryKey: ['owner', name, 'turn', turn], queryFn: () => api.turn({ kind: 'owner', name }, turn) })
   const view = useMemo(() => (payload.data ? buildSpans(payload.data) : null), [payload.data])
+  const groups = useMemo(() => (view ? groupSpans(view.spans) : []), [view])
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const selected = view?.spans.find((s) => s.key === selectedKey) ?? view?.spans[0] ?? null
 
   if (payload.isLoading) {
     return (
@@ -182,7 +132,7 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
 
   return (
     <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
+      <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
         <nav className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <Link to="/trace" className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
@@ -248,50 +198,26 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
 
         <Card>
           <CardHeader title="执行过程">
-            <span className="flex items-center gap-3 text-xs text-zinc-500">
-              <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-brand-500" aria-hidden />
-                模型
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-amber-500" aria-hidden />
-                工具
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-violet-500" aria-hidden />
-                子代理
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-red-500" aria-hidden />
-                失败
-              </span>
-            </span>
+            {view.spans.length > 0 && <span className="hidden text-xs text-zinc-500 sm:inline">点击调用查看输入与输出，方向键可切换</span>}
           </CardHeader>
           {view.approximate && view.spans.length > 0 && (
             <p className="border-b border-zinc-100 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800">
-              这一轮由旧版本记录，没有保存开始时间，下图按调用顺序首尾相接排列，仅供比较长短。
+              这一轮由旧版本记录，没有保存开始时间，时间轴按调用顺序首尾相接排列，仅供比较长短。
             </p>
           )}
           {view.spans.length === 0 ? (
             <Empty>这一轮没有模型或工具调用记录</Empty>
           ) : (
-            <>
-              <div className="flex items-center gap-3 px-4 pt-2 text-xs tabular-nums text-zinc-500 dark:text-zinc-400" aria-hidden>
-                <span className="w-3.5 shrink-0" />
-                <span className="w-36 shrink-0 sm:w-56" />
-                <span className="flex flex-1 justify-between">
-                  <span>0s</span>
-                  <span>{formatDuration(view.total / 2)}</span>
-                  <span>{formatDuration(view.total)}</span>
-                </span>
-                <span className="w-14 shrink-0" />
+            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+              <div className="min-w-0 border-b border-zinc-100 lg:border-r lg:border-b-0 dark:border-zinc-800">
+                <TraceTree groups={groups} total={view.total} selectedKey={selected?.key ?? null} onSelect={(s) => setSelectedKey(s.key)} />
               </div>
-              <ul className="divide-y divide-zinc-100 pb-1 dark:divide-zinc-800">
-                {view.spans.map((span) => (
-                  <SpanRow key={span.key} span={span} total={view.total} />
-                ))}
-              </ul>
-            </>
+              <div className="min-w-0 bg-zinc-50/60 dark:bg-zinc-900/60">
+                <div className="p-4 lg:sticky lg:top-0 lg:max-h-[calc(100vh-2rem)] lg:overflow-auto">
+                  {selected && <TraceSpanDetail key={selected.key} span={selected} />}
+                </div>
+              </div>
+            </div>
           )}
         </Card>
 
