@@ -197,6 +197,22 @@ def _shared_copy(value: Any, info: SessionInfo) -> Any:
     return value
 
 
+_LLM_DETAIL_KEYS = {"input_messages", "input_full", "input_count", "output_text", "reasoning", "tool_requests"}
+_TOOL_DETAIL_KEYS = {"output", "output_chars", "call_id"}
+
+
+def _without_trace_detail(payload: dict[str, Any]) -> dict[str, Any]:
+    """分享链接只给结论：系统提示、模型思考和工具原文只留给所有者的 trace 页。"""
+    result = dict(payload)
+    if isinstance(result.get("llm_calls"), list):
+        result["llm_calls"] = [{k: v for k, v in c.items() if k not in _LLM_DETAIL_KEYS} if isinstance(c, dict) else c
+                               for c in result["llm_calls"]]
+    if isinstance(result.get("tool_calls"), list):
+        result["tool_calls"] = [{k: v for k, v in c.items() if k not in _TOOL_DETAIL_KEYS} if isinstance(c, dict) else c
+                                for c in result["tool_calls"]]
+    return result
+
+
 def _load(conn: sqlite3.Connection, name: str) -> tuple[SessionStore, SessionInfo]:
     store = SessionStore(conn)
     info = store.get(name)
@@ -580,7 +596,7 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
         payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
         if scope.read_only:
-            payload = _shared_copy(payload, info)
+            payload = _without_trace_detail(_shared_copy(payload, info))
         payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "analysis": None, "structured_status": "missing"}
@@ -628,7 +644,7 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             raise HTTPException(404, f"第 {turn} 轮不存在或未保存报告")
         payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
         if scope.read_only:
-            payload = _shared_copy(payload, info)
+            payload = _without_trace_detail(_shared_copy(payload, info))
         payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "schema_version": 2, "analysis": None, "structured_status": "missing", "finding": None}

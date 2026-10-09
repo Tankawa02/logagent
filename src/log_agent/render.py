@@ -55,6 +55,7 @@ from .render_tools import (
 from .report import visible_report
 from .subtrace import SubagentTracker
 from .term import REFRESH_PER_SECOND, console, glyphs
+from .trace_capture import OUTPUT_CHARS, TOOL_OUTPUT_CHARS, clip, input_delta, output_detail, tool_output_text
 
 __all__ = [
     "StreamRenderer",
@@ -127,6 +128,7 @@ class StreamRenderer:
         self.llm_calls: list[dict] = []
         self.pending_note = ""
         self.tracker = SubagentTracker()
+        self._input_count = 0
 
     # ---- 统计（主代理 + 子代理）--------------------------------------------
 
@@ -275,11 +277,15 @@ class StreamRenderer:
         else:
             summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
         ended = (None if incomplete else getattr(run.handle, "ended", None)) or time.perf_counter()
+        raw = "" if incomplete else (str(error) if error else tool_output_text(getattr(run.handle, "output", None)))
         self.records.append(
             ToolRecord(
                 run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
                 started=round(max(0.0, run.started - self.start), 3),
                 incomplete=incomplete,
+                output=raw[:TOOL_OUTPUT_CHARS],
+                output_chars=len(raw),
+                call_id=run.call_id,
             )
         )
 
@@ -310,12 +316,23 @@ class StreamRenderer:
     # ---- 事件处理 -----------------------------------------------------------
 
     def _record_llm_call(self, output: Any, call_start: float, first_token: float | None,
-                         usage: dict[str, int] | None) -> None:
+                         usage: dict[str, int] | None, partial_text: str = "") -> None:
         """usage 为 None 表示流在中途断了（中断 / 接口报错）：用量拿不到，记为未知而不是 0。"""
         now = time.perf_counter()
         metadata = getattr(output, "response_metadata", None) or {}
         incomplete = usage is None
+        messages = self.tracker.main_input(len(self.llm_calls))
+        detail: dict[str, Any] = {}
+        if messages is not None:
+            entries, full = input_delta(messages, self._input_count)
+            detail = {"input_messages": entries, "input_full": full, "input_count": len(messages)}
+            self._input_count = len(messages)
+        if output is not None:
+            detail.update(output_detail(output))
+        elif partial_text:
+            detail["output_text"] = clip(partial_text, OUTPUT_CHARS)
         self.llm_calls.append({
+            **detail,
             "started": round(max(0.0, call_start - self.start), 3),
             "seconds": round(now - call_start, 3),
             "first_token": round(first_token - call_start, 3) if first_token is not None else None,
@@ -364,7 +381,7 @@ class StreamRenderer:
                     self.tail.text = buffer
         except BaseException:
             # 中断（含浏览器停止）或接口报错：这次模型调用也要留在 trace 里，半截正文仍由 run() 保存
-            self._record_llm_call(None, call_start, first_token, None)
+            self._record_llm_call(None, call_start, first_token, None, partial_text=buffer)
             raise
 
         output = getattr(message_stream, "output", None)

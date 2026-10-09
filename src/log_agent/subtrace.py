@@ -59,6 +59,7 @@ class SubagentTracker(BaseCallbackHandler):
         self._children: dict[str, list[SubCall]] = defaultdict(list)
         self._usage = {"input": 0, "output": 0, "total": 0}
         self._model_calls = 0
+        self._main_inputs: list[list[Any]] = []
 
     # ---- 查询（渲染线程调用）----------------------------------------------
 
@@ -105,6 +106,15 @@ class SubagentTracker(BaseCallbackHandler):
 
     def on_chat_model_start(self, serialized: Any, messages: Any, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any) -> None:
         self._remember(run_id, parent_run_id)
+        with self._lock:
+            if self._owner(parent_run_id) is None and messages:
+                # 主代理每次模型调用的完整输入，按调用顺序排队，trace 用它还原「模型看到了什么」
+                self._main_inputs.append(list(messages[0]))
+
+    def main_input(self, index: int) -> list[Any] | None:
+        """第 index 次（从 0 开始）主代理模型调用的输入消息。"""
+        with self._lock:
+            return self._main_inputs[index] if 0 <= index < len(self._main_inputs) else None
 
     def on_llm_start(self, serialized: Any, prompts: Any, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any) -> None:
         self._remember(run_id, parent_run_id)
