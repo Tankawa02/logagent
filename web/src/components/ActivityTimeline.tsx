@@ -60,10 +60,21 @@ function formatSeconds(seconds: number) {
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s` : `${seconds.toFixed(1)}s`
 }
 
-export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivity[]; draft: string; running: boolean }) {
-  // 用户没手动点过时：进行中展开，跑完自动收起，结论成为主角
+export function ActivityTimeline({
+  tools,
+  draft,
+  running,
+  answering = false,
+}: {
+  tools: ToolActivity[]
+  draft: string
+  running: boolean
+  /** 回答正文已经开始流式输出（直接进了助手消息，不经过草稿） */
+  answering?: boolean
+}) {
+  // 用户没手动点过时：取证中展开；开始输出回答或跑完后自动收起，回答成为主角
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const open = manualOpen ?? running
+  const open = manualOpen ?? (running && !answering)
   const failed = tools.filter((t) => t.failed).length
   const current = [...tools].reverse().find((t) => !t.done)
   const headline = running
@@ -71,7 +82,11 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
       ? '正在整理结论'
       : current
         ? current.note || `${current.label || current.name}${current.detail ? ` · ${shortTarget(current.detail)}` : ''}`
-        : '正在加载模型与工具'
+        : answering
+          ? tools.length === 0
+            ? '无需调用工具，正在直接回答'
+            : '正在输出回答'
+          : '正在加载模型与工具'
     : `已完成取证`
 
   return (
@@ -95,7 +110,7 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
           )}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200">
-          {running && <span className="font-medium">正在取证 · </span>}
+          {running && <span className="font-medium">{answering && !current && !draft ? '正在回答 · ' : '正在取证 · '}</span>}
           <span className={running ? 'text-zinc-500 dark:text-zinc-400' : 'font-medium'}>{headline}</span>
         </span>
         <span className="shrink-0 text-xs tabular-nums text-zinc-400">
@@ -106,7 +121,9 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
 
       {open && (
         <div className="border-t border-zinc-100 px-3.5 pb-3 pt-3 dark:border-zinc-800">
-          {tools.length === 0 && running && <p className="pl-8 text-xs text-zinc-400">正在加载模型与工具…</p>}
+          {tools.length === 0 && running && (
+            <p className="pl-8 text-xs text-zinc-400">{answering ? '本轮没有调用工具，回答见下方。' : '正在加载模型与工具…'}</p>
+          )}
           <ol>
             {tools.map((tool, index) => (
               <Step key={tool.id} tool={tool} last={index === tools.length - 1 && !draft} />

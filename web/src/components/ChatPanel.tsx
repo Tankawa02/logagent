@@ -223,6 +223,11 @@ export function ChatPanel({
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
   const showActivity = isLoading || tools.length > 0
+  const answering =
+    isLoading &&
+    lastAssistant !== undefined &&
+    messages.indexOf(lastAssistant) > lastUserIndex &&
+    lastAssistant.parts.some((p) => p.type === 'text' && p.content.trim() !== '')
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -266,7 +271,7 @@ export function ChatPanel({
                 return [
                   node,
                   <div key="activity" className="mt-6">
-                    <ActivityTimeline tools={tools} draft={isLoading ? draft : ''} running={isLoading} />
+                    <ActivityTimeline tools={tools} draft={isLoading ? draft : ''} running={isLoading} answering={answering} />
                   </div>,
                 ]
               }
