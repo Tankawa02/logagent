@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import os
+import sys
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -724,10 +725,10 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发时问 agent 的问题",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发��问 agent 的问题",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
-    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
+    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消��"),
     once: bool = typer.Option(False, "--once", help="分析一次后退出：适合复现一次问题、看完结果就走"),
     model: str = _opt_model,
     base_url: str = _opt_base_url,
@@ -1051,7 +1052,7 @@ def sessions_list(
     finally:
         conn.close()
     if search and not items:
-        console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
+        console.print(Text(f"没有匹配 '{search}' ��会话。", style="muted"))
         return
     if not items:
         console.print(Text("还没有任何会话。", style="muted"))
@@ -1127,7 +1128,10 @@ def serve(
     no_redact: bool = typer.Option(
         False, "--no-redact", help="本人视图显示未脱敏的日志原文（分享链接始终脱敏）",
     ),
-    open_browser: bool = typer.Option(False, "--open", help="启动后自动打开浏览器"),
+    open_browser: bool = typer.Option(
+        True, "--open/--no-open",
+        help="启动后自动打开浏览器（默认开启；SSH 或无图形界面时自动跳过）",
+    ),
 ) -> None:
     """启动 Web 界面：在网页里选日志 / 源码新建分析并提问，查看报告、证据原文、错误时间线，生成分享链接。"""
     try:
@@ -1195,11 +1199,43 @@ def serve(
         footer.append(Text(f"{glyphs.notice} 正在监听 {host}，局域网内能访问到该端口的人都能看到登录页。", style="warn"))
     console.print(info_panel(rows, "log-agent serve", f"Web 界面 {glyphs.sep} v{__version__}", footer))
 
-    if open_browser:
-        import webbrowser
-
-        webbrowser.open(open_url)
+    if open_browser and _can_open_browser():
+        _open_browser_when_ready(open_url, shown_host, port)
     uvicorn.run(create_app(web), host=host, port=port, log_level="warning")
+
+
+def _can_open_browser() -> bool:
+    """SSH 登录或没有图形界面时不开：Linux 下 webbrowser 会退回 lynx 之类的终端浏览器，把当前终端占住。"""
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return False
+    if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    return True
+
+
+def _open_browser_when_ready(url: str, host: str, port: int) -> None:
+    """等端口真正能连上再打开，避免浏览器先到一步看到「无法访问」；端口被占用导致启动失败时也不会乱开。"""
+    import socket
+    import threading
+    import time
+    import webbrowser
+
+    def wait_and_open() -> None:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            return
+        try:
+            webbrowser.open(url)
+        except Exception:  # noqa: BLE001 -- 打不开浏览器不影响服务，地址已经打印在终端里
+            pass
+
+    threading.Thread(target=wait_and_open, name="log-agent-open-browser", daemon=True).start()
 
 
 def main() -> None:

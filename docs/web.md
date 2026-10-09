@@ -8,7 +8,7 @@
 
 ```bash
 uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'   # 需要 web 额外依赖
-log-agent serve --open                    # 打开浏览器（链接带 ?token=），在首页直接新建分析
+log-agent serve                           # 服务就绪后自动打开浏览器（链接带 ?token=），在首页直接新建分析
 log-agent analyze -l app.log -c ./src     # 也可以照常在终端分析，结果自动存为会话，网页里能看到
 ```
 
@@ -88,7 +88,7 @@ Trace、Skills、记忆和新建分析只对本人开放，分享链接看不到
 | `--no-token` | 不校验令牌，只允许和本机地址一起使用 |
 | `--read-only` | 不提供新建分析和网页续问，不需要 API Key |
 | `--no-redact` | 本人视图显示未脱敏的原文；分享链接始终脱敏 |
-| `--open` | 启动后自动打开浏览器 |
+| `--open` / `--no-open` | 服务就绪后是否自动打开浏览器，默认打开。SSH 登录或没有图形界面（Linux 下没有 `DISPLAY`）时自动跳过，只在终端打印地址 |
 
 新建分析和网页续问需要和 `chat` 一样的 `OPENAI_API_KEY`（以及可选的 `OPENAI_BASE_URL` / `--base-url`）。没有 Key 或用了 `--read-only` 时，
 历史会话、Trace、Skills 和记忆照常可看可管，只是不能提问，侧边栏底部显示「只读模式」。
