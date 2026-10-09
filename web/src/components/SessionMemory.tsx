@@ -61,7 +61,7 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
           id={panelId}
           role="region"
           aria-label="本会话使用的记忆"
-          className="absolute bottom-full right-0 z-20 mb-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+          className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
         >
           <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
             <p className="text-xs font-medium text-zinc-800 dark:text-zinc-100">

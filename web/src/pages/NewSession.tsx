@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { ArrowUp, ChevronDown, Settings2, Sparkles } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { ModelCombobox } from '../components/ModelCombobox'
 import { SourcePicker } from '../components/SourcePicker'
 import { ErrorBox, Spinner } from '../components/ui'
 import { api } from '../lib/api'
@@ -147,20 +148,20 @@ export function NewSession({ from }: { from?: string }) {
 
           {advanced && (
             <div className="grid gap-3 border-t border-zinc-100 px-5 py-4 sm:grid-cols-2 dark:border-zinc-800">
-              <label className="space-y-1.5 sm:col-span-2">
-                <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">模型</span>
-                <input
-                  list="model-options"
+              <div className="space-y-1.5 sm:col-span-2">
+                <label htmlFor="model-input" className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  模型
+                </label>
+                <ModelCombobox
+                  id="model-input"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={defaultModel ? `默认 ${defaultModel}` : 'provider:model'}
-                  className={`${FIELD} font-mono`}
+                  onChange={setModel}
+                  options={models.data?.models ?? []}
+                  defaultModel={defaultModel}
+                  loading={models.isFetching}
+                  className={FIELD}
                 />
-                <datalist id="model-options">
-                  {models.data?.models.map((m) => <option key={m} value={m} />)}
-                </datalist>
-                {models.isFetching && <span className="text-xs text-zinc-400">正在读取接口上的模型列表…</span>}
-              </label>
+              </div>
               <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">开始时间</span>
                 <input value={since} onChange={(e) => setSince(e.target.value)} placeholder="如 2026-10-08 14:00 或 2h" className={FIELD} />
