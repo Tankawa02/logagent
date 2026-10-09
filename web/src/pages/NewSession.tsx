@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
-import { ArrowUp, ChevronDown, Settings2, Sparkles } from 'lucide-react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ArrowRight, ArrowUp, ChevronDown, Settings2, Sparkles } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { ModelCombobox } from '../components/ModelCombobox'
 import { SourcePicker } from '../components/SourcePicker'
@@ -101,7 +101,19 @@ export function NewSession({ from }: { from?: string }) {
         </div>
 
         {meta.data && !canChat && (
-          <ErrorBox error="当前服务不能提问：启动 log-agent serve 时缺少 OPENAI_API_KEY，或使用了 --read-only。可以先运行 log-agent init 配置。" />
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            <span>还不能提问：没有配置 API Key（或服务以 --read-only 启动）。</span>
+            <Link
+              to="/settings"
+              className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-100 dark:ring-amber-800"
+            >
+              去设置
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>
+          </div>
         )}
 
         <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.08)] transition-shadow focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/10 dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-brand-800">

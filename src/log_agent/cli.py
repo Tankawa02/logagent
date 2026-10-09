@@ -107,6 +107,10 @@ _opt_memory = typer.Option(
 @app.callback()
 def _load_config(ctx: typer.Context) -> None:
     """读取配置文件，作为 analyze / chat 各参数的默认值（命令行显式传入的仍然优先）。"""
+    from .credentials import load_into_environment
+
+    # 网页设置页保存的 Key 对所有子命令生效；环境变量 OPENAI_API_KEY 已设置时以环境变量为准
+    load_into_environment()
     from .config import (
         COMMANDS,
         ConfigError,
@@ -579,7 +583,7 @@ def chat(
             if not log:
                 missing = [p for p in stored.logs if not Path(p).is_file()]
                 if missing:
-                    _fail(f"会话 '{stored.name}' 上次使用的日志已不存在：{missing[0]}\n请用 -l 重新指定日志文件。")
+                    _fail(f"会话 '{stored.name}' 上次使用的日志已不存在：{missing[0]}\n请用 -l 重新指定日志���件。")
                 log, reused_sources = list(stored.logs), True
                 code = code or [Path(p) for p in stored.code]
     if not log:
@@ -725,10 +729,10 @@ def watch(
     code: list[Path] = _opt_code,
     pattern: str = typer.Option(None, "--pattern", "-p", help="触发分析的正则；默认是 ERROR / FATAL 级别的行"),
     question: str = typer.Option(
-        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发��问 agent 的问题",
+        "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="��次触发��问 agent 的问题",
     ),
     debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
-    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消��"),
+    cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报��时反复消��"),
     once: bool = typer.Option(False, "--once", help="分析一次后退出：适合复现一次问题、看完结果就走"),
     model: str = _opt_model,
     base_url: str = _opt_base_url,
@@ -896,7 +900,7 @@ def doctor(
     if local_failed:
         console.print(Text("请修正配置；依赖缺失或版本不匹配时运行 uv sync。", style="warn"))
     if ping_failed:
-        console.print(Text("按上面的提示检查 OPENAI_API_KEY、网关地址（--base-url / OPENAI_BASE_URL）和模型名（-m / LOG_AGENT_MODEL）。",
+        console.print(Text("按上面的提示检查 OPENAI_API_KEY、���关地址（--base-url / OPENAI_BASE_URL）和模型名（-m / LOG_AGENT_MODEL）。",
                            style="warn"))
     if local_failed or ping_failed:
         raise typer.Exit(1)
@@ -1052,7 +1056,7 @@ def sessions_list(
     finally:
         conn.close()
     if search and not items:
-        console.print(Text(f"没有匹配 '{search}' ��会话。", style="muted"))
+        console.print(Text(f"没有��配 '{search}' ��会话。", style="muted"))
         return
     if not items:
         console.print(Text("还没有任何会话。", style="muted"))
@@ -1146,8 +1150,13 @@ def serve(
     import secrets
 
     from .config import ConfigError, apply_log_settings, apply_to_environment, load_config, set_loaded
+    from .credentials import key_source
     from .sessions import default_db_path
+    from .web.settings import SettingsContext, snapshot_env
+    from .web.settings import apply as apply_settings
 
+    # 必须在配置写入环境变量之前记下：哪些环境变量是用户自己设的（网页设置页不能覆盖它们）
+    env_locked = snapshot_env()
     # serve 读 chat 的配置：自定义日志格式影响时间线解析，db / base_url 默认值与 chat 保持一致
     try:
         config = load_config()
@@ -1164,8 +1173,10 @@ def serve(
 
     db_value = db or (Path(values["db"]) if values.get("db") else None)
     db_path = db_value.expanduser().resolve() if db_value else default_db_path()
-    base_url = base_url or values.get("base_url") or os.environ.get("OPENAI_BASE_URL")
-    can_chat = not read_only and bool(os.environ.get("OPENAI_API_KEY"))
+    settings = SettingsContext(
+        default_model=DEFAULT_MODEL, read_only=read_only, cli_base_url=base_url or None,
+        env_locked=env_locked, key_from_env=key_source() == "env",
+    )
     access = None if no_token else (token or secrets.token_urlsafe(18))
     skill_dirs = tuple(str(item) for item in values.get("skills") or ())
     from .memory import MODES, normalize_mode
@@ -1177,10 +1188,15 @@ def serve(
         db_path=db_path, token=access,
         agent_factory=None if read_only else functools.partial(_web_agent_factory, skill_dirs=skill_dirs),
         skill_dirs=skill_dirs, memory_mode=memory_mode,
-        base_url=base_url, can_chat=can_chat, public_url=public_url.rstrip("/") if public_url else None,
-        redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS,
-        default_model=_resolve_model(values.get("model")),
+        public_url=public_url.rstrip("/") if public_url else None,
+        redact_owner=not no_redact, loopback=host in _LOOPBACK_HOSTS, settings=settings,
     )
+    # 模型、接口地址、Key、超时等由设置模块统一计算；网页设置页保存后也走同一个函数
+    try:
+        apply_settings(settings, web)
+    except ConfigError as exc:
+        _fail(str(exc))
+    can_chat = web.can_chat
 
     shown_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     url = f"http://{'[' + shown_host + ']' if ':' in shown_host else shown_host}:{port}/"
@@ -1188,7 +1204,7 @@ def serve(
     rows = [
         ("地址", Text(open_url, style="accent")),
         ("会话库", Text(str(db_path) + ("" if db_path.exists() else "  (尚不存在，可直接在网页里新建分析)"), style="muted")),
-        ("网页提问", Text("可用" if can_chat else ("只读模式" if read_only else "不可用：缺少 OPENAI_API_KEY"),
+        ("网页提问", Text("可用" if can_chat else ("只读模式" if read_only else "暂不可用：还没有 API Key，可在网页「设置」里填写"),
                       style="ok" if can_chat else "warn")),
         ("脱敏", Text("本人视图关闭，分享链接仍脱敏" if no_redact else "开启", style="warn" if no_redact else "muted")),
     ]

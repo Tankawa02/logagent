@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Trash2 } from 'lucide-react'
+import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Trash2 } from 'lucide-react'
 import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
@@ -39,6 +39,7 @@ const NAV = [
   { to: '/trace', icon: GanttChart, label: 'Trace', hint: '模型、耗时与工具调用' },
   { to: '/skills', icon: BookOpen, label: 'Skills', hint: '排查手册' },
   { to: '/memory', icon: Brain, label: 'Memory', hint: '偏好、术语与事实' },
+  { to: '/settings', icon: Settings, label: 'Settings', hint: '模型连接、API Key 与默认值' },
 ] as const
 
 const ICON_BUTTON =

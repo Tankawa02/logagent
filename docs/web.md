@@ -8,7 +8,7 @@
 
 ```bash
 uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'   # 需要 web 额外依赖
-log-agent serve                           # 服务就绪后自动打开浏览器（链接带 ?token=），在首页直接新建分析
+log-agent serve                           # 服务就绪后自动打开浏览器（链接带 ?token=）；先在「设置」填 Key，再在首页新建分析
 log-agent analyze -l app.log -c ./src     # 也可以照常在终端分析，结果自动存为会话，网页里能看到
 ```
 
@@ -21,9 +21,30 @@ log-agent analyze -l app.log -c ./src     # 也可以照常在终端分析，结
 | Trace | 侧边栏「Trace」 | 所有对话轮次的耗时、用量、工具调用统计与明细 |
 | Skills | 侧边栏「Skills」 | 浏览、新建、编辑排查手册 |
 | 记忆 | 侧边栏「Memory」 | 管理长期记忆，确认 agent 提议的记忆 |
+| 设置 | 侧边栏「Settings」 | API Key、接口地址、默认模型、超时重试、默认时区、长期记忆 |
 
 侧边栏底部可以切换**跟随系统 / 亮色 / 暗色**主题，选择保存在浏览器里，刷新和多标签页之间保持一致；侧边栏可以收起。
-Trace、Skills、记忆和新建分析只对本人开放，分享链接看不到。
+Trace、Skills、记忆、设置和新建分析只对本人开放，分享链接看不到。
+
+## 设置
+
+第一次用网页时，先在这里填好模型连接，不用再回终端设环境变量。**保存后立即对当前 `serve` 生效，不用重启**。
+
+| 分组 | 配置项 | 写到哪里 |
+|------|--------|----------|
+| 模型连接 | API Key | `~/.log-agent/credentials.toml`（权限 0600，只有本人可读写） |
+| 模型连接 | 接口地址（`base_url`）、默认模型（`model`） | 用户级 `~/.log-agent/config.toml` |
+| 请求 | 超时（`timeout`）、重试次数（`max_retries`） | 同上 |
+| 分析默认值 | 默认时区（`timezone`）、长期记忆（`memory`） | 同上 |
+
+- **测试连接**：用表单里当前填写的地址、模型和 Key 发一次最小请求（和 `doctor --ping` 相同），**不用先保存**；还没保存的 Key 只用于这次测试，不会写入任何地方。
+- **API Key 不回显**：页面只显示 `sk-…abcd` 这样的掩码；留空表示保持不变，「清除」会删除已保存的 Key。Key 单独存放，不写进 `config.toml`，复制配置文件给同事时不会带出去。
+- **只改这几行**：写 `config.toml` 时只改动上面这些顶层配置项，原有注释、`[analyze]` 等配置段、自定义日志格式都原样保留；改写后会重新解析校验，结构复杂到没法安全改写时会拒绝并提示手动编辑。
+- **优先级和终端一致**：启动参数 > 环境变量 > 项目级 `.log-agent.toml` / `[chat]` 段 > 用户级配置 > 默认值。
+  被环境变量（如 `OPENAI_API_KEY`、`OPENAI_BASE_URL`）或启动参数 `--base-url` 指定的项会标出来源并锁定，网页里不能改；
+  被项目配置覆盖的项可以改，但页面会提示「当前生效的是项目配置里的值」。
+- 网页保存的 Key 和配置，`analyze`、`chat`、`doctor` 等命令也会读取（环境变量没设置时才用文件里的 Key）。
+- 带用户名密码、查询参数或 `#` 片段的接口地址不会写进文件，这类地址请继续放在环境变量 `OPENAI_BASE_URL` 里。
 
 ## 新建分析
 
@@ -63,7 +84,7 @@ Trace、Skills、记忆和新建分析只对本人开放，分享链接看不到
 
 - 顶部汇总：对话轮数、总耗时 / 平均耗时、token 用量、工具调用次数，以及**按模型**的分组统计（同一模型带不同 provider 前缀时合并成一类）。
 - 列表可按问题或会话名搜索，按模型、状态（完成 / 出错 / 已中断）筛选；每行显示耗时进度条、token 和工具调用数。
-- 点进某一轮看明细：输入与设置（日志、源码、时间范围、基线等）、主代理和子代理的模型调用、每次工具调用的参数和结果，以及**工具使用排行**。
+- 点进某一轮看明细：输入与设置（日志、源码、时间范围、基线等）、主代理���子代理的模型调用、每次工具调用的参数和结果，以及**工具使用排行**。
 - 旧版本存下的轮次没有记录耗时和用量，会标成「旧版记录」，统计平均值时跳过，不按 0 计。
 
 ## Skills 与记忆管理
@@ -74,8 +95,8 @@ Trace、Skills、记忆和新建分析只对本人开放，分享链接看不到
 高优先级的会覆盖低优先级的同名 skill。用户级目录还不存在时也会列出，第一次新建时自动创建。可以新建、在编辑器里修改并预览，
   `Ctrl / ⌘ + S` 保存，格式有问题会直接提示；离开前有未保存修改会提醒。符号链接进来的 skill 只读。
 - **记忆**：按范围（全局 / 本项目）、类型筛选和搜索；可以新增、编辑、删除。内容保存前会脱敏，最长 300 字，
-  新增时如果已有相似记忆，会问你是替换还是另存一条。agent 提议、还没确认的记忆集中显示在「待确认的记忆」里。
-- 配置里 `memory` 为关闭时，页面会提示「长期记忆已关闭」；设为 `suggest` 或 `explicit` 后重启 `serve` 即可开启。
+  新增时���果已有相似记忆，会问你是替换还是另存一条。agent 提议、还没确认的记忆集中显示在「待确认的记忆」里。
+- 配置里 `memory` 为关闭时，页面会提示「长期记忆已关闭」；在「设置」里改成主动建议或只记明确要求的内容，保存后之后的提问即可使用。
 
 ## 启动参数
 
@@ -88,10 +109,11 @@ Trace、Skills、记忆和新建分析只对本人开放，分享链接看不到
 | `--no-token` | 不校验令牌，只允许和本机地址一起使用 |
 | `--read-only` | 不提供新建分析和网页续问，不需要 API Key |
 | `--no-redact` | 本人视图显示未脱敏的原文；分享链接始终脱敏 |
-| `--open` / `--no-open` | 服务就绪后是否自动打开浏览器，默认打开。SSH 登录或没有图形界面（Linux 下没有 `DISPLAY`）时自动跳过，只在终端打印地址 |
+| `--open` / `--no-open` | 服务就绪后是否自动打开浏览器，默认打开。SSH 登录或没有图���界面（Linux 下没有 `DISPLAY`）时自动跳过，只在终端打印地址 |
 
-新建分析和网页续问需要和 `chat` 一样的 `OPENAI_API_KEY`（以及可选的 `OPENAI_BASE_URL` / `--base-url`）。没有 Key 或用了 `--read-only` 时，
-历史会话、Trace、Skills 和记忆照常可看可管，只是不能提问，侧边栏底部显示「只读模式」。
+新建分析和网页续问需要 API Key：在「设置」页填写，或像 `chat` 一样设置 `OPENAI_API_KEY`（以及可选的 `OPENAI_BASE_URL` / `--base-url`）。
+没有 Key 时历史会话、Trace、Skills 和记忆照常可看可管，只是不能提问，首页会提示去设置；在设置页保存 Key 后马上就能提问。
+用了 `--read-only` 时不提供提问，侧边栏底部显示「只读模式」。
 同一个 `serve` 进程同时只跑一轮分析（工具依赖进程级的时区、时间窗口、编码设置），另一轮进行中时再提问会提示稍后再试。
 
 文件浏览只对本人开放，只列目录和文件名，不读取内容；agent 读日志和源码仍然走只读工具和脱敏规则。
@@ -121,7 +143,8 @@ npm run build                                          # 写入 src/log_agent/we
 后端在 `src/log_agent/web/`：`app.py`（路由、鉴权）、`timeline.py`（按秒聚合再分桶、稳健 z 分数找尖峰）、
 `sources.py`（证据原文，复用 `evidence.SourceResolver` 做路径约束）、`shares.py`（分享链接）、
 `runner.py`（续问：继承 `StreamRenderer`，把流式过程翻译成 AG-UI 事件，前端用 TanStack AI 的 `useChat` 消费；
-每轮在后台线程里跑并缓存事件，页面断开后可通过 `chat/live`、`chat/stream` 重新接上）、`manage.py`（Skills 与记忆管理接口）。
+每轮在后台线程里跑并缓存事件，页面断开后可通过 `chat/live`、`chat/stream` 重新接上）、`manage.py`（Skills 与记忆管理接口）、
+`settings.py`（设置页：改写用户级配置、保存 Key 到 `credentials.py` 管理的文件，并把新配置应用到运行中的服务）。
 
-前端页面在 `web/src/pages/`（`NewSession`、`Workspace`、`TraceList` / `TraceDetail`、`SkillsPage`、`MemoryPage`），
+前端页面在 `web/src/pages/`（`NewSession`、`Workspace`、`TraceList` / `TraceDetail`、`SkillsPage`、`MemoryPage`、`SettingsPage`），
 主题由 `public/theme-init.js` 在首屏前设置 `<html class="dark">`（CSP 不允许内联脚本，所以单独成文件），运行时切换在 `src/lib/theme.ts`。

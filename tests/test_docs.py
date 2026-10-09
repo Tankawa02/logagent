@@ -13,15 +13,24 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = sorted((ROOT / "docs").glob("*.md"))
 
 
-def test_readme_starts_with_three_line_quick_start() -> None:
+def _code_block(lines: list[str], start: int) -> tuple[list[str], int]:
+    begin = lines.index("```bash", start) + 1
+    end = lines.index("```", begin)
+    return lines[begin:end], end + 1
+
+
+def test_readme_starts_with_web_then_cli_quick_start() -> None:
     lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     start = lines.index("## 快速开始")
     assert start < 10, "快速开始要放在 README 开头"
-    block = lines[lines.index("```bash", start) + 1:]
-    block = block[:block.index("```")]
-    assert len(block) == 3
-    assert block[0].startswith("uv tool install") and block[1].startswith("log-agent init")
-    assert block[2].startswith("log-agent analyze")
+    web, after = _code_block(lines, start)
+    assert len(web) == 2, "推荐上手方式：安装（含 web 依赖）+ serve 两行"
+    assert web[0].startswith("uv tool install") and "[web]" in web[0]
+    assert web[1].startswith("log-agent serve")
+    cli_block, _ = _code_block(lines, after)
+    assert len(cli_block) == 3
+    assert cli_block[0].startswith("uv tool install") and cli_block[1].startswith("log-agent init")
+    assert cli_block[2].startswith("log-agent analyze")
 
 
 def test_readme_stays_short() -> None:
