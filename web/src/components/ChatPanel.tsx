@@ -10,6 +10,7 @@ import { liveChatConnection } from '../lib/live-chat'
 import { takePendingQuestion } from '../lib/pending'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
+import { FINISH_PHASES, FinishingStatus, type FinishPhase } from './FinishingStatus'
 import { Markdown } from './Markdown'
 import { MemoryConfirm, MemoryStatus } from './SessionMemory'
 import { Badge, ErrorBox, Spinner } from './ui'
@@ -69,6 +70,7 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [savedTurn, setSavedTurn] = useState<number | null>(null)
   const [stopping, setStopping] = useState(false)
+  const [phase, setPhase] = useState<FinishPhase | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const client = useQueryClient()
@@ -120,6 +122,8 @@ export function ChatPanel({
       } else if (name === 'log_agent.turn' && typeof data.turn === 'number') {
         setSavedTurn(data.turn)
         onTurnSaved(data.turn)
+      } else if (name === 'log_agent.phase' && FINISH_PHASES.has(data.phase)) {
+        setPhase(data.phase as FinishPhase)
       } else if (name === 'log_agent.memory') {
         // 本轮登记了新的候选：重新拉取，待确认的直接显示在回答下方
         void client.invalidateQueries({ queryKey: memoryKey })
@@ -134,6 +138,7 @@ export function ChatPanel({
     if (!question || isLoading) return
     setTools([])
     setDraft('')
+    setPhase(null)
     setServerError(null)
     setSavedTurn(null)
     scrollToBottom('auto')
@@ -146,6 +151,7 @@ export function ChatPanel({
     const timer = setTimeout(() => {
       setTools([])
       setDraft('')
+      setPhase(null)
       setServerError(null)
       setSavedTurn(null)
       connection.resumeNext(live?.run_id)
@@ -155,7 +161,10 @@ export function ChatPanel({
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!isLoading) setStopping(false)
+    if (!isLoading) {
+      setStopping(false)
+      setPhase(null)
+    }
   }, [isLoading])
 
   // 分析在服务端独立运行，断开连接不会中断它，所以不能靠断开来「停止」：
@@ -181,7 +190,7 @@ export function ChatPanel({
     return () => clearTimeout(timer)
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { atBottom, scrollToBottom } = useStickToBottom(scroller, [messages, tools.length, draft, isLoading, memory.data?.pending.length])
+  const { atBottom, scrollToBottom } = useStickToBottom(scroller, [messages, tools.length, draft, isLoading, phase, memory.data?.pending.length])
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -256,6 +265,11 @@ export function ChatPanel({
               }
               return node
             })}
+            {isLoading && phase && !stopping && (
+              <div className="mt-5">
+                <FinishingStatus phase={phase} />
+              </div>
+            )}
             {(serverError || error) && (
               <div className="mt-6">
                 <ErrorBox error={serverError ?? error} />
@@ -322,7 +336,7 @@ export function ChatPanel({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               rows={1}
-              placeholder={isLoading ? '分析进行中…' : '继续追问…'}
+              placeholder={isLoading ? (phase ? '正在收尾，完成后可继续追问…' : '分析进行中…') : '继续追问…'}
               className="block max-h-48 min-h-10 w-full resize-none bg-transparent px-3 py-2 text-[15px] leading-relaxed outline-none [field-sizing:content] placeholder:text-zinc-400"
             />
             <div className="flex items-center justify-between gap-2 pl-1">
@@ -335,7 +349,7 @@ export function ChatPanel({
                     onClick={requestStop}
                     disabled={stopping}
                     aria-label={stopping ? '正在停止' : '停止'}
-                    title={stopping ? '正在停止，等当前步骤结束后保存已输出的部分' : '停止本轮'}
+                    title={stopping ? '正在停止，等当前步骤结束后保存已输���的部分' : '停止本轮'}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
                   >
                     {stopping ? <Spinner /> : <Square className="h-3.5 w-3.5 fill-current" />}

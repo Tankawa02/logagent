@@ -17,6 +17,7 @@ analyze / chat 依赖的全局设置（时区、时间窗口、编码、脱敏�
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 import time
@@ -149,7 +150,7 @@ class LiveRun:
 
 _LIVE_LOCK = threading.Lock()
 _LIVE_RUNS: dict[str, LiveRun] = {}
-# 停止请求比提问请求先到（刚发出就点停止）时先记下 run_id，这一轮一登记就立刻按中断处理
+# 停止请求比提问请求先到（刚发出就点停止）时先记下 run_id，这一轮一登记���立刻按中断处理
 _EARLY_STOPS: dict[str, float] = {}
 EARLY_STOP_TTL_SECONDS = 300
 
@@ -199,6 +200,9 @@ def custom(name: str, value: Any) -> dict[str, Any]:
     return _event("CUSTOM", name=name, value=value)
 
 
+_APPENDIX_START = re.compile(r"^```log-agent", re.MULTILINE)
+
+
 class _TextTap:
     """包住 message_stream：把每个增量转发给浏览器，并在这里响应取消。
 
@@ -224,6 +228,9 @@ class _TextTap:
                 buffer += delta
                 if renderer.live_answer:
                     renderer.emit_answer(delta)
+                    # 正文写完、开始写机器附录：附录在页面上是隐藏的，不提示的话看起来像已经结束
+                    if _APPENDIX_START.search(buffer):
+                        renderer.phase("structuring")
                 elif looks_like_report(buffer):
                     renderer.live_answer = True
                     renderer.emit(custom("log_agent.draft", {"reset": True}))
@@ -249,6 +256,17 @@ class WebStreamRenderer(StreamRenderer):
         # 当前这次模型输出已经在逐字推给浏览器：_flush_answer 只做存档记账，不再重复推送
         self.live_answer = False
         self.sent_any = False
+        self.current_phase = ""
+
+    def phase(self, name: str) -> None:
+        """正文之后的收尾阶段（整理结构化报告 → 核对证据 → 保存），每个阶段只通知一次。"""
+        if name == self.current_phase:
+            return
+        self.current_phase = name
+        self.emit(custom("log_agent.phase", {"phase": name}))
+
+    def _on_phase(self, name: str) -> None:
+        self.phase(name)
 
     def check_cancelled(self) -> None:
         if self.cancelled.is_set():
@@ -402,6 +420,7 @@ def run_turn(
         finally:
             console.quiet = quiet
         renderer.close_message()
+        renderer.phase("saving")
         if memory is not None:
             # 候选登记进记忆库；对话页收到事件后重新拉取本会话待确认的候选，直接在对话里请用户确认
             try:
