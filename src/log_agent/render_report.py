@@ -180,6 +180,11 @@ class ToolRecord:
     started: float | None = None
     # 本轮结束（中断 / 出错）时仍在运行：seconds 只量到结束那一刻，不代表工具真实耗时
     incomplete: bool = False
+    # 工具原始结果（截断到上限）与原始长度，trace 详情里展示「工具到底返回了什么」
+    output: str = ""
+    output_chars: int = 0
+    # 与模型调用里 tool_requests[].id 对应，trace 用来把请求和结果连起来
+    call_id: str = ""
 
 
 @dataclass

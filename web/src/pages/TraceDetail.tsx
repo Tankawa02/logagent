@@ -1,15 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Bot, ChevronRight, MessageSquare, Wrench } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge, Card, CardHeader, Empty, ErrorBox, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { baseName, formatDuration, formatGenerated, formatTokens, TURN_STATUS } from '../lib/format'
-import type { LlmCall, ToolCall, TurnPayload } from '../lib/types'
-
-type Span =
-  | { kind: 'llm'; key: string; label: string; start: number; seconds: number; call: LlmCall }
-  | { kind: 'tool'; key: string; label: string; start: number; seconds: number; call: ToolCall }
+import type { ToolCall, TurnPayload } from '../lib/types'
+import { spanPreview, TraceSpanDetail, type Span } from '../components/TraceSpanDetail'
 
 function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; approximate: boolean } {
   const llm = payload.llm_calls ?? []
@@ -22,6 +19,7 @@ function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; appro
     start: call.started,
     seconds: call.seconds,
     call,
+    index: i,
   }))
   // 旧记录没有开始时间：按记录顺序首尾相接，只能看出相对长短
   let cursor = 0
@@ -45,14 +43,6 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   )
 }
 
-function JsonBlock({ value }: { value: unknown }) {
-  return (
-    <pre className="max-h-64 overflow-auto rounded-md bg-zinc-50 p-2 font-mono text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-      {JSON.stringify(value, null, 2)}
-    </pre>
-  )
-}
-
 function SpanRow({ span, total }: { span: Span; total: number }) {
   const left = (span.start / total) * 100
   const width = Math.max(0.6, (span.seconds / total) * 100)
@@ -63,24 +53,36 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
   // 未完成的段只量到本轮结束：用半透明 + 虚线边，和真实耗时区分开
   const color = incomplete ? `${base} opacity-40 outline-1 outline-dashed outline-zinc-500` : base
   const Icon = span.kind === 'llm' ? Bot : Wrench
+  const preview = spanPreview(span)
+  // 详情懒渲染：几十个 span、每个带上万字原文，一次性全部挂进 DOM 会拖慢页面
+  const [open, setOpen] = useState(false)
 
   return (
     <li>
-      <details className="group">
+      <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-90" aria-hidden />
-          <div className="flex w-32 shrink-0 items-center gap-1.5 sm:w-44">
+          <div className="flex w-36 shrink-0 items-start gap-1.5 sm:w-56">
             <Icon
-              className={`h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`}
+              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`}
               aria-hidden
             />
-            <span
-              className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`}
-              title={span.label}
-            >
-              {span.label}
-            </span>
-            {incomplete && <Badge tone="amber">未完成</Badge>}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`}
+                  title={span.label}
+                >
+                  {span.label}
+                </span>
+                {incomplete && <Badge tone="amber">未完成</Badge>}
+              </div>
+              {preview && (
+                <p className="truncate text-[11px] leading-4 text-zinc-500 dark:text-zinc-400" title={preview}>
+                  {preview}
+                </p>
+              )}
+            </div>
           </div>
           <div className="relative h-4 min-w-0 flex-1 rounded bg-zinc-100 dark:bg-zinc-800" aria-hidden>
             <div className={`absolute inset-y-0.5 rounded-sm ${color}`} style={{ left: `${Math.min(left, 99.4)}%`, width: `${width}%` }} />
@@ -89,48 +91,7 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
             {formatDuration(span.seconds)}
           </span>
         </summary>
-        <div className="space-y-2 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 pl-11 text-xs dark:border-zinc-800 dark:bg-zinc-900/60">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-zinc-500">
-            <span>开始 +{formatDuration(span.start)}</span>
-            <span>
-              耗时 {span.seconds.toFixed(3)}s{incomplete && '（量到本轮结束，未完成）'}
-            </span>
-            {span.kind === 'llm' && (
-              <>
-                {span.call.first_token != null && <span>首字 {span.call.first_token.toFixed(2)}s</span>}
-                {span.call.input == null || span.call.output == null ? (
-                  <span>输出中断，用量未知</span>
-                ) : (
-                  <>
-                    <span>输入 {span.call.input.toLocaleString()} tokens</span>
-                    <span>输出 {span.call.output.toLocaleString()} tokens</span>
-                  </>
-                )}
-                {span.call.tool_calls != null && <span>发起工具 {span.call.tool_calls} 个</span>}
-                {span.call.model && <span className="font-mono">{span.call.model}</span>}
-                {span.call.finish_reason && <span>结束原因 {span.call.finish_reason}</span>}
-              </>
-            )}
-            {span.kind === 'tool' && span.call.subagent && <span>子代理 {span.call.subagent}</span>}
-          </div>
-          {span.kind === 'tool' && (
-            <>
-              {span.call.note && <p className="text-zinc-600 dark:text-zinc-400">旁白：{span.call.note}</p>}
-              <div>
-                <div className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">参数</div>
-                <JsonBlock value={span.call.args} />
-              </div>
-              <div>
-                <div className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">{span.call.failed ? '错误' : '结果摘要'}</div>
-                <p
-                  className={`whitespace-pre-wrap break-words font-mono ${span.call.failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-300'}`}
-                >
-                  {span.call.summary || '（无）'}
-                </p>
-              </div>
-            </>
-          )}
-        </div>
+        {open && <TraceSpanDetail span={span} />}
       </details>
     </li>
   )
@@ -317,7 +278,7 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
             <>
               <div className="flex items-center gap-3 px-4 pt-2 text-xs tabular-nums text-zinc-500 dark:text-zinc-400" aria-hidden>
                 <span className="w-3.5 shrink-0" />
-                <span className="w-32 shrink-0 sm:w-44" />
+                <span className="w-36 shrink-0 sm:w-56" />
                 <span className="flex flex-1 justify-between">
                   <span>0s</span>
                   <span>{formatDuration(view.total / 2)}</span>

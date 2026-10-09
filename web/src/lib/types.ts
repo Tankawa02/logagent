@@ -74,6 +74,29 @@ export interface ToolCall {
   started?: number | null
   /** 本轮结束时仍在运行；seconds 只量到结束那一刻 */
   incomplete?: boolean
+  /** 返回给模型的原文（截断到上限）；旧记录没有 */
+  output?: string
+  output_chars?: number | null
+  call_id?: string
+}
+
+/** 截断存档的文本：chars 是原始长度，大于 text.length 表示被截断 */
+export interface ClippedText {
+  text: string
+  chars: number
+}
+
+export interface ToolRequest {
+  name: string
+  args: Record<string, unknown>
+  id: string
+}
+
+export interface TraceMessage extends ClippedText {
+  role: 'system' | 'user' | 'assistant' | 'tool' | string
+  name?: string
+  tool_call_id?: string
+  tool_requests?: ToolRequest[]
 }
 
 export interface LlmCall {
@@ -87,6 +110,13 @@ export interface LlmCall {
   model: string
   finish_reason: string
   incomplete?: boolean
+  /** 以下为 trace 明细，旧记录没有 */
+  input_messages?: TraceMessage[]
+  input_full?: boolean
+  input_count?: number
+  output_text?: ClippedText
+  reasoning?: ClippedText
+  tool_requests?: ToolRequest[]
 }
 
 export interface TraceItem {
