@@ -15,7 +15,7 @@ const SUGGESTIONS = [
 ]
 
 const FIELD =
-  'w-full rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950'
+  'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 dark:border-zinc-700 dark:bg-zinc-950'
 
 export function NewSession({ from }: { from?: string }) {
   const navigate = useNavigate()
@@ -89,10 +89,12 @@ export function NewSession({ from }: { from?: string }) {
 
   return (
     <div className="h-full overflow-auto">
-      <form onSubmit={onSubmit} className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10 sm:py-16">
-        <div className="space-y-2 text-center">
-          <h1 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">要排查什么问题？</h1>
-          <p className="text-pretty text-sm text-zinc-500 dark:text-zinc-400">
+      <form onSubmit={onSubmit} className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-8 px-4 py-12 sm:py-16">
+        <div className="space-y-3 text-center">
+          <h1 className="text-balance text-3xl font-medium tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">
+            要排查什么问题？
+          </h1>
+          <p className="mx-auto max-w-xl text-pretty text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
             选好日志和源码，用自然语言提问。agent 会自己检索日志、对照代码，给出带证据行号的结论。
           </p>
         </div>
@@ -101,13 +103,7 @@ export function NewSession({ from }: { from?: string }) {
           <ErrorBox error="当前服务不能提问：启动 log-agent serve 时缺少 OPENAI_API_KEY，或使用了 --read-only。可以先运行 log-agent init 配置。" />
         )}
 
-        <section className="space-y-5 rounded-xl border border-zinc-200 bg-white p-4 shadow-xs sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
-          <SourcePicker kind="log" values={logs} onChange={setLogs} />
-          <div className="border-t border-zinc-100 dark:border-zinc-800" />
-          <SourcePicker kind="code" values={code} onChange={setCode} />
-        </section>
-
-        <section className="rounded-xl border border-zinc-200 bg-white shadow-xs focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.08)] transition-shadow focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/10 dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-brand-800">
           <label htmlFor="question" className="sr-only">
             问题
           </label>
@@ -117,36 +113,41 @@ export function NewSession({ from }: { from?: string }) {
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={onKey}
             rows={3}
+            autoFocus
             placeholder="描述你想排查的问题，例如：下单接口 14:00 之后大量 500，原因是什么？"
-            className="block w-full resize-none rounded-t-xl bg-transparent px-4 pt-4 text-sm leading-relaxed outline-none placeholder:text-zinc-400"
+            className="block w-full resize-none bg-transparent px-5 pt-5 text-base leading-relaxed outline-none placeholder:text-zinc-400"
           />
-          <div className="flex items-center justify-between gap-2 px-3 pb-3">
+          <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-1">
             <button
               type="button"
               onClick={() => setAdvanced((v) => !v)}
               aria-expanded={advanced}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors ${
+                advanced
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
+                  : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+              }`}
             >
               <Settings2 className="h-3.5 w-3.5" aria-hidden />
-              <span className="max-w-48 truncate">{model || defaultModel || '模型与时间范围'}</span>
+              <span className="max-w-48 truncate font-mono">{model || defaultModel || '模型与时间范围'}</span>
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${advanced ? 'rotate-180' : ''}`} aria-hidden />
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <span className="hidden text-xs text-zinc-400 sm:inline">Enter 发送 · Shift+Enter 换行</span>
               <button
                 type="submit"
                 disabled={!ready}
                 aria-label="开始分析"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-opacity hover:bg-zinc-700 disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm transition-colors hover:bg-brand-700 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
               >
-                {create.isPending ? <Spinner className="border-zinc-500 border-t-white" /> : <ArrowUp className="h-4 w-4" />}
+                {create.isPending ? <Spinner className="border-white/40 border-t-white" /> : <ArrowUp className="h-4 w-4" />}
               </button>
             </div>
           </div>
 
           {advanced && (
-            <div className="grid gap-3 border-t border-zinc-100 p-4 sm:grid-cols-2 dark:border-zinc-800">
-              <label className="space-y-1 sm:col-span-2">
+            <div className="grid gap-3 border-t border-zinc-100 px-5 py-4 sm:grid-cols-2 dark:border-zinc-800">
+              <label className="space-y-1.5 sm:col-span-2">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">模型</span>
                 <input
                   list="model-options"
@@ -160,23 +161,23 @@ export function NewSession({ from }: { from?: string }) {
                 </datalist>
                 {models.isFetching && <span className="text-xs text-zinc-400">正在读取接口上的模型列表…</span>}
               </label>
-              <label className="space-y-1">
+              <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">开始时间</span>
                 <input value={since} onChange={(e) => setSince(e.target.value)} placeholder="如 2026-10-08 14:00 或 2h" className={FIELD} />
               </label>
-              <label className="space-y-1">
+              <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">结束时间</span>
                 <input value={until} onChange={(e) => setUntil(e.target.value)} placeholder="不填表示到日志结尾" className={FIELD} />
               </label>
-              <label className="space-y-1">
+              <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">时区</span>
                 <input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="如 Asia/Shanghai，默认 UTC" className={FIELD} />
               </label>
-              <label className="space-y-1">
+              <label className="space-y-1.5">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">日志编码</span>
                 <input value={encoding} onChange={(e) => setEncoding(e.target.value)} placeholder="自动识别，如 gbk" className={FIELD} />
               </label>
-              <label className="space-y-1 sm:col-span-2">
+              <label className="space-y-1.5 sm:col-span-2">
                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">基线时段</span>
                 <input
                   value={baseline}
@@ -187,26 +188,34 @@ export function NewSession({ from }: { from?: string }) {
               </label>
             </div>
           )}
+
+          <div className="space-y-4 border-t border-zinc-100 bg-zinc-50/70 px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+            <SourcePicker kind="log" values={logs} onChange={setLogs} />
+            <SourcePicker kind="code" values={code} onChange={setCode} />
+          </div>
         </section>
 
+        {create.error && <ErrorBox error={create.error} />}
+        {!logs.length && question.trim() && <p className="-mt-4 text-center text-xs text-zinc-500">先添加至少一个日志文件再开始分析。</p>}
+
         {!question && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setQuestion(s)}
-                className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
-              >
-                <Sparkles className="h-3 w-3 text-sky-500" aria-hidden />
-                {s}
-              </button>
-            ))}
+          <div className="space-y-3">
+            <h2 className="px-1 text-xs font-medium text-zinc-400">试试这样问</h2>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setQuestion(s)}
+                  className="group flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white/60 px-4 py-3 text-left text-sm leading-relaxed text-zinc-600 transition-colors hover:border-brand-200 hover:bg-white hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300 dark:hover:border-brand-900 dark:hover:text-zinc-100"
+                >
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand-500 opacity-70 group-hover:opacity-100" aria-hidden />
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         )}
-
-        {create.error && <ErrorBox error={create.error} />}
-        {!logs.length && question.trim() && <p className="text-center text-xs text-zinc-500">先添加至少一个日志文件再开始分析。</p>}
       </form>
     </div>
   )

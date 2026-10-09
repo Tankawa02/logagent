@@ -18,7 +18,7 @@ function isMeasured(item: TraceItem): item is Measured {
 }
 
 const SELECT =
-  'rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-800 dark:bg-zinc-950'
+  'rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950'
 
 function Stat({ icon: Icon, label, value, hint }: { icon: typeof Clock; label: string; value: string; hint?: string }) {
   return (
@@ -139,7 +139,7 @@ function TraceRow({ item, maxSeconds }: { item: TraceItem; maxSeconds: number })
               <div className="h-1.5 min-w-0 flex-1 rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden>
                 {item.elapsed_seconds != null && (
                   <div
-                    className={`h-full rounded-full ${item.status === 'error' ? 'bg-red-500' : 'bg-sky-500'}`}
+                    className={`h-full rounded-full ${item.status === 'error' ? 'bg-red-500' : 'bg-brand-500'}`}
                     style={{ width: `${Math.max(2, (item.elapsed_seconds / maxSeconds) * 100)}%` }}
                   />
                 )}

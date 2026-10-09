@@ -224,7 +224,7 @@ export function FileBrowser({
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 spellCheck={false}
-                className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 font-mono text-xs outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950"
+                className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-700 dark:bg-zinc-950"
               />
               <Button type="submit" disabled={expand.isPending}>
                 {expand.isPending ? <Spinner /> : mode === 'file' && GLOB_CHARS.test(typed) ? '匹配' : '前往'}
@@ -257,11 +257,11 @@ export function FileBrowser({
                   onChange={(e) => setFilter(e.target.value)}
                   placeholder="在当前目录里筛选"
                   aria-label="筛选"
-                  className="w-full rounded-md border border-zinc-200 bg-zinc-50 py-1 pl-7 pr-2 text-xs outline-none focus:border-sky-500 dark:border-zinc-800 dark:bg-zinc-950"
+                  className="w-full rounded-md border border-zinc-200 bg-zinc-50 py-1 pl-7 pr-2 text-xs outline-none focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950"
                 />
               </div>
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
-                <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} className="accent-sky-600" />
+                <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} className="accent-brand-600" />
                 显示隐藏文件
               </label>
               {mode === 'file' && allLogsHere.length > 1 && (
@@ -301,21 +301,21 @@ export function FileBrowser({
                         onDoubleClick={() => !isDir && onConfirm([...new Set([...picked, entry.path])])}
                         aria-pressed={isDir ? undefined : selected}
                         className={`flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm ${
-                          selected ? 'bg-sky-50 dark:bg-sky-950/40' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                          selected ? 'bg-brand-50 dark:bg-brand-950/40' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
                         }`}
                       >
                         {!isDir && (
                           <span
                             aria-hidden
                             className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                              selected ? 'border-sky-600 bg-sky-600 text-white' : 'border-zinc-300 dark:border-zinc-600'
+                              selected ? 'border-brand-600 bg-brand-600 text-white' : 'border-zinc-300 dark:border-zinc-600'
                             }`}
                           >
                             {selected && <Check className="h-3 w-3" />}
                           </span>
                         )}
                         {isDir ? (
-                          <Folder className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" aria-hidden />
+                          <Folder className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-400" aria-hidden />
                         ) : (
                           <FileText className={`h-4 w-4 shrink-0 ${LOG_HINT.test(entry.name) ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-400'}`} aria-hidden />
                         )}

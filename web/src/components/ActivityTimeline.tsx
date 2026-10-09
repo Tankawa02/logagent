@@ -118,7 +118,7 @@ export function ActivityTimeline({ tools, draft, running }: { tools: ToolActivit
           {draft && running && (
             <div className="flex gap-3">
               <span className="flex w-5 shrink-0 justify-center pt-1.5" aria-hidden>
-                <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
+                <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-zinc-500">正在撰写结论</p>
@@ -139,7 +139,7 @@ function Step({ tool, last }: { tool: ToolActivity; last: boolean }) {
   const state = !tool.done ? 'running' : tool.failed ? 'failed' : 'done'
   const iconClass =
     state === 'running'
-      ? 'border-sky-200 bg-sky-50 text-sky-600 dark:border-sky-900 dark:bg-sky-950/60 dark:text-sky-300'
+      ? 'border-brand-200 bg-brand-50 text-brand-600 dark:border-brand-900 dark:bg-brand-950/60 dark:text-brand-300'
       : state === 'failed'
         ? 'border-red-200 bg-red-50 text-red-500 dark:border-red-900 dark:bg-red-950/50'
         : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400'

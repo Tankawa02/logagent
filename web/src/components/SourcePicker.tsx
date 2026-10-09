@@ -39,9 +39,14 @@ export function SourcePicker({
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+          <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
           {isLog ? '日志文件' : '源码目录'}
-          {isLog ? <span className="ml-1 text-red-500">*</span> : <span className="ml-1.5 text-xs font-normal text-zinc-400">可选</span>}
+          {isLog ? (
+            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[10px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">必填</span>
+          ) : (
+            <span className="font-normal text-zinc-400">可选</span>
+          )}
         </h3>
         <span className="text-xs text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</span>
       </div>
@@ -52,7 +57,7 @@ export function SourcePicker({
             <li
               key={value}
               title={value}
-              className="flex max-w-full items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 py-1 pl-2 pr-1 text-xs dark:border-zinc-700 dark:bg-zinc-800/60"
+              className="flex max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-white py-1 pl-2.5 pr-1 text-xs shadow-xs dark:border-zinc-700 dark:bg-zinc-900"
             >
               <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
               <span className="font-medium">{baseName(value) || value}</span>
@@ -61,7 +66,7 @@ export function SourcePicker({
                 type="button"
                 onClick={() => onChange(values.filter((v) => v !== value))}
                 aria-label={`移除 ${value}`}
-                className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -74,9 +79,9 @@ export function SourcePicker({
         <button
           type="button"
           onClick={() => setBrowsing(true)}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border border-dashed border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:border-sky-500 hover:bg-sky-50 hover:text-sky-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-sky-950/30 dark:hover:text-sky-300"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:text-brand-300"
         >
-          <Plus className="h-4 w-4" aria-hidden />
+          <Plus className="h-3.5 w-3.5" aria-hidden />
           {isLog ? '浏览文件' : '浏览目录'}
         </button>
         <input
@@ -92,7 +97,7 @@ export function SourcePicker({
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
           placeholder={isLog ? '或粘贴路径，如 ~/logs/app.log、/var/log/*.log，回车添加' : '或粘贴目录路径，如 ~/work/order-service，回车添加'}
-          className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 font-mono text-xs outline-none placeholder:font-sans focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950"
+          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
         />
       </div>
 

@@ -179,7 +179,7 @@ function BucketDetail({
               <button
                 type="button"
                 onClick={() => onOpen({ source: t.source, start: t.line, end: t.line })}
-                className="min-w-0 flex-1 truncate text-left font-mono text-zinc-700 hover:text-sky-700 hover:underline dark:text-zinc-300"
+                className="min-w-0 flex-1 truncate text-left font-mono text-zinc-700 hover:text-brand-700 hover:underline dark:text-zinc-300"
                 title="查看首次出现的原文"
               >
                 {t.signature}

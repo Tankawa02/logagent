@@ -1,39 +1,94 @@
 @import 'tailwindcss';
 
+/*
+ * 设计 token：参考 Perplexity 的暖色纸面 + 青绿强调色。
+ * 全站中性色统一用 zinc-*，这里把 zinc 整体换成偏暖的灰阶，组件不需要逐个改类名；
+ * 强调色统一用 brand-*（链接、焦点、主按钮、证据高亮）。
+ */
+@theme {
+  --color-zinc-50: #f7f7f4;
+  --color-zinc-100: #efefea;
+  --color-zinc-200: #e4e4de;
+  --color-zinc-300: #d0d0c9;
+  --color-zinc-400: #a2a39d;
+  --color-zinc-500: #787a75;
+  --color-zinc-600: #5b5e5a;
+  --color-zinc-700: #424644;
+  --color-zinc-800: #2c302f;
+  --color-zinc-900: #1f2121;
+  --color-zinc-950: #171818;
+
+  --color-brand-50: #eef8f8;
+  --color-brand-100: #d4eeef;
+  --color-brand-200: #a8dcdf;
+  --color-brand-300: #72c2c8;
+  --color-brand-400: #3ea4ad;
+  --color-brand-500: #2a929c;
+  --color-brand-600: #20808d;
+  --color-brand-700: #1b6872;
+  --color-brand-800: #19545c;
+  --color-brand-900: #17464d;
+  --color-brand-950: #0b2c31;
+
+  --color-paper: #fcfcf9;
+  --color-paper-dark: #191a1a;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
 :root {
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
-    sans-serif;
+  font-family: var(--font-sans);
   color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
 }
 
 code,
 pre,
 .font-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
 }
 
-/* 报告正文（react-markdown 输出）的排版 */
+::selection {
+  background: color-mix(in oklab, var(--color-brand-500) 25%, transparent);
+}
+
+/* 细滚动条：侧边栏和面板里大量滚动区域，默认滚动条太抢眼 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-zinc-300) transparent;
+}
+@media (prefers-color-scheme: dark) {
+  * {
+    scrollbar-color: var(--color-zinc-700) transparent;
+  }
+}
+
+/* 报告正文（react-markdown 输出）的排版：阅读型字号与行高 */
 .markdown {
-  @apply space-y-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200;
+  @apply space-y-4 text-[15px] leading-7 text-zinc-800 dark:text-zinc-200;
 }
 .markdown h1,
 .markdown h2,
 .markdown h3,
 .markdown h4 {
-  @apply mt-4 font-semibold text-zinc-900 dark:text-zinc-50;
+  @apply mt-6 font-semibold tracking-tight text-zinc-900 dark:text-zinc-50;
 }
-.markdown h1 { @apply text-lg; }
-.markdown h2 { @apply text-base; }
+.markdown h1 { @apply text-xl; }
+.markdown h2 { @apply text-lg; }
 .markdown h3,
-.markdown h4 { @apply text-sm; }
-.markdown ul { @apply list-disc space-y-1 pl-5; }
-.markdown ol { @apply list-decimal space-y-1 pl-5; }
-.markdown a { @apply text-sky-700 underline dark:text-sky-300; }
-.markdown blockquote { @apply border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400; }
-.markdown :not(pre) > code { @apply rounded bg-zinc-100 px-1 py-0.5 text-[0.85em] dark:bg-zinc-800; }
-.markdown pre { @apply overflow-auto rounded-md bg-zinc-50 p-3 text-xs dark:bg-zinc-950; }
-.markdown table { @apply block overflow-x-auto text-xs; }
+.markdown h4 { @apply text-base; }
+.markdown > :first-child { @apply mt-0; }
+.markdown strong { @apply font-semibold text-zinc-900 dark:text-zinc-50; }
+.markdown ul { @apply list-disc space-y-1.5 pl-5 marker:text-zinc-400; }
+.markdown ol { @apply list-decimal space-y-1.5 pl-5 marker:text-zinc-400; }
+.markdown a { @apply text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-600 dark:text-brand-300 dark:decoration-brand-700; }
+.markdown blockquote { @apply border-l-2 border-brand-300 pl-4 text-zinc-600 dark:border-brand-800 dark:text-zinc-400; }
+.markdown :not(pre) > code { @apply rounded-md bg-zinc-100 px-1.5 py-0.5 text-[0.85em] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200; }
+.markdown pre { @apply overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed dark:border-zinc-800 dark:bg-zinc-900; }
+.markdown table { @apply block overflow-x-auto text-sm; }
+.markdown th { @apply bg-zinc-50 font-medium dark:bg-zinc-900; }
 .markdown th,
-.markdown td { @apply border border-zinc-200 px-2 py-1 text-left dark:border-zinc-800; }
-.markdown hr { @apply border-zinc-200 dark:border-zinc-800; }
+.markdown td { @apply border border-zinc-200 px-3 py-1.5 text-left dark:border-zinc-800; }
+.markdown hr { @apply my-6 border-zinc-200 dark:border-zinc-800; }

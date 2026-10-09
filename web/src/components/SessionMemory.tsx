@@ -48,7 +48,7 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
         title="agent 每轮都会带上这些记忆（全局 + 本项目）"
         className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
           count && !off
-            ? 'border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300'
+            ? 'border-brand-200 bg-brand-50 text-brand-700 hover:border-brand-300 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300'
             : 'border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 dark:border-zinc-800 dark:text-zinc-400'
         }`}
       >
@@ -94,7 +94,7 @@ export function MemoryStatus({ memory }: { memory: SessionMemory }) {
             </ul>
           )}
           <div className="border-t border-zinc-100 px-3 py-2 text-right dark:border-zinc-800">
-            <Link to="/memory" className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300">
+            <Link to="/memory" className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-300">
               管理记忆
             </Link>
           </div>
