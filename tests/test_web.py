@@ -1114,3 +1114,38 @@ def test_serve_opens_browser_by_default(monkeypatch) -> None:
     assert len(calls) == 1 and calls[0][0].startswith("http://127.0.0.1:8799/?token=")
     assert CliRunner().invoke(cli.app, ["serve", "--no-open"]).exit_code == 0
     assert len(calls) == 1
+
+
+class _PiecewiseStream:
+    """模拟模型按小片段输出的一次消息流。"""
+
+    def __init__(self, pieces: list[str], tool_calls: list | None = None) -> None:
+        self.pieces = pieces
+        self.output = AIMessage(content="".join(pieces), tool_calls=tool_calls or [])
+
+    @property
+    def text(self):
+        yield from self.pieces
+
+
+def test_report_text_streams_to_browser_piece_by_piece() -> None:
+    import threading
+
+    from log_agent.web.runner import WebStreamRenderer
+
+    events: list[dict] = []
+    renderer = WebStreamRenderer(events.append, threading.Event(), redact_owner=False)
+    # 旁白：工具调用前的一句话，只进草稿，不进报告正文
+    renderer._on_message(_PiecewiseStream(["先看", "一下分布。"], tool_calls=[
+        {"name": "log_overview", "args": {}, "id": "o1", "type": "tool_call"}]))
+    report = ["## 一句话", "结论\n\n", "支付服务在 10:05 ", "连接池耗尽", "，导致超时。"]
+    renderer._on_message(_PiecewiseStream(report))
+    renderer.close_message()
+
+    deltas = [e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
+    # 判定为正文后逐片推送，而不是等空行凑满一整段才推
+    assert len(deltas) >= 4
+    assert "".join(deltas) == "".join(report)
+    assert not any("先看" in d for d in deltas)
+    assert renderer.answer_parts  # 存档用的分块记账照常进行
+    assert [e["type"] for e in events if e["type"].startswith("TEXT_MESSAGE")][-1] == "TEXT_MESSAGE_END"
