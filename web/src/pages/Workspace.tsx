@@ -1,7 +1,20 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { BarChart3, Copy, Download, FileCode2, FileSearch, FileText, FolderCode, GanttChart, Share2, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  BarChart3,
+  ChevronDown,
+  Copy,
+  Download,
+  FileCode2,
+  FileSearch,
+  FileText,
+  FolderCode,
+  GanttChart,
+  MoreHorizontal,
+  Share2,
+  X,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView } from '../components/ReportView'
 import { SharePanel } from '../components/SharePanel'
@@ -165,14 +178,25 @@ export function Workspace({
             tabIndex={-1}
             onKeyDown={onAsideKey}
             {...(overlayPanel ? { role: 'dialog', 'aria-modal': true } : {})}
-            className="fixed inset-0 z-30 flex flex-col bg-paper lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
+            className="fixed inset-0 z-30 flex animate-panel-in flex-col bg-paper lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
           >
             <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
-              <div role="group" aria-label="切换面板" className="flex gap-0.5 rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900">
-                {panels.map((p) => (
-                  <PanelTab key={p} panel={p} active={panel === p} onClick={() => openPanel(p)} />
-                ))}
-              </div>
+              {/* 大屏上标题栏的分段按钮一直可见，这里只放面板名；小屏覆盖层盖住了标题栏，才需要自己的切换 */}
+              {overlayPanel ? (
+                <PanelSwitch panels={panels} panel={panel} onPanel={openPanel} />
+              ) : (
+                <h2 className="flex items-center gap-1.5 px-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  {(() => {
+                    const { label, icon: Icon } = PANEL_META[panel]
+                    return (
+                      <>
+                        <Icon className="h-4 w-4 text-zinc-400" aria-hidden />
+                        {label}
+                      </>
+                    )
+                  })()}
+                </h2>
+              )}
               <button
                 type="button"
                 onClick={() => openPanel(undefined)}
@@ -235,32 +259,23 @@ function PanelTab({ panel, active, onClick }: { panel: Panel; active: boolean; o
   )
 }
 
-function HeaderButton({
-  active,
-  onClick,
-  children,
-  label,
+function PanelSwitch({
+  panels,
+  panel,
+  onPanel,
+  className = '',
 }: {
-  active?: boolean
-  onClick?: () => void
-  children: ReactNode
-  label: string
+  panels: Panel[]
+  panel?: Panel
+  onPanel: (panel: Panel) => void
+  className?: string
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      title={label}
-      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
-        active
-          ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
-          : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
-      }`}
-    >
-      {children}
-      <span className="hidden xl:inline">{label}</span>
-    </button>
+    <div role="group" aria-label="详情面板" className={`flex gap-0.5 rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 ${className}`}>
+      {panels.map((p) => (
+        <PanelTab key={p} panel={p} active={panel === p} onClick={() => onPanel(p)} />
+      ))}
+    </div>
   )
 }
 
@@ -270,11 +285,16 @@ const EXPORTS = [
   ['JSON', 'json', 'detailed'],
 ] as const
 
-function ExportMenu({ scope, turnNumber }: { scope: Scope; turnNumber: number }) {
+const MENU_ITEM =
+  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-zinc-700 outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800'
+
+/** 导出与低频跳转收进一个菜单，标题栏只留高频的面板切换和分享 */
+function MoreMenu({ scope, turnNumber, canChat }: { scope: Scope; turnNumber?: number; canChat: boolean }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const items = useRef<(HTMLAnchorElement | null)[]>([])
+  const owner = scope.kind === 'owner'
   const close = useCallback((refocus: boolean) => {
     setOpen(false)
     if (refocus) trigger.current?.focus()
@@ -304,6 +324,12 @@ function ExportMenu({ scope, turnNumber }: { scope: Scope; turnNumber: number })
     }
   }
 
+  if (turnNumber === undefined && !owner) return null
+  const exportCount = turnNumber !== undefined ? EXPORTS.length : 0
+  const register = (i: number) => (node: HTMLAnchorElement | null) => {
+    items.current[i] = node
+  }
+
   return (
     <div ref={root} className="relative">
       <button
@@ -311,8 +337,9 @@ function ExportMenu({ scope, turnNumber }: { scope: Scope; turnNumber: number })
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls="export-menu"
-        title="导出"
+        aria-controls="more-menu"
+        aria-label="更多操作"
+        title="导出、Trace 与复用来源"
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown' && !open) {
@@ -320,44 +347,116 @@ function ExportMenu({ scope, turnNumber }: { scope: Scope; turnNumber: number })
             setOpen(true)
           }
         }}
-        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+        className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
           open
-            ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
+            ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50'
             : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
         }`}
       >
-        <Download className="h-4 w-4" aria-hidden />
-        <span className="hidden xl:inline">导出</span>
+        <MoreHorizontal className="h-4 w-4" aria-hidden />
       </button>
       {open && (
         <div
-          id="export-menu"
+          id="more-menu"
           role="menu"
-          aria-label={`导出第 ${turnNumber} 轮`}
+          aria-label="更多操作"
           onKeyDown={onMenuKey}
-          className="absolute right-0 top-full z-20 mt-1.5 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+          className="absolute right-0 top-full z-20 mt-1.5 w-56 origin-top-right animate-menu-in overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
         >
-          <p className="px-2.5 py-1.5 text-xs text-zinc-400" aria-hidden>
-            第 {turnNumber} 轮
-          </p>
-          {EXPORTS.map(([label, format, view], i) => (
-            <a
-              key={label}
-              ref={(node) => {
-                items.current[i] = node
-              }}
-              role="menuitem"
-              tabIndex={-1}
-              href={api.exportUrl(scope, turnNumber, format, view)}
-              onClick={() => close(false)}
-              className="block rounded-lg px-2.5 py-1.5 text-zinc-700 outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
-            >
-              {label}
-            </a>
-          ))}
+          {turnNumber !== undefined && (
+            <div role="group" aria-labelledby="more-export-label">
+              <p id="more-export-label" className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                导出第 {turnNumber} 轮
+              </p>
+              {EXPORTS.map(([label, format, view], i) => (
+                <a
+                  key={label}
+                  ref={register(i)}
+                  role="menuitem"
+                  tabIndex={-1}
+                  href={api.exportUrl(scope, turnNumber, format, view)}
+                  onClick={() => close(false)}
+                  className={MENU_ITEM}
+                >
+                  <Download className="h-4 w-4 text-zinc-400" aria-hidden />
+                  {label}
+                </a>
+              ))}
+            </div>
+          )}
+          {owner && (
+            <div role="group" aria-label="跳转" className={turnNumber !== undefined ? 'mt-1 border-t border-zinc-200/80 pt-1 dark:border-zinc-800' : ''}>
+              <Link
+                ref={register(exportCount)}
+                role="menuitem"
+                tabIndex={-1}
+                to="/trace"
+                search={{ session: scope.name }}
+                onClick={() => close(false)}
+                className={MENU_ITEM}
+              >
+                <GanttChart className="h-4 w-4 text-zinc-400" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  Trace
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400">每轮的模型、耗时与工具调用</span>
+                </span>
+              </Link>
+              {canChat && (
+                <Link
+                  ref={register(exportCount + 1)}
+                  role="menuitem"
+                  tabIndex={-1}
+                  to="/"
+                  search={{ from: scope.name }}
+                  onClick={() => close(false)}
+                  className={MENU_ITEM}
+                >
+                  <Copy className="h-4 w-4 text-zinc-400" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    复用来源
+                    <span className="block text-xs text-zinc-500 dark:text-zinc-400">用同样的日志与源码新建分析</span>
+                  </span>
+                </Link>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function SourceChips({ info }: { info: SessionDetail }) {
+  return (
+    <>
+      {info.logs.map((log) => (
+        <span
+          key={log.path}
+          title={log.path}
+          className={`flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 ring-1 ring-inset ${
+            log.exists === false
+              ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900'
+              : 'bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800'
+          }`}
+        >
+          <FileText className="h-3 w-3 shrink-0" aria-hidden />
+          <span className="truncate">
+            {log.exists === false ? '缺失 · ' : ''}
+            {log.name}
+          </span>
+        </span>
+      ))}
+      {info.code.map((code) => (
+        <span
+          key={code.path}
+          title={code.path}
+          className="flex max-w-full items-center gap-1 rounded-full bg-white px-2 py-0.5 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
+        >
+          <FolderCode className="h-3 w-3 shrink-0" aria-hidden />
+          <span className="truncate">{code.name}</span>
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -380,85 +479,63 @@ function SessionHeader({
   onPanel: (panel: Panel) => void
   onShare?: () => void
 }) {
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const settings = info.settings as Record<string, string | number | null>
   const range = settings.since || settings.until ? `${settings.since || '开头'} → ${settings.until || '结尾'}` : null
+  const metaText = [info.model, range, settings.timezone ? String(settings.timezone) : null].filter(Boolean).join(' · ')
+  const sourceCount = info.logs.length + info.code.length
+  const missing = info.logs.some((log) => log.exists === false)
+
   return (
-    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200/70 px-4 py-3 sm:px-5 dark:border-zinc-800">
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <h1 className="truncate text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{info.title || '新的分析'}</h1>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
-          {info.logs.map((log) => (
-            <span
-              key={log.path}
-              title={log.path}
-              className={`flex items-center gap-1 rounded-full px-2 py-0.5 ring-1 ring-inset ${
-                log.exists === false
-                  ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900'
-                  : 'bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800'
-              }`}
+    <header className="space-y-2.5 border-b border-zinc-200/70 px-4 py-3 sm:px-5 dark:border-zinc-800">
+      <div className="flex items-center gap-3">
+        <h1 className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-snug tracking-tight text-zinc-900 sm:truncate dark:text-zinc-50">
+          {info.title || '新的分析'}
+        </h1>
+        <PanelSwitch panels={panels} panel={panel} onPanel={onPanel} className="hidden shrink-0 md:flex" />
+        <div className="flex shrink-0 items-center gap-1">
+          <MoreMenu scope={scope} turnNumber={turnNumber} canChat={!!meta?.can_chat} />
+          {onShare && (
+            <button
+              type="button"
+              onClick={onShare}
+              aria-label="分享"
+              className="flex h-8 items-center gap-1.5 rounded-full bg-brand-600 px-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-brand-700 sm:px-3.5"
             >
-              <FileText className="h-3 w-3" aria-hidden />
-              {log.exists === false ? '缺失 · ' : ''}
-              {log.name}
-            </span>
-          ))}
-          {info.code.map((code) => (
-            <span
-              key={code.path}
-              title={code.path}
-              className="flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
-            >
-              <FolderCode className="h-3 w-3" aria-hidden />
-              {code.name}
-            </span>
-          ))}
-          <span className="hidden font-mono sm:inline">{info.model}</span>
-          {range && <span className="hidden md:inline">· {range}</span>}
-          {settings.timezone && <span className="hidden md:inline">· {String(settings.timezone)}</span>}
+              <Share2 className="h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">分享</span>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
-        {panels.map((p) => {
-          const { label, icon: Icon } = PANEL_META[p]
-          return (
-            <HeaderButton key={p} label={label} active={panel === p} onClick={() => onPanel(p)}>
-              <Icon className="h-4 w-4" aria-hidden />
-            </HeaderButton>
-          )
-        })}
-        {turnNumber !== undefined && <ExportMenu scope={scope} turnNumber={turnNumber} />}
-        {scope.kind === 'owner' && (
-          <Link
-            to="/trace"
-            search={{ session: scope.name }}
-            title="查看这个会话每轮的模型、耗时与工具调用"
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-          >
-            <GanttChart className="h-4 w-4" aria-hidden />
-            <span className="hidden xl:inline">Trace</span>
-          </Link>
-        )}
-        {scope.kind === 'owner' && meta?.can_chat && (
-          <Link
-            to="/"
-            search={{ from: scope.name }}
-            title="用同样的日志与源码新建分析"
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-          >
-            <Copy className="h-4 w-4" aria-hidden />
-            <span className="hidden xl:inline">复用来源</span>
-          </Link>
-        )}
-        {onShare && (
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <PanelSwitch panels={panels} panel={panel} onPanel={onPanel} className="md:hidden" />
+        {/* 小屏把来源收成一个开关，避免标签挤成两三行 */}
+        {sourceCount > 0 && (
           <button
             type="button"
-            onClick={onShare}
-            className="ml-1.5 flex items-center gap-1.5 rounded-full bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-brand-700"
+            onClick={() => setSourcesOpen((v) => !v)}
+            aria-expanded={sourcesOpen}
+            aria-controls="session-sources"
+            className={`flex items-center gap-1 rounded-full px-2 py-1 ring-1 ring-inset sm:hidden ${
+              missing
+                ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900'
+                : 'bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800'
+            }`}
           >
-            <Share2 className="h-4 w-4" aria-hidden />
-            <span className="hidden sm:inline">分享</span>
+            <FileText className="h-3 w-3" aria-hidden />
+            {sourceCount} 个来源{missing ? ' · 有缺失' : ''}
+            <ChevronDown className={`h-3 w-3 transition-transform ${sourcesOpen ? 'rotate-180' : ''}`} aria-hidden />
           </button>
+        )}
+        <div id="session-sources" className={`${sourcesOpen ? 'flex' : 'hidden'} w-full flex-wrap gap-1.5 sm:flex sm:w-auto`}>
+          <SourceChips info={info} />
+        </div>
+        {metaText && (
+          <span title={metaText} className="hidden min-w-0 max-w-full truncate font-mono text-zinc-500 sm:inline dark:text-zinc-400">
+            {metaText}
+          </span>
         )}
       </div>
     </header>

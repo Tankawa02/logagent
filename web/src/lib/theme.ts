@@ -16,6 +16,7 @@ function readPreference(): ThemePreference {
 }
 
 let preference = readPreference()
+let transitionTimer = 0
 
 function apply() {
   const dark = preference === 'dark' || (preference === 'system' && media.matches)
@@ -46,6 +47,10 @@ export function setThemePreference(next: ThemePreference) {
   } catch {
     // 隐私模式下写不进去也不影响本次切换
   }
+  const root = document.documentElement
+  root.classList.add('theme-transition')
+  window.clearTimeout(transitionTimer)
+  transitionTimer = window.setTimeout(() => root.classList.remove('theme-transition'), 200)
   apply()
   listeners.forEach((listener) => listener())
 }

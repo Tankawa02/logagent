@@ -134,7 +134,7 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
           {data.has_more && after < MAX_CONTEXT && (
             <LoadMore onClick={() => setAfter((v) => Math.min(v + STEP, MAX_CONTEXT))} label={`向下加载 ${STEP} 行`} />
           )}
-          <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400 dark:border-zinc-800">
+          <p className="border-t border-zinc-100 px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-400 dark:border-zinc-800">
             {data.path}
             {data.total_lines ? ` · 共 ${data.total_lines.toLocaleString()} 行` : ''}
           </p>
@@ -149,7 +149,7 @@ function LoadMore({ onClick, label }: { onClick: () => void; label: string }) {
     <button
       type="button"
       onClick={onClick}
-      className="block w-full border-y border-dashed border-zinc-200 py-1 text-center text-[11px] text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
+      className="block w-full border-y border-dashed border-zinc-200 py-1 text-center text-xs text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
     >
       {label}
     </button>

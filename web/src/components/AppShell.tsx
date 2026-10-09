@@ -1,23 +1,30 @@
 import { Menu, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { useMediaQuery } from '../lib/hooks'
+import { ConnectionBanner } from './ConnectionBanner'
 import { Brand, Sidebar, SidebarRail } from './Sidebar'
 
 const COLLAPSE_KEY = 'log-agent:sidebar-collapsed'
 
-function readCollapsed(): boolean {
+/** 只有用户手动折叠/展开过才有值；没设置过时按屏宽决定 */
+function readCollapsed(): boolean | null {
   try {
-    return localStorage.getItem(COLLAPSE_KEY) === '1'
+    const value = localStorage.getItem(COLLAPSE_KEY)
+    return value === '1' ? true : value === '0' ? false : null
   } catch {
-    return false
+    return null
   }
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(readCollapsed)
+  const [stored, setStored] = useState(readCollapsed)
+  // 768–1023px 时 256px 的侧边栏会把主区挤得很窄，默认收成图标栏
+  const narrow = !useMediaQuery('(min-width: 1024px)')
+  const collapsed = stored ?? narrow
 
   function toggleCollapsed(next: boolean) {
-    setCollapsed(next)
+    setStored(next)
     try {
       localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0')
     } catch {
@@ -67,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <Brand />
           </div>
+          <ConnectionBanner />
           <main className="min-h-0 flex-1">{children}</main>
         </div>
       </div>

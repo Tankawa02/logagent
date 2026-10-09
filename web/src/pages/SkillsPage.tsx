@@ -105,7 +105,7 @@ function SourceList({
             </h3>
             <span className="text-xs text-zinc-400">{source.skills.length}</span>
           </div>
-          <p className="truncate px-2 font-mono text-[11px] text-zinc-400" title={source.directory}>
+          <p className="truncate px-2 font-mono text-xs text-zinc-500 dark:text-zinc-400" title={source.directory}>
             {source.directory}
           </p>
           {source.skills.length === 0 ? (
@@ -171,7 +171,7 @@ function NewSkillForm({
               </option>
             ))}
           </select>
-          {target && <p className="truncate font-mono text-[11px] text-zinc-400">{target.directory}</p>}
+          {target && <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{target.directory}</p>}
         </div>
         <div className="space-y-1.5">
           <label htmlFor="skill-name" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">

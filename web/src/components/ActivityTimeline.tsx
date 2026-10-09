@@ -164,7 +164,7 @@ function Step({ tool, last }: { tool: ToolActivity; last: boolean }) {
           <span className={`shrink-0 ${tool.note ? '' : 'font-medium text-zinc-700 dark:text-zinc-200'}`}>{tool.label || tool.name}</span>
           {tool.detail && (
             <code
-              className="min-w-0 truncate rounded bg-zinc-100 px-1.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              className="min-w-0 truncate rounded bg-zinc-100 px-1.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
               title={tool.detail}
             >
               {shortTarget(tool.detail)}
