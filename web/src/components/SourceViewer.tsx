@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, scopeKey, type Scope } from '../lib/api'
+import { splitPath } from '../lib/format'
 import type { SourceTarget } from '../lib/types'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, Spinner } from './ui'
 
@@ -59,16 +60,27 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
   }
 
   const data = query.data
-  const ref = `${target.source}:${target.start}${target.end !== target.start ? `-${target.end}` : ''}`
+  const range = `${target.start}${target.end !== target.start ? `-${target.end}` : ''}`
+  const ref = `${target.source}:${range}`
+  const { dir, name } = splitPath(target.source)
 
   return (
     <Card className="flex h-full min-h-0 flex-col">
       <CardHeader
+        fill
         title={
-          <span className="flex min-w-0 items-center gap-2">
-            {data && <Badge tone={data.kind === 'log' ? 'blue' : 'gray'}>{data.kind === 'log' ? '日志' : '源码'}</Badge>}
-            <span className="truncate font-mono text-xs" title={data?.path}>
-              {ref}
+          <span className="flex min-w-0 items-center gap-2" title={data?.path ?? ref}>
+            {data && (
+              <span className="shrink-0">
+                <Badge tone={data.kind === 'log' ? 'blue' : 'gray'}>{data.kind === 'log' ? '日志' : '源码'}</Badge>
+              </span>
+            )}
+            {/* 目录过长时截断，文件名和行号始终完整显示 */}
+            <span className="flex min-w-0 font-mono text-xs font-normal">
+              {dir && <span className="truncate text-zinc-400">{dir}</span>}
+              <span className="shrink-0 font-semibold">
+                {name}:{range}
+              </span>
             </span>
             {query.isFetching && <Spinner />}
           </span>
