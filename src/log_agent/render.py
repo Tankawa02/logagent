@@ -415,6 +415,9 @@ class StreamRenderer:
             merged["callbacks"] = callbacks
         return merged
 
+    def _on_phase(self, name: str) -> None:
+        """收尾阶段钩子：终端有自己的输出，Web 渲染器覆盖它把阶段推给浏览器。"""
+
     def run(self, agent: Any, payload: dict[str, Any], config: dict[str, Any] | None = None) -> TurnResult:
         """执行一轮并渲染，返回本轮结果（报告正文、耗时、用量、工具记录、是否中断）。"""
         from langgraph.errors import GraphRecursionError
@@ -523,6 +526,7 @@ class StreamRenderer:
         elif self.linker is not None:
             from .evidence import check_analysis
 
+            self._on_phase("verifying")
             try:
                 result.evidence_check = check_analysis(result.analysis, self.linker.log_paths, self.linker.code_dirs)
             except Exception as exc:

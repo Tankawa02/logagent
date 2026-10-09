@@ -1149,3 +1149,24 @@ def test_report_text_streams_to_browser_piece_by_piece() -> None:
     assert not any("先看" in d for d in deltas)
     assert renderer.answer_parts  # 存档用的分块记账照常进行
     assert [e["type"] for e in events if e["type"].startswith("TEXT_MESSAGE")][-1] == "TEXT_MESSAGE_END"
+
+
+def test_finishing_phases_are_announced_after_report_text() -> None:
+    import threading
+
+    from log_agent.web.runner import WebStreamRenderer
+
+    events: list[dict] = []
+    renderer = WebStreamRenderer(events.append, threading.Event(), redact_owner=False)
+    pieces = ["## 一句话", "结论\n\n", "连接池耗尽。\n\n", "```log-agent", "-report\n", '{"a": 1}\n', "```\n"]
+    renderer._on_message(_PiecewiseStream(pieces))
+    renderer._on_phase("verifying")
+    renderer.phase("saving")
+    renderer.phase("saving")
+
+    phases = [e["value"]["phase"] for e in events if e.get("type") == "CUSTOM" and e.get("name") == "log_agent.phase"]
+    # 机器附录一开始写就提示「整理结构化报告」，之后依次核对、保存，同一阶段不重复推送
+    assert phases == ["structuring", "verifying", "saving"]
+    first_phase = next(i for i, e in enumerate(events) if e.get("name") == "log_agent.phase")
+    text_before = "".join(e["delta"] for e in events[:first_phase] if e["type"] == "TEXT_MESSAGE_CONTENT")
+    assert "```log-agent" in text_before
