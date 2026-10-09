@@ -1,33 +1,91 @@
-import { FileText, FolderCode, Plus, X } from 'lucide-react'
-import { useState, type KeyboardEvent } from 'react'
+import { useQueries } from '@tanstack/react-query'
+import { AlertCircle, FileText, FolderCode, Plus, X } from 'lucide-react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
+import { api } from '../lib/api'
 import { baseName } from '../lib/format'
+import type { FsGlob } from '../lib/types'
 import { FileBrowser } from './FileBrowser'
+import { Spinner } from './ui'
 
 function parentOf(path: string): string {
   const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return index > 0 ? path.slice(0, index) : path
 }
 
-export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code'; values: string[]; onChange: (next: string[]) => void }) {
+export interface SourceValidity {
+  invalid: number
+  checking: number
+}
+
+type PathStatus = { state: 'checking' } | { state: 'ok'; matched: number } | { state: 'error'; message: string }
+
+function statusOf(isLog: boolean, data: FsGlob | undefined, error: unknown, pending: boolean): PathStatus {
+  if (pending) return { state: 'checking' }
+  if (error) return { state: 'error', message: error instanceof Error ? error.message : String(error) }
+  if (!data) return { state: 'checking' }
+  if (isLog && data.files.length === 0) {
+    return { state: 'error', message: '这是一个目录：请选择其中的日志文件，或写成 目录/*.log' }
+  }
+  if (!isLog && data.files.length > 0) return { state: 'error', message: '这是一个文件：请填写源码所在的目录' }
+  return { state: 'ok', matched: data.files.length }
+}
+
+export function SourcePicker({
+  kind,
+  values,
+  onChange,
+  onValidity,
+}: {
+  kind: 'log' | 'code'
+  values: string[]
+  onChange: (next: string[]) => void
+  onValidity?: (validity: SourceValidity) => void
+}) {
   const [browsing, setBrowsing] = useState(false)
   const [typed, setTyped] = useState('')
   const isLog = kind === 'log'
   const Icon = isLog ? FileText : FolderCode
 
+  // 添加时就去服务端确认路径存在，而不是等点「开始分析」才报错
+  const checks = useQueries({
+    queries: values.map((path) => ({
+      queryKey: ['fs-glob', path],
+      queryFn: () => api.fsGlob(path),
+      retry: false,
+      staleTime: 30_000,
+    })),
+  })
+  const statuses = values.map((_, i) => statusOf(isLog, checks[i]?.data, checks[i]?.error, !!checks[i]?.isPending))
+  const invalid = statuses.filter((s) => s.state === 'error').length
+  const checking = statuses.filter((s) => s.state === 'checking').length
+
+  useEffect(() => {
+    onValidity?.({ invalid, checking })
+  }, [invalid, checking]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function add(paths: string[]) {
     onChange([...new Set([...values, ...paths.map((p) => p.trim()).filter(Boolean)])])
   }
 
-  function onKey(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
-    event.preventDefault()
+  function commitTyped() {
     if (typed.trim()) {
       add([typed])
       setTyped('')
     }
   }
 
+  function onKey(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
+    event.preventDefault()
+    commitTyped()
+  }
+
   const last = values.at(-1)
+  const errors = values.flatMap((value, i) => {
+    const status = statuses[i]
+    return status.state === 'error' ? [{ value, message: status.message }] : []
+  })
+
   return (
     <div className="space-y-2">
       <div className="space-y-0.5">
@@ -49,23 +107,59 @@ export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code';
 
       {values.length > 0 && (
         <ul className="flex flex-wrap gap-1.5">
-          {values.map((value) => (
-            <li
-              key={value}
-              title={value}
-              className="flex max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-white py-1 pl-2.5 pr-1 text-xs shadow-xs dark:border-zinc-700 dark:bg-zinc-900"
-            >
-              <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
-              <span className="font-medium">{baseName(value) || value}</span>
-              <span className="hidden min-w-0 truncate font-mono text-zinc-400 sm:inline">{parentOf(value)}</span>
-              <button
-                type="button"
-                onClick={() => onChange(values.filter((v) => v !== value))}
-                aria-label={`移除 ${value}`}
-                className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+          {values.map((value, i) => {
+            const status = statuses[i]
+            const bad = status.state === 'error'
+            return (
+              <li
+                key={value}
+                title={bad ? `${value}\n${status.message}` : value}
+                className={`flex max-w-full items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-xs shadow-xs ${
+                  bad
+                    ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200'
+                    : 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900'
+                }`}
               >
-                <X className="h-3 w-3" />
-              </button>
+                {status.state === 'checking' ? (
+                  <Spinner className="shrink-0" />
+                ) : bad ? (
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+                ) : (
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+                )}
+                <span className="font-medium">{baseName(value) || value}</span>
+                <span className={`hidden min-w-0 truncate font-mono sm:inline ${bad ? 'text-red-500/80' : 'text-zinc-400'}`}>
+                  {parentOf(value)}
+                </span>
+                {status.state === 'ok' && status.matched > 1 && (
+                  <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {status.matched} 个文件
+                  </span>
+                )}
+                <span className="sr-only">{bad ? `，有问题：${status.message}` : status.state === 'checking' ? '，正在检查' : ''}</span>
+                <button
+                  type="button"
+                  onClick={() => onChange(values.filter((v) => v !== value))}
+                  aria-label={`移除 ${value}`}
+                  className={`rounded-full p-0.5 ${
+                    bad
+                      ? 'text-red-500 hover:bg-red-100 hover:text-red-800 dark:hover:bg-red-900/60 dark:hover:text-red-100'
+                      : 'text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {errors.length > 0 && (
+        <ul role="alert" className="space-y-0.5 px-0.5 text-xs text-red-700 dark:text-red-300">
+          {errors.map(({ value, message }) => (
+            <li key={value} className="break-all">
+              <span className="font-medium">{baseName(value) || value}</span>：{message}
             </li>
           ))}
         </ul>
@@ -84,12 +178,7 @@ export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code';
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={onKey}
-          onBlur={() => {
-            if (typed.trim()) {
-              add([typed])
-              setTyped('')
-            }
-          }}
+          onBlur={commitTyped}
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
           placeholder={isLog ? '或粘贴路径，回车添加' : '或粘贴目录路径，回车添加'}

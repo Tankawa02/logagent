@@ -118,6 +118,12 @@ export const api = {
   trace: (session?: string, limit = 300) => request<TraceItem[]>(`/api/trace?${query({ session, limit })}`),
   createSession: (body: CreateSessionBody) =>
     request<SessionSummary>('/api/sessions', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
+  patchSession: (name: string, body: { title?: string; pinned?: boolean }) =>
+    request<SessionSummary>(`/api/sessions/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify(body),
+    }),
   deleteSession: (name: string) =>
     request<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, {
       method: 'DELETE',

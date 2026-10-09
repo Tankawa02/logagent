@@ -1,6 +1,8 @@
+import { useNavigate } from '@tanstack/react-router'
 import { Menu, X } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMediaQuery } from '../lib/hooks'
+import { hasMod, isEditable, PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
 import { ConnectionBanner } from './ConnectionBanner'
 import { Brand, Sidebar, SidebarRail } from './Sidebar'
 
@@ -22,6 +24,38 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 768–1023px 时 256px 的侧边栏会把主区挤得很窄，默认收成图标栏
   const narrow = !useMediaQuery('(min-width: 1024px)')
   const collapsed = stored ?? narrow
+  const [searchNonce, setSearchNonce] = useState(0)
+  const navigate = useNavigate()
+  const desktop = useMediaQuery('(min-width: 768px)')
+  const latest = useRef({ collapsed, desktop })
+  latest.current = { collapsed, desktop }
+
+  // 全局快捷键：⌘K 搜索会话、⌘⇧O 新建分析、/ 聚焦主输入框
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing) return
+      const key = event.key.toLowerCase()
+      if (hasMod(event) && !event.shiftKey && !event.altKey && key === 'k') {
+        event.preventDefault()
+        const { collapsed: isCollapsed, desktop: isDesktop } = latest.current
+        if (isDesktop && isCollapsed) toggleCollapsed(false)
+        if (!isDesktop) setOpen(true)
+        setSearchNonce((n) => n + 1)
+      } else if (hasMod(event) && event.shiftKey && !event.altKey && key === 'o') {
+        event.preventDefault()
+        setOpen(false)
+        void navigate({ to: '/' })
+      } else if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditable(event.target)) {
+        if (document.querySelector('[aria-modal="true"]')) return
+        const input = document.querySelector<HTMLElement>(`[${PRIMARY_INPUT_ATTR}]`)
+        if (!input) return
+        event.preventDefault()
+        input.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [navigate])
 
   function toggleCollapsed(next: boolean) {
     setStored(next)
@@ -35,7 +69,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-dvh overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       <aside className={`hidden shrink-0 transition-[width] duration-200 md:block ${collapsed ? 'w-16' : 'w-64'}`} aria-label="侧边栏">
-        {collapsed ? <SidebarRail onExpand={() => toggleCollapsed(false)} /> : <Sidebar onCollapse={() => toggleCollapsed(true)} />}
+        {collapsed ? (
+          <SidebarRail onExpand={() => toggleCollapsed(false)} />
+        ) : (
+          <Sidebar onCollapse={() => toggleCollapsed(true)} focusSearch={searchNonce} />
+        )}
       </aside>
 
       {open && (
@@ -55,7 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <X className="h-4 w-4" />
             </button>
-            <Sidebar onNavigate={() => setOpen(false)} />
+            <Sidebar onNavigate={() => setOpen(false)} focusSearch={searchNonce} />
           </aside>
         </div>
       )}

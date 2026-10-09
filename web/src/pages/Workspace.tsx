@@ -14,7 +14,16 @@ import {
   Share2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView } from '../components/ReportView'
 import { SharePanel } from '../components/SharePanel'
@@ -90,6 +99,20 @@ export function Workspace({
   const overlayPanel = !useMediaQuery('(min-width: 1024px)')
   const closePanel = useCallback(() => setSearch({ ...search, panel: undefined }), [search, setSearch])
   const onAsideKey = useModal(aside, closePanel, { trap: overlayPanel, enabled: !!panel && overlayPanel })
+  const row = useRef<HTMLDivElement>(null)
+  const [panelWidth, startResize, onResizeKey, resetWidth] = usePanelWidth(row)
+
+  // 大屏上焦点不在面板里时 Esc 也能关掉侧栏；有菜单 / 弹窗 / 下拉打开时交给它们自己处理
+  useEffect(() => {
+    if (!panel || overlayPanel) return
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
+      if (document.querySelector('[aria-modal="true"], [role="menu"], [role="listbox"]')) return
+      closePanel()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [panel, overlayPanel, closePanel])
 
   function openSource(next: SourceTarget) {
     setSearch({ ...search, src: next.source, start: next.start, end: next.end, ev: next.evidenceKey, panel: 'source' })
@@ -134,7 +157,7 @@ export function Workspace({
         onShare={owner ? () => setSharing(true) : undefined}
       />
 
-      <div className="flex min-h-0 flex-1">
+      <div ref={row} className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">
           {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
               否则离开期间刚跑完的一轮会缺失 */}
@@ -179,8 +202,28 @@ export function Workspace({
             tabIndex={-1}
             onKeyDown={onAsideKey}
             {...(overlayPanel ? { role: 'dialog', 'aria-modal': true } : {})}
-            className="fixed inset-0 z-30 flex animate-panel-in flex-col bg-paper lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
+            style={
+              !overlayPanel && panelWidth ? { width: `clamp(${PANEL_MIN}px, ${panelWidth}px, calc(100% - ${CHAT_MIN}px))` } : undefined
+            }
+            className="fixed inset-0 z-30 flex animate-panel-in flex-col bg-paper lg:relative lg:inset-auto lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
           >
+            {!overlayPanel && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="拖动调整面板宽度"
+                aria-valuemin={PANEL_MIN}
+                aria-valuenow={panelWidth ? Math.round(panelWidth) : undefined}
+                tabIndex={0}
+                title="拖动调整宽度，双击恢复默认"
+                onPointerDown={startResize}
+                onKeyDown={onResizeKey}
+                onDoubleClick={resetWidth}
+                className="group absolute inset-y-0 -left-1.5 z-10 flex w-3 cursor-col-resize justify-center outline-none"
+              >
+                <span className="h-full w-0.5 rounded-full bg-transparent transition-colors group-hover:bg-brand-400 group-focus-visible:bg-brand-500 group-active:bg-brand-500" />
+              </div>
+            )}
             <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
               {/* 大屏上标题栏的分段按钮一直可见，这里只放面板名；小屏覆盖层盖住了标题栏，才需要自己的切换 */}
               {overlayPanel ? (
@@ -233,6 +276,86 @@ export function Workspace({
       {sharing && owner && meta.data && <SharePanel session={scope.name} meta={meta.data} onClose={() => setSharing(false)} />}
     </div>
   )
+}
+
+const PANEL_MIN = 320
+const CHAT_MIN = 360
+const PANEL_WIDTH_KEY = 'log-agent:panel-width'
+
+function readPanelWidth(): number | null {
+  try {
+    const value = Number(localStorage.getItem(PANEL_WIDTH_KEY))
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function savePanelWidth(width: number | null) {
+  try {
+    if (width === null) localStorage.removeItem(PANEL_WIDTH_KEY)
+    else localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(width)))
+  } catch {
+    // 隐私模式下写不了本地存储，只是不记住宽度
+  }
+}
+
+/** 大屏右侧面板的宽度：拖分隔条或用方向键调整，记在本地；null 表示用默认宽度 */
+function usePanelWidth(row: RefObject<HTMLDivElement | null>) {
+  const [width, setWidth] = useState(readPanelWidth)
+
+  const clamp = useCallback(
+    (value: number) => {
+      const total = row.current?.getBoundingClientRect().width ?? Infinity
+      return Math.max(PANEL_MIN, Math.min(value, total - CHAT_MIN))
+    },
+    [row],
+  )
+
+  function start(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !row.current) return
+    event.preventDefault()
+    const right = row.current.getBoundingClientRect().right
+    let latest = width
+    const move = (e: PointerEvent) => {
+      latest = clamp(right - e.clientX)
+      setWidth(latest)
+    }
+    const end = () => {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', end)
+      document.removeEventListener('pointercancel', end)
+      document.body.style.removeProperty('cursor')
+      document.body.style.removeProperty('user-select')
+      savePanelWidth(latest)
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', end)
+    document.addEventListener('pointercancel', end)
+  }
+
+  function onKey(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 96 : 32
+    const current = (event.currentTarget.parentElement as HTMLElement | null)?.offsetWidth ?? width ?? PANEL_MIN
+    let next: number | null = null
+    if (event.key === 'ArrowLeft') next = clamp(current + step)
+    else if (event.key === 'ArrowRight') next = clamp(current - step)
+    else if (event.key === 'Home') next = PANEL_MIN
+    else if (event.key === 'End') next = clamp(Infinity)
+    if (next === null) return
+    event.preventDefault()
+    setWidth(next)
+    savePanelWidth(next)
+  }
+
+  function reset() {
+    setWidth(null)
+    savePanelWidth(null)
+  }
+
+  return [width, start, onKey, reset] as const
 }
 
 const PANEL_META: Record<Panel, { label: string; icon: typeof FileText }> = {

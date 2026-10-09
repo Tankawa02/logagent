@@ -1,11 +1,26 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { BookOpen, Brain, GanttChart, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Trash2 } from 'lucide-react'
+import {
+  BookOpen,
+  Brain,
+  GanttChart,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+} from 'lucide-react'
 import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { dismissDeleteError, scheduleDelete, undoDelete, useDeferredDelete } from '../lib/deferred-delete'
 import { ASSESSMENT } from '../lib/format'
+import { MOD } from '../lib/shortcuts'
+import { useToast } from './Feedback'
 import type { SessionSummary } from '../lib/types'
 import { ErrorBox, Skeleton } from './ui'
 
@@ -65,6 +80,10 @@ export function Brand() {
   )
 }
 
+const NEW_HINT = `新建分析（${MOD}+Shift+O）`
+
+let handledSearchFocus = 0
+
 function NewButton({ onNavigate, compact = false }: { onNavigate?: () => void; compact?: boolean }) {
   if (compact) {
     return (
@@ -72,7 +91,7 @@ function NewButton({ onNavigate, compact = false }: { onNavigate?: () => void; c
         to="/"
         onClick={onNavigate}
         aria-label="新建分析"
-        title="新建分析"
+        title={NEW_HINT}
         className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-700 shadow-xs hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
       >
         <Plus className="h-4 w-4" />
@@ -83,6 +102,7 @@ function NewButton({ onNavigate, compact = false }: { onNavigate?: () => void; c
     <Link
       to="/"
       onClick={onNavigate}
+      title={NEW_HINT}
       className="group flex w-full items-center gap-2 rounded-full border border-zinc-200 bg-white py-2 pl-3.5 pr-2 text-sm text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-brand-700"
     >
       <Plus className="h-4 w-4 text-zinc-400 group-hover:text-brand-600" aria-hidden />
@@ -121,9 +141,31 @@ export function SidebarRail({ onExpand }: { onExpand: () => void }) {
   )
 }
 
-export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; onCollapse?: () => void }) {
+export function Sidebar({
+  onNavigate,
+  onCollapse,
+  focusSearch = 0,
+}: {
+  onNavigate?: () => void
+  onCollapse?: () => void
+  /** 每次 +1 就把焦点放到搜索框（⌘K） */
+  focusSearch?: number
+}) {
   const [text, setText] = useState('')
   const [q, setQ] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
+  const toast = useToast()
+
+  useEffect(() => {
+    const input = searchInput.current
+    // 桌面侧栏在小屏上仍挂载但被隐藏；只由看得见的那一个处理，也不在之后重新挂载时重复抢焦点
+    if (!input || focusSearch <= handledSearchFocus || input.offsetParent === null) return
+    handledSearchFocus = focusSearch
+    input.focus()
+    input.select()
+  }, [focusSearch])
   const client = useQueryClient()
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -157,14 +199,42 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
     if (pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`) void navigate({ to: '/' })
   }
 
+  async function patch(s: SessionSummary, body: { title?: string; pinned?: boolean }) {
+    try {
+      await api.patchSession(s.name, body)
+      void client.invalidateQueries({ queryKey: ['sessions'] })
+      if (body.title !== undefined) void client.invalidateQueries({ queryKey: ['owner', s.name, 'session'] })
+    } catch (error) {
+      toast(`${body.title !== undefined ? '重命名' : body.pinned ? '置顶' : '取消置顶'}失败：${errorText(error)}`, 'error')
+    }
+  }
+
+  async function rename(s: SessionSummary, title: string) {
+    setEditing(null)
+    const next = title.trim()
+    if (!next || next === s.title) return
+    client.setQueriesData<SessionSummary[]>({ queryKey: ['sessions'] }, (old) =>
+      old?.map((x) => (x.name === s.name ? { ...x, title: next } : x)),
+    )
+    await patch(s, { title: next })
+  }
+
+  function onSearchKey(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    setText('')
+    event.currentTarget.blur()
+  }
+
   const groups = useMemo(() => {
     const map = new Map<string, SessionSummary[]>()
     for (const s of sessions.data ?? []) {
       if (s.name === deletion.pending?.name) continue
-      const label = groupLabel(s.updated_at)
+      const label = s.pinned ? '置顶' : groupLabel(s.updated_at)
       map.set(label, [...(map.get(label) ?? []), s])
     }
-    return [...map.entries()]
+    // 置顶组永远在最前；其他组按最近更新的先后自然排好
+    return [...map.entries()].sort(([a], [b]) => Number(b === '置顶') - Number(a === '置顶'))
   }, [sessions.data, deletion.pending?.name])
 
   return (
@@ -213,12 +283,25 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
           <input
+            ref={searchInput}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={onSearchKey}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
             placeholder="搜索历史会话"
             aria-label="搜索会话"
-            className="w-full rounded-lg bg-zinc-200/50 py-1.5 pl-8 pr-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-brand-500/25 dark:bg-zinc-900 dark:focus:bg-zinc-900"
+            aria-keyshortcuts={MOD === '⌘' ? 'Meta+K' : 'Control+K'}
+            className="w-full rounded-lg bg-zinc-200/50 py-1.5 pl-8 pr-12 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-brand-500/25 dark:bg-zinc-900 dark:focus:bg-zinc-900"
           />
+          {!searchFocused && !text && (
+            <kbd
+              aria-hidden
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-zinc-300/80 bg-white/70 px-1 font-sans text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+            >
+              {MOD} K
+            </kbd>
+          )}
         </div>
       </div>
 
@@ -268,22 +351,35 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
               {items.map((s) => {
                 const active = pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`
                 const tone = s.last?.assessment ? ASSESSMENT[s.last.assessment].tone : 'gray'
+                const label = s.title || '新的分析'
+                if (editing === s.name) {
+                  return (
+                    <li key={s.name}>
+                      <RenameInput initial={s.title} onSave={(title) => void rename(s, title)} onCancel={() => setEditing(null)} />
+                    </li>
+                  )
+                }
                 return (
                   <li key={s.name} className="group relative">
                     <Link
+                      onDoubleClick={(e) => {
+                        e.preventDefault()
+                        setEditing(s.name)
+                      }}
                       to="/sessions/$name"
                       params={{ name: s.name }}
                       onClick={onNavigate}
                       title={s.title || s.name}
                       aria-current={active ? 'page' : undefined}
-                      className={`block rounded-lg px-2.5 py-2 pr-8 transition-colors ${
+                      className={`block rounded-lg px-2.5 py-2 pr-8 transition-colors group-focus-within:pr-20 group-hover:pr-20 pointer-coarse:pr-20 ${
                         active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
                       }`}
                     >
                       <span
-                        className={`block truncate text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
+                        className={`flex items-center gap-1 text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
                       >
-                        {s.title || '新的分析'}
+                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="已置顶" />}
+                        <span className="truncate">{label}</span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
                         <span
@@ -298,15 +394,35 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
                         </span>
                       </span>
                     </Link>
-                    <button
-                      type="button"
-                      onClick={() => requestDelete(s)}
-                      aria-label={`删除会话 ${s.title || s.name}`}
-                      title="删除会话（几秒内可撤销）"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-zinc-400 opacity-0 hover:bg-zinc-300/60 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 dark:hover:bg-zinc-700"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => void patch(s, { pinned: !s.pinned })}
+                        aria-label={`${s.pinned ? '取消置顶' : '置顶'} ${label}`}
+                        title={s.pinned ? '取消置顶' : '置顶'}
+                        className={ROW_ACTION}
+                      >
+                        {s.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(s.name)}
+                        aria-label={`重命名 ${label}`}
+                        title="重命名（也可以双击标题）"
+                        className={ROW_ACTION}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => requestDelete(s)}
+                        aria-label={`删除会话 ${label}`}
+                        title="删除会话（几秒内可撤销）"
+                        className={`${ROW_ACTION} hover:text-red-600`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </li>
                 )
               })}
@@ -341,5 +457,48 @@ export function Sidebar({ onNavigate, onCollapse }: { onNavigate?: () => void; o
         )}
       </div>
     </div>
+  )
+}
+
+const ROW_ACTION = 'rounded-md p-1 text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-800 dark:hover:bg-zinc-700 dark:hover:text-zinc-100'
+
+function RenameInput({ initial, onSave, onCancel }: { initial: string; onSave: (title: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState(initial)
+  const done = useRef(false)
+  const input = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    input.current?.focus()
+    input.current?.select()
+  }, [])
+
+  function finish(save: boolean) {
+    if (done.current) return
+    done.current = true
+    if (save) onSave(value)
+    else onCancel()
+  }
+
+  return (
+    <input
+      ref={input}
+      value={value}
+      maxLength={80}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          finish(true)
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          finish(false)
+        }
+      }}
+      aria-label="会话标题"
+      placeholder="会话标题"
+      className="w-full rounded-lg border border-brand-300 bg-white px-2.5 py-2 text-sm outline-none ring-4 ring-brand-500/10 dark:border-brand-800 dark:bg-zinc-900"
+    />
   )
 }

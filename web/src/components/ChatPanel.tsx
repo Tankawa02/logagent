@@ -1,6 +1,20 @@
 import { useChat, type UIMessage } from '@tanstack/ai-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity as ActivityIcon, ArrowDown, ArrowRight, ArrowUp, Check, Copy, FileSearch, ListPlus, Square, X } from 'lucide-react'
+import {
+  Activity as ActivityIcon,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  Bell,
+  Check,
+  Clock,
+  Copy,
+  FileSearch,
+  ListPlus,
+  RotateCcw,
+  Square,
+  X,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { api, scopeKey } from '../lib/api'
 import { followUpsFor } from '../lib/follow-ups'
@@ -8,6 +22,7 @@ import { ASSESSMENT, CHECK_STATUS, visibleReport } from '../lib/format'
 import { useCopy, useStickToBottom } from '../lib/hooks'
 import { liveChatConnection } from '../lib/live-chat'
 import { takePendingQuestion } from '../lib/pending'
+import { PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
 import { FINISH_PHASES, FinishingStatus, type FinishPhase } from './FinishingStatus'
@@ -71,6 +86,15 @@ export function ChatPanel({
   const [savedTurn, setSavedTurn] = useState<number | null>(null)
   const [stopping, setStopping] = useState(false)
   const [phase, setPhase] = useState<FinishPhase | null>(null)
+  /** 分析进行中提的问题（输入框回车 / 时间线「问这一段」）先排队，本轮结束后自动发出 */
+  const [queued, setQueued] = useState<string | null>(null)
+  /** 在输入框里按 ↑ / ↓ 翻看之前问过的问题时，当前停在第几个 */
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null)
+  const [inputFocused, setInputFocused] = useState(false)
+  const [notifyPermission, setNotifyPermission] = useState(() =>
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
+  )
+  const root = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const client = useQueryClient()
@@ -133,9 +157,15 @@ export function ChatPanel({
     },
   })
 
-  function submit(text: string) {
+  /** 发出或排队；返回 false 表示没收下（空问题，或已经有一个在排队），调用方要保留输入 */
+  function submit(text: string): boolean {
     const question = text.trim()
-    if (!question || isLoading) return
+    if (!question) return false
+    if (isLoading) {
+      if (queued !== null) return false
+      setQueued(question)
+      return true
+    }
     setTools([])
     setDraft('')
     setPhase(null)
@@ -143,6 +173,7 @@ export function ChatPanel({
     setSavedTurn(null)
     scrollToBottom('auto')
     void sendMessage(question)
+    return true
   }
 
   // 接回切走前还没跑完的那一轮；延迟一拍，StrictMode 的二次挂载只会真正接一次
@@ -160,12 +191,48 @@ export function ChatPanel({
     return () => clearTimeout(timer)
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const wasLoading = useRef(false)
   useEffect(() => {
-    if (!isLoading) {
-      setStopping(false)
-      setPhase(null)
+    if (isLoading) {
+      wasLoading.current = true
+      return
     }
-  }, [isLoading])
+    setStopping(false)
+    setPhase(null)
+    if (!wasLoading.current) return
+    wasLoading.current = false
+    notifyFinished()
+    if (queued !== null) {
+      const next = queued
+      setQueued(null)
+      submit(next)
+      return
+    }
+    // 焦点还在对话区（或哪儿都不在）时放回输入框，方便直接追问；用户正在面板里看东西就不打扰
+    const active = document.activeElement
+    if (!active || active === document.body || root.current?.contains(active)) textarea.current?.focus({ preventScroll: true })
+  }, [isLoading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 切到别的标签页等结果时，靠标签页标题（以及已授权的桌面通知）提示跑完了
+  function notifyFinished() {
+    if (!document.hidden) return
+    const original = document.title
+    document.title = `✓ 分析完成 · ${original}`
+    const restore = () => {
+      if (document.hidden) return
+      document.title = original
+      document.removeEventListener('visibilitychange', restore)
+    }
+    document.addEventListener('visibilitychange', restore)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification('log-agent 分析完成', { body: lastQuestion || undefined, tag: `log-agent-${session}` })
+    }
+  }
+
+  function enableNotifications() {
+    if (typeof Notification === 'undefined') return
+    void Notification.requestPermission().then(setNotifyPermission)
+  }
 
   // 分析在服务端独立运行，断开连接不会中断它，所以不能靠断开来「停止」：
   // 带上 run_id 明确告诉服务端停哪一轮（请求还没到也会先记下），然后继续接收，直到它按中断收尾、存档
@@ -201,13 +268,49 @@ export function ChatPanel({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
-    submit(input)
-    setInput('')
+    if (submit(input)) {
+      setInput('')
+      setHistoryIndex(null)
+    }
   }
 
   function onKey(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      browseHistory(event)
+      return
+    }
+    if (event.key !== 'Enter' || event.shiftKey) return
     onSubmit(event)
+  }
+
+  // 输入框为空（或正停在某条历史上没改过）时，↑ / ↓ 翻看之前问过的问题，像终端一样
+  function browseHistory(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || questions.length === 0) return
+    const browsing = historyIndex !== null && input === questions[historyIndex]
+    if (input !== '' && !browsing) return
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      const next = browsing ? Math.max(0, historyIndex! - 1) : questions.length - 1
+      setHistoryIndex(next)
+      setInput(questions[next])
+    } else if (browsing) {
+      event.preventDefault()
+      const next = historyIndex! + 1
+      setHistoryIndex(next < questions.length ? next : null)
+      setInput(next < questions.length ? questions[next] : '')
+    }
+  }
+
+  function fillInput(text: string) {
+    setInput(text)
+    setHistoryIndex(null)
+    requestAnimationFrame(() => {
+      const el = textarea.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(text.length, text.length)
+    })
   }
 
   // 追问根据最近一轮的结构化报告生成；和报告面板共用同一份查询缓存
@@ -222,6 +325,16 @@ export function ChatPanel({
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
+  const questions = messages
+    .filter((m) => m.role === 'user')
+    .map((m) =>
+      m.parts
+        .map((p) => (p.type === 'text' ? p.content : ''))
+        .join('')
+        .trim(),
+    )
+    .filter(Boolean)
+  const lastQuestion = questions.at(-1) ?? ''
   const showActivity = isLoading || tools.length > 0
   const answering =
     isLoading &&
@@ -230,7 +343,7 @@ export function ChatPanel({
     lastAssistant.parts.some((p) => p.type === 'text' && p.content.trim() !== '')
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={root} className="flex h-full min-h-0 flex-col">
       <div className="relative min-h-0 flex-1">
         <div ref={scroller} className="h-full overflow-auto">
           <div className="mx-auto max-w-3xl px-4 pb-10 pt-8 sm:px-6">
@@ -283,8 +396,18 @@ export function ChatPanel({
               </div>
             )}
             {(serverError || error) && (
-              <div className="mt-6">
+              <div className="mt-6 space-y-2">
                 <ErrorBox error={serverError ?? error} />
+                {!isLoading && lastQuestion && (
+                  <button
+                    type="button"
+                    onClick={() => submit(lastQuestion)}
+                    className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:text-brand-300"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                    重新提问
+                  </button>
+                )}
               </div>
             )}
             {!isLoading && memory.data && (
@@ -297,21 +420,27 @@ export function ChatPanel({
                 <h3 id="related-heading" className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                   <ListPlus className="h-4 w-4 text-brand-600" aria-hidden />
                   相关追问
-                  <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">点击直接提问</span>
+                  <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">点问题填入输入框可再修改，点右侧箭头直接提问</span>
                 </h3>
                 <ul className="divide-y divide-zinc-200/80 border-y border-zinc-200/80 dark:divide-zinc-800 dark:border-zinc-800">
                   {followUps.map((s) => (
-                    <li key={s}>
+                    <li key={s} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fillInput(s)}
+                        title="填入输入框，改一改再发送"
+                        className="min-w-0 flex-1 py-3 text-left text-sm text-zinc-700 transition-colors hover:text-brand-700 dark:text-zinc-300 dark:hover:text-brand-300"
+                      >
+                        {s}
+                      </button>
                       <button
                         type="button"
                         onClick={() => submit(s)}
-                        className="group flex w-full items-center justify-between gap-3 py-3 text-left text-sm text-zinc-700 transition-colors hover:text-brand-700 dark:text-zinc-300 dark:hover:text-brand-300"
+                        aria-label={`直接提问：${s}`}
+                        title="直接提问"
+                        className="group shrink-0 rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-brand-50 hover:text-brand-600 dark:hover:bg-brand-950/40"
                       >
-                        {s}
-                        <ArrowRight
-                          className="h-4 w-4 shrink-0 text-zinc-400 transition-all group-hover:translate-x-0.5 group-hover:text-brand-600"
-                          aria-hidden
-                        />
+                        <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
                       </button>
                     </li>
                   ))}
@@ -334,6 +463,36 @@ export function ChatPanel({
 
       <div className="bg-gradient-to-t from-paper via-paper to-transparent px-4 pb-4 pt-2 dark:from-paper-dark dark:via-paper-dark">
         <div className="mx-auto max-w-3xl space-y-2 sm:px-2">
+          {queued !== null && (
+            <div
+              role="status"
+              className="flex items-center gap-2 rounded-2xl border border-brand-200 bg-brand-50 py-1.5 pl-3 pr-1.5 text-xs text-brand-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-200"
+            >
+              <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate" title={queued}>
+                本轮结束后自动提问：{queued}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = queued
+                  setQueued(null)
+                  fillInput(input.trim() ? `${text}\n${input}` : text)
+                }}
+                className="shrink-0 rounded-lg px-2 py-1 font-medium hover:bg-brand-100 dark:hover:bg-brand-900/50"
+              >
+                改一下
+              </button>
+              <button
+                type="button"
+                onClick={() => setQueued(null)}
+                aria-label="取消排队的问题"
+                className="shrink-0 rounded-lg p-1 hover:bg-brand-100 dark:hover:bg-brand-900/50"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+          )}
           <form
             onSubmit={onSubmit}
             className="rounded-3xl border border-zinc-200 bg-white p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.1)] transition-shadow focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/10 dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-brand-800"
@@ -345,16 +504,34 @@ export function ChatPanel({
               id="chat-input"
               ref={textarea}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                setHistoryIndex(null)
+              }}
               onKeyDown={onKey}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
               rows={1}
-              placeholder={isLoading ? (phase ? '正在收尾，完成后可继续追问…' : '分析进行中…') : '继续追问…'}
+              {...{ [PRIMARY_INPUT_ATTR]: '' }}
+              placeholder={
+                !isLoading
+                  ? '继续追问…'
+                  : queued !== null
+                    ? '已有一个问题在排队，本轮结束后发送'
+                    : phase
+                      ? '正在收尾…现在输入的问题会在完成后自动发送'
+                      : '分析进行中…现在输入的问题会在本轮结束后自动发送'
+              }
               className="block max-h-48 min-h-10 w-full resize-none bg-transparent px-3 py-2 text-[15px] leading-relaxed outline-none [field-sizing:content] placeholder:text-zinc-400"
             />
             <div className="flex items-center justify-between gap-2 pl-1">
               <div className="min-w-0">{memory.data && <MemoryStatus memory={memory.data} />}</div>
               <div className="flex items-center gap-3">
-                <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">Enter 发送 · Shift+Enter 换行</span>
+                {inputFocused && (
+                  <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">
+                    {isLoading ? 'Enter 排队' : 'Enter 发送'} · Shift+Enter 换行{!input && questions.length > 0 ? ' · ↑ 上一问' : ''}
+                  </span>
+                )}
                 {isLoading ? (
                   <button
                     type="button"
@@ -370,6 +547,7 @@ export function ChatPanel({
                   <button
                     type="submit"
                     disabled={!input.trim()}
+                    title={input.trim() ? '发送' : '先输入追问内容'}
                     aria-label="发送"
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm transition-colors hover:bg-brand-700 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
                   >
@@ -383,6 +561,16 @@ export function ChatPanel({
             {stopping
               ? '正在停止，当前步骤结束后会保存已输出的部分。'
               : '切到别的会话或关闭页面不会中断分析，回来可接着看；点停止才会中断本轮。'}
+            {isLoading && !stopping && notifyPermission === 'default' && (
+              <button
+                type="button"
+                onClick={enableNotifications}
+                className="ml-1.5 inline-flex items-center gap-1 font-medium text-brand-700 hover:underline dark:text-brand-300"
+              >
+                <Bell className="h-3 w-3" aria-hidden />
+                完成时通知我
+              </button>
+            )}
           </p>
         </div>
       </div>
@@ -441,11 +629,11 @@ function AssistantMessage({
             {historic ? `查看第 ${reportTurn} 轮报告与证据` : `已保存为第 ${reportTurn} 轮 · 查看结构化报告`}
           </button>
         )}
-        {!historic && text && (
+        {text && (!historic || !!brief?.summary) && (
           <button
             type="button"
-            onClick={() => void copy(visibleReport(text))}
-            aria-label={copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制回答'}
+            onClick={() => void copy(historic ? text : visibleReport(text))}
+            aria-label={copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : historic ? '复制结论' : '复制回答'}
             title={copyState === 'failed' ? '复制失败：浏览器拒绝了剪贴板访问' : undefined}
             className="flex items-center gap-1 rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
           >

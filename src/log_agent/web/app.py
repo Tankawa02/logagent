@@ -248,6 +248,14 @@ class ShareRequest(BaseModel):
     ttl_hours: int | None = Field(default=24 * 7)
 
 
+SESSION_TITLE_MAX = 80
+
+
+class SessionPatchRequest(BaseModel):
+    title: str | None = None
+    pinned: bool | None = None
+
+
 def create_app(config: WebConfig) -> FastAPI:
     app = FastAPI(title="log-agent", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -369,10 +377,37 @@ def create_app(config: WebConfig) -> FastAPI:
             store = SessionStore(conn)
             items = store.search(q) if q.strip() else store.list()
             briefs = store.last_turn_briefs()
+            pinned = store.pinned_names()
         return [
-            {**_session_dict(info), "last": {"turn": info.turns, **briefs[info.name]} if info.name in briefs else None}
+            {
+                **_session_dict(info),
+                "pinned": info.name in pinned,
+                "last": {"turn": info.turns, **briefs[info.name]} if info.name in briefs else None,
+            }
             for info in items
         ]
+
+    @app.patch("/api/sessions/{name}")
+    def patch_session(body: SessionPatchRequest, scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        """重命名 / 置顶；只改侧栏展示用的元数据，不影响对话内容。"""
+        title = None
+        if body.title is not None:
+            title = " ".join(body.title.split())
+            if not title:
+                raise HTTPException(400, "标题不能为空")
+            if len(title) > SESSION_TITLE_MAX:
+                raise HTTPException(400, f"标题最长 {SESSION_TITLE_MAX} 个字")
+        with _connect(config) as conn:
+            store = SessionStore(conn)
+            if store.get(scope.name) is None:
+                raise HTTPException(404, "会话不存在")
+            if title is not None:
+                store.rename(scope.name, title)
+            if body.pinned is not None:
+                store.set_pinned(scope.name, body.pinned)
+            info = store.get(scope.name)
+            pinned = scope.name in store.pinned_names()
+        return {**_session_dict(info), "pinned": pinned}
 
     @app.get("/api/trace", dependencies=[Depends(require_owner)])
     def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
