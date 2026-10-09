@@ -70,8 +70,14 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-90" aria-hidden />
           <div className="flex w-32 shrink-0 items-center gap-1.5 sm:w-44">
-            <Icon className={`h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`} aria-hidden />
-            <span className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`} title={span.label}>
+            <Icon
+              className={`h-3.5 w-3.5 shrink-0 ${span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : 'text-amber-600'}`}
+              aria-hidden
+            />
+            <span
+              className={`truncate font-mono text-xs ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-200'}`}
+              title={span.label}
+            >
               {span.label}
             </span>
             {incomplete && <Badge tone="amber">未完成</Badge>}
@@ -116,7 +122,9 @@ function SpanRow({ span, total }: { span: Span; total: number }) {
               </div>
               <div>
                 <div className="mb-1 font-medium text-zinc-600 dark:text-zinc-300">{span.call.failed ? '错误' : '结果摘要'}</div>
-                <p className={`whitespace-pre-wrap break-words font-mono ${span.call.failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                <p
+                  className={`whitespace-pre-wrap break-words font-mono ${span.call.failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-300'}`}
+                >
                   {span.call.summary || '（无）'}
                 </p>
               </div>
@@ -222,7 +230,11 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
           <span className="text-zinc-300" aria-hidden>
             /
           </span>
-          <Link to="/trace" search={{ session: name }} className="font-mono text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+          <Link
+            to="/trace"
+            search={{ session: name }}
+            className="font-mono text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
             {name}
           </Link>
           <Link
@@ -243,7 +255,9 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
             {data.budget_hit && <Badge tone="amber">触及 tokens 预算</Badge>}
             <span className="text-xs tabular-nums text-zinc-500">{formatGenerated(data.generated_at)}</span>
           </div>
-          <h1 className="text-lg font-semibold leading-snug text-zinc-900 text-pretty dark:text-zinc-50">{data.question || '（无问题文本）'}</h1>
+          <h1 className="text-lg font-semibold leading-snug text-zinc-900 text-pretty dark:text-zinc-50">
+            {data.question || '（无问题文本）'}
+          </h1>
           <p className="font-mono text-xs text-zinc-500">{data.model || '未知模型'}</p>
         </header>
 
@@ -252,7 +266,15 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
 
         <Card>
           <dl className="grid grid-cols-2 divide-x divide-y divide-zinc-100 lg:grid-cols-4 lg:divide-y-0 dark:divide-zinc-800">
-            <Metric label="总耗时" value={formatDuration(data.elapsed_seconds)} hint={llm.length ? `模型 ${formatDuration(llmSeconds)} · 工具 ${formatDuration(toolSeconds)}` : `工具 ${formatDuration(toolSeconds)}`} />
+            <Metric
+              label="总耗时"
+              value={formatDuration(data.elapsed_seconds)}
+              hint={
+                llm.length
+                  ? `模型 ${formatDuration(llmSeconds)} · 工具 ${formatDuration(toolSeconds)}`
+                  : `工具 ${formatDuration(toolSeconds)}`
+              }
+            />
             <Metric label="模型调用" value={llm.length ? String(llm.length) : '—'} hint={llm.length ? '主代理' : '旧记录未保存'} />
             <Metric
               label="tokens"

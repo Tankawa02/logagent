@@ -8,15 +8,7 @@ function parentOf(path: string): string {
   return index > 0 ? path.slice(0, index) : path
 }
 
-export function SourcePicker({
-  kind,
-  values,
-  onChange,
-}: {
-  kind: 'log' | 'code'
-  values: string[]
-  onChange: (next: string[]) => void
-}) {
+export function SourcePicker({ kind, values, onChange }: { kind: 'log' | 'code'; values: string[]; onChange: (next: string[]) => void }) {
   const [browsing, setBrowsing] = useState(false)
   const [typed, setTyped] = useState('')
   const isLog = kind === 'log'
@@ -43,7 +35,9 @@ export function SourcePicker({
           <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
           {isLog ? '日志文件' : '源码目录'}
           {isLog ? (
-            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[10px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">必填</span>
+            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[10px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+              必填
+            </span>
           ) : (
             <span className="font-normal text-zinc-400">可选</span>
           )}
@@ -96,7 +90,9 @@ export function SourcePicker({
           }}
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
-          placeholder={isLog ? '或粘贴路径，如 ~/logs/app.log、/var/log/*.log，回车添加' : '或粘贴目录路径，如 ~/work/order-service，回车添加'}
+          placeholder={
+            isLog ? '或粘贴路径，如 ~/logs/app.log、/var/log/*.log，回车添加' : '或粘贴目录路径，如 ~/work/order-service，回车添加'
+          }
           className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
         />
       </div>

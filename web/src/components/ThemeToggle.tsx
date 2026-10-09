@@ -11,11 +11,7 @@ const OPTIONS: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
 export function ThemeToggle() {
   const current = useThemePreference()
   return (
-    <div
-      role="radiogroup"
-      aria-label="主题"
-      className="flex items-center gap-0.5 rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800/80"
-    >
+    <div role="radiogroup" aria-label="主题" className="flex items-center gap-0.5 rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800/80">
       {OPTIONS.map(({ value, label, icon: Icon }) => {
         const active = current === value
         return (

@@ -107,7 +107,10 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
       {data && (
         <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto">
           {data.first > 1 && before < MAX_CONTEXT && (
-            <LoadMore onClick={() => setBefore((v) => Math.min(v + STEP, MAX_CONTEXT))} label={`向上加载 ${STEP} 行（从第 ${data.first} 行起）`} />
+            <LoadMore
+              onClick={() => setBefore((v) => Math.min(v + STEP, MAX_CONTEXT))}
+              label={`向上加载 ${STEP} 行（从第 ${data.first} 行起）`}
+            />
           )}
           <div className="font-mono text-xs leading-5">
             {data.lines.map(({ n, text }) => {
@@ -128,7 +131,9 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
               )
             })}
           </div>
-          {data.has_more && after < MAX_CONTEXT && <LoadMore onClick={() => setAfter((v) => Math.min(v + STEP, MAX_CONTEXT))} label={`向下加载 ${STEP} 行`} />}
+          {data.has_more && after < MAX_CONTEXT && (
+            <LoadMore onClick={() => setAfter((v) => Math.min(v + STEP, MAX_CONTEXT))} label={`向下加载 ${STEP} 行`} />
+          )}
           <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400 dark:border-zinc-800">
             {data.path}
             {data.total_lines ? ` · 共 ${data.total_lines.toLocaleString()} 行` : ''}

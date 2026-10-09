@@ -352,11 +352,11 @@ def create_app(config: WebConfig) -> FastAPI:
         with _connect(config) as conn:
             store = SessionStore(conn)
             items = store.search(q) if q.strip() else store.list()
-            result = []
-            for info in items:
-                last = store.last_turn(info.name)
-                result.append({**_session_dict(info), "last": _turn_brief(info.turns, last) if last else None})
-            return result
+            briefs = store.last_turn_briefs()
+        return [
+            {**_session_dict(info), "last": {"turn": info.turns, **briefs[info.name]} if info.name in briefs else None}
+            for info in items
+        ]
 
     @app.get("/api/trace", dependencies=[Depends(require_owner)])
     def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
@@ -373,7 +373,7 @@ def create_app(config: WebConfig) -> FastAPI:
                 counts[str(name or "?")] = counts.get(str(name or "?"), 0) + 1
             legacy = row["provenance"] == "legacy_unknown"
             elapsed = row["elapsed_seconds"]
-            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平���值时跳过，而不是当成 0
+            # 旧版恢复的轮次没有保存耗时 / 用量：返回 null，前端算平均值时跳过，而不是当成 0
             measured = not legacy and isinstance(elapsed, (int, float))
             items.append({
                 "session": row["session"],

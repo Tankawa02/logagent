@@ -53,9 +53,7 @@ export function SettingsPage() {
         )}
         {settings.error && <ErrorBox error={settings.error} />}
         {/* 保存后用新数据重建表单，草稿自然回到「已保存」状态 */}
-        {settings.data && (
-          <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />
-        )}
+        {settings.data && <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />}
       </div>
     </div>
   )
@@ -155,7 +153,11 @@ function SettingsForm({
               setClearKey((v) => !v)
             }}
           />
-          <Row label="接口地址" field={fields.base_url} hint="OpenAI 兼容网关，如 https://llm-gateway.example.com/v1。留空使用 OpenAI 官方接口。">
+          <Row
+            label="接口地址"
+            field={fields.base_url}
+            hint="OpenAI 兼容网关，如 https://llm-gateway.example.com/v1。留空使用 OpenAI 官方接口。"
+          >
             {(id) => (
               <input
                 id={id}
@@ -308,8 +310,8 @@ function SourceNote({ field }: { field: SettingField }) {
   if (field.source === 'env' || field.source === 'cli') {
     return (
       <p className="flex items-center gap-1 text-xs text-zinc-500">
-        <Lock className="h-3 w-3" aria-hidden />
-        由{SOURCE_LABEL[field.source]} <code className="font-mono">{field.origin}</code> 指定，网页里不能修改。
+        <Lock className="h-3 w-3" aria-hidden />由{SOURCE_LABEL[field.source]} <code className="font-mono">{field.origin}</code>{' '}
+        指定，网页里不能修改。
       </p>
     )
   }
@@ -330,17 +332,7 @@ function SourceNote({ field }: { field: SettingField }) {
   return null
 }
 
-function Row({
-  label,
-  field,
-  hint,
-  children,
-}: {
-  label: string
-  field: SettingField
-  hint?: string
-  children: (id: string) => ReactNode
-}) {
+function Row({ label, field, hint, children }: { label: string; field: SettingField; hint?: string; children: (id: string) => ReactNode }) {
   const id = useId()
   const overridden = field.source !== 'default' && field.source !== 'user'
   return (
@@ -392,7 +384,8 @@ function ApiKeyField({
       </div>
       {key.locked ? (
         <p className="flex items-center gap-1 text-xs text-zinc-500">
-          <Lock className="h-3 w-3" aria-hidden />由环境变量 <code className="font-mono">OPENAI_API_KEY</code> 提供，网页里不能修改。
+          <Lock className="h-3 w-3" aria-hidden />
+          由环境变量 <code className="font-mono">OPENAI_API_KEY</code> 提供，网页里不能修改。
         </p>
       ) : (
         <>

@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { api } from '../lib/api'
+import { useCopy, useModal } from '../lib/hooks'
 import type { Meta, Share } from '../lib/types'
 import { Button, ErrorBox, Spinner } from './ui'
 
@@ -16,14 +18,15 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
   const client = useQueryClient()
   const [ttl, setTtl] = useState<number | null>(24 * 7)
   const [created, setCreated] = useState<Share | null>(null)
-  const [copied, setCopied] = useState(false)
+  const { state: copyState, copy } = useCopy()
+  const dialog = useRef<HTMLDivElement>(null)
+  const onKeyDown = useModal(dialog, onClose)
   const shares = useQuery({ queryKey: ['shares', session], queryFn: () => api.shares(session) })
 
   const create = useMutation({
     mutationFn: () => api.createShare(session, ttl),
     onSuccess: (share) => {
       setCreated(share)
-      setCopied(false)
       void client.invalidateQueries({ queryKey: ['shares', session] })
     },
   })
@@ -38,20 +41,27 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/30 p-4 pt-[10vh]" onClick={onClose}>
       <div
+        ref={dialog}
         role="dialog"
-        aria-label="分享会话"
+        aria-modal="true"
+        aria-labelledby="share-title"
+        aria-describedby="share-desc"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
         className="w-full max-w-lg space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold">分享给同事</h2>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            <h2 id="share-title" className="text-base font-semibold">
+              分享给同事
+            </h2>
+            <p id="share-desc" className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               生成只读链接：能看报告、错误时间线、证据原文和导出，内容始终脱敏，不能续问、不能看其他会话。
             </p>
           </div>
           <Button variant="ghost" onClick={onClose} aria-label="关闭">
-            ✕
+            <X className="h-4 w-4" aria-hidden />
           </Button>
         </div>
 
@@ -93,12 +103,8 @@ export function SharePanel({ session, meta, onClose }: { session: string; meta: 
                 onFocus={(e) => e.target.select()}
                 className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-zinc-50 px-2 py-1.5 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
               />
-              <Button
-                onClick={() => {
-                  void navigator.clipboard?.writeText(created.url!).then(() => setCopied(true))
-                }}
-              >
-                {copied ? '已复制' : '复制'}
+              <Button onClick={() => void copy(created.url!)}>
+                {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败，请手动复制' : '复制'}
               </Button>
             </div>
           </div>

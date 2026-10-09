@@ -179,7 +179,7 @@ export function TraceList({ session }: { session?: string }) {
     placeholderData: (previous) => previous,
   })
 
-  const all = trace.data ?? []
+  const all = useMemo(() => trace.data ?? [], [trace.data])
   // 返回条数顶到上限，说明更早的轮次没取回来：统计只覆盖最近这些
   const capped = all.length >= limit
   // 同一个模型可能带不同的 provider 前缀（openai:kimi-k3 / kimi-k3），按去掉前缀后的名字归为一类
@@ -280,7 +280,10 @@ export function TraceList({ session }: { session?: string }) {
               <Card className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
                   <div className="relative min-w-40 flex-1">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                    <Search
+                      className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                      aria-hidden
+                    />
                     <input
                       value={text}
                       onChange={(e) => setText(e.target.value)}

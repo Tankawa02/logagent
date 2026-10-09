@@ -31,7 +31,10 @@ export function SimilarPrompt({
   onCancel: () => void
 }) {
   return (
-    <div role="alert" className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900 dark:bg-amber-950/40">
+    <div
+      role="alert"
+      className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900 dark:bg-amber-950/40"
+    >
       <p className="font-medium text-amber-800 dark:text-amber-300">已有相似记忆，替换它还是另存一条？</p>
       <ul className="space-y-1.5">
         {similar.map((m) => (
@@ -119,11 +122,23 @@ export function CandidateRow({ candidate, className = 'px-4 py-3' }: { candidate
             <Pencil className="h-3.5 w-3.5" aria-hidden />
             {editing ? '取消编辑' : '编辑'}
           </Button>
-          <Button variant="ghost" className="px-2 py-1 text-xs" disabled={busy} onClick={() => reject.mutate(false)} title="90 天内不再提示">
+          <Button
+            variant="ghost"
+            className="px-2 py-1 text-xs"
+            disabled={busy}
+            onClick={() => reject.mutate(false)}
+            title="90 天内不再提示"
+          >
             <X className="h-3.5 w-3.5" aria-hidden />
             不保存
           </Button>
-          <Button variant="ghost" className="px-2 py-1 text-xs" disabled={busy} onClick={() => reject.mutate(true)} title="以后都不再提示相似内容">
+          <Button
+            variant="ghost"
+            className="px-2 py-1 text-xs"
+            disabled={busy}
+            onClick={() => reject.mutate(true)}
+            title="以后都不再提示相似内容"
+          >
             <Ban className="h-3.5 w-3.5" aria-hidden />
             不再提示
           </Button>

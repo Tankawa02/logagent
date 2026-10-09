@@ -1,27 +1,26 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  Link,
-  Outlet,
-  RouterProvider,
-  useNavigate,
-} from '@tanstack/react-router'
-import { StrictMode } from 'react'
+import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate } from '@tanstack/react-router'
+import { lazy, StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AppShell } from './components/AppShell'
-import { Spinner } from './components/ui'
+import { PageSkeleton, Spinner } from './components/ui'
 import { api, ApiError } from './lib/api'
+import { validateWorkspaceSearch, type WorkspaceSearch } from './lib/workspace-search'
 import { AuthRequired } from './pages/AuthRequired'
-import { MemoryPage } from './pages/MemoryPage'
-import { NewSession } from './pages/NewSession'
-import { SettingsPage } from './pages/SettingsPage'
-import { SkillsPage } from './pages/SkillsPage'
-import { TraceDetail } from './pages/TraceDetail'
-import { TraceList } from './pages/TraceList'
-import { validateWorkspaceSearch, Workspace, type WorkspaceSearch } from './pages/Workspace'
 import './styles.css'
+
+// 每个页面一个 chunk：分享页只加载只读 Workspace，管理页不拖慢首屏
+const MemoryPage = lazy(() => import('./pages/MemoryPage').then((m) => ({ default: m.MemoryPage })))
+const NewSession = lazy(() => import('./pages/NewSession').then((m) => ({ default: m.NewSession })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const SkillsPage = lazy(() => import('./pages/SkillsPage').then((m) => ({ default: m.SkillsPage })))
+const TraceDetail = lazy(() => import('./pages/TraceDetail').then((m) => ({ default: m.TraceDetail })))
+const TraceList = lazy(() => import('./pages/TraceList').then((m) => ({ default: m.TraceList })))
+const Workspace = lazy(() => import('./pages/Workspace').then((m) => ({ default: m.Workspace })))
+
+function PageFallback() {
+  return <PageSkeleton />
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,7 +57,9 @@ function OwnerLayout() {
   if (meta.data && !meta.data.authenticated) return <AuthRequired />
   return (
     <AppShell>
-      <Outlet />
+      <Suspense fallback={<PageFallback />}>
+        <Outlet />
+      </Suspense>
     </AppShell>
   )
 }
@@ -134,19 +135,24 @@ const shareRoute = createRoute({
     const navigate = useNavigate({ from: shareRoute.fullPath })
     return (
       <div className="h-dvh bg-white dark:bg-zinc-950">
-        <Workspace
-          key={token}
-          scope={{ kind: 'share', token }}
-          search={search}
-          setSearch={(next: WorkspaceSearch) => void navigate({ search: next, replace: true })}
-        />
+        <Suspense fallback={<PageFallback />}>
+          <Workspace
+            key={token}
+            scope={{ kind: 'share', token }}
+            search={search}
+            setSearch={(next: WorkspaceSearch) => void navigate({ search: next, replace: true })}
+          />
+        </Suspense>
       </div>
     )
   },
 })
 
 const router = createRouter({
-  routeTree: rootRoute.addChildren([ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute, settingsRoute]), shareRoute]),
+  routeTree: rootRoute.addChildren([
+    ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute, settingsRoute]),
+    shareRoute,
+  ]),
   defaultPreload: false,
 })
 

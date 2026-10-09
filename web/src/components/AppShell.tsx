@@ -27,10 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-zinc-50 dark:bg-zinc-950">
-      <aside
-        className={`hidden shrink-0 transition-[width] duration-200 md:block ${collapsed ? 'w-16' : 'w-64'}`}
-        aria-label="侧边栏"
-      >
+      <aside className={`hidden shrink-0 transition-[width] duration-200 md:block ${collapsed ? 'w-16' : 'w-64'}`} aria-label="侧边栏">
         {collapsed ? <SidebarRail onExpand={() => toggleCollapsed(false)} /> : <Sidebar onCollapse={() => toggleCollapsed(true)} />}
       </aside>
 

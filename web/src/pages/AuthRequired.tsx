@@ -10,7 +10,8 @@ export function AuthRequired() {
         <h1 className="text-lg font-semibold">需要访问令牌</h1>
         <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
           请使用 <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">log-agent serve</code> 启动时终端里打印的完整链接（带{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">?token=</code>）打开。同事交接请让会话所有者在会话页点「分享」生成只读链接。
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">?token=</code>
+          ）打开。同事交接请让会话所有者在会话页点「分享」生成只读链接。
         </p>
       </div>
     </div>

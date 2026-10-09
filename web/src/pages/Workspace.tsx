@@ -1,45 +1,19 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { BarChart3, Copy, Download, FileCode2, FileSearch, FileText, FolderCode, GanttChart, Share2, X } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView } from '../components/ReportView'
 import { SharePanel } from '../components/SharePanel'
 import { SourceViewer } from '../components/SourceViewer'
 import { TimelinePane } from '../components/TimelinePane'
-import { Badge, Empty, ErrorBox, Spinner } from '../components/ui'
+import { Badge, Empty, ErrorBox, PageSkeleton } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { ASSESSMENT } from '../lib/format'
+import { useClickOutside, useMediaQuery, useModal } from '../lib/hooks'
 import { discardPendingQuestion, holdPendingQuestion } from '../lib/pending'
 import type { Meta, SessionDetail, SourceTarget } from '../lib/types'
-
-type Panel = 'report' | 'source' | 'timeline'
-
-export interface WorkspaceSearch {
-  turn?: number
-  src?: string
-  start?: number
-  end?: number
-  ev?: string
-  panel?: Panel
-}
-
-export function validateWorkspaceSearch(search: Record<string, unknown>): WorkspaceSearch {
-  const num = (v: unknown) => {
-    const n = Number(v)
-    return Number.isInteger(n) && n > 0 ? n : undefined
-  }
-  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
-  const panel = search.panel === 'report' || search.panel === 'source' || search.panel === 'timeline' ? search.panel : undefined
-  return {
-    turn: num(search.turn),
-    src: str(search.src),
-    start: num(search.start),
-    end: num(search.end),
-    ev: str(search.ev),
-    panel,
-  }
-}
+import type { Panel, WorkspaceSearch } from '../lib/workspace-search'
 
 export function Workspace({
   scope,
@@ -97,17 +71,17 @@ export function Workspace({
     setSearch({ ...search, panel: next })
   }
 
+  // 小屏上面板是全屏覆盖层：当成模态框处理（焦点移入、Tab 循环）；大屏是并排的侧栏，只响应 Esc
+  const aside = useRef<HTMLElement>(null)
+  const overlayPanel = !useMediaQuery('(min-width: 1024px)')
+  const closePanel = useCallback(() => setSearch({ ...search, panel: undefined }), [search, setSearch])
+  const onAsideKey = useModal(aside, closePanel, { trap: overlayPanel, enabled: !!panel && overlayPanel })
+
   function openSource(next: SourceTarget) {
     setSearch({ ...search, src: next.source, start: next.start, end: next.end, ev: next.evidenceKey, panel: 'source' })
   }
 
-  if (session.isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner />
-      </div>
-    )
-  }
+  if (session.isLoading) return <PageSkeleton label="加载会话" />
   if (session.error || !session.data) {
     return (
       <div className="mx-auto max-w-xl p-8">
@@ -151,9 +125,7 @@ export function Workspace({
           {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
               否则离开期间刚跑完的一轮会缺失 */}
           {canChat && scope.kind === 'owner' && ((live.isPending && !live.isError) || !session.isFetchedAfterMount) ? (
-            <div className="flex h-full items-center justify-center">
-              <Spinner />
-            </div>
+            <PageSkeleton label="加载对话" />
           ) : canChat && scope.kind === 'owner' ? (
             <ChatPanel
               key={scope.name}
@@ -188,14 +160,18 @@ export function Workspace({
 
         {panel && (
           <aside
+            ref={aside}
             aria-label="详情面板"
+            tabIndex={-1}
+            onKeyDown={onAsideKey}
+            {...(overlayPanel ? { role: 'dialog', 'aria-modal': true } : {})}
             className="fixed inset-0 z-30 flex flex-col bg-paper lg:static lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
           >
             <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
               <div role="group" aria-label="切换面板" className="flex gap-0.5 rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900">
-              {panels.map((p) => (
-                <PanelTab key={p} panel={p} active={panel === p} onClick={() => openPanel(p)} />
-              ))}
+                {panels.map((p) => (
+                  <PanelTab key={p} panel={p} active={panel === p} onClick={() => openPanel(p)} />
+                ))}
               </div>
               <button
                 type="button"
@@ -259,7 +235,17 @@ function PanelTab({ panel, active, onClick }: { panel: Panel; active: boolean; o
   )
 }
 
-function HeaderButton({ active, onClick, children, label }: { active?: boolean; onClick?: () => void; children: ReactNode; label: string }) {
+function HeaderButton({
+  active,
+  onClick,
+  children,
+  label,
+}: {
+  active?: boolean
+  onClick?: () => void
+  children: ReactNode
+  label: string
+}) {
   return (
     <button
       type="button"
@@ -275,6 +261,103 @@ function HeaderButton({ active, onClick, children, label }: { active?: boolean; 
       {children}
       <span className="hidden xl:inline">{label}</span>
     </button>
+  )
+}
+
+const EXPORTS = [
+  ['Markdown 报告', 'markdown', 'detailed'],
+  ['工单视图', 'markdown', 'ticket'],
+  ['JSON', 'json', 'detailed'],
+] as const
+
+function ExportMenu({ scope, turnNumber }: { scope: Scope; turnNumber: number }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const items = useRef<(HTMLAnchorElement | null)[]>([])
+  const close = useCallback((refocus: boolean) => {
+    setOpen(false)
+    if (refocus) trigger.current?.focus()
+  }, [])
+  const closeQuietly = useCallback(() => close(false), [close])
+  useClickOutside(root, closeQuietly, open)
+
+  useEffect(() => {
+    if (open) items.current[0]?.focus()
+  }, [open])
+
+  function onMenuKey(event: KeyboardEvent<HTMLDivElement>) {
+    const list = items.current.filter((n): n is HTMLAnchorElement => !!n)
+    const index = list.indexOf(document.activeElement as HTMLAnchorElement)
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      close(true)
+    } else if (event.key === 'Tab') {
+      close(false)
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      list[(index + step + list.length) % list.length]?.focus()
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      list[event.key === 'Home' ? 0 : list.length - 1]?.focus()
+    }
+  }
+
+  return (
+    <div ref={root} className="relative">
+      <button
+        ref={trigger}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls="export-menu"
+        title="导出"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && !open) {
+            e.preventDefault()
+            setOpen(true)
+          }
+        }}
+        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+          open
+            ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
+            : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+        }`}
+      >
+        <Download className="h-4 w-4" aria-hidden />
+        <span className="hidden xl:inline">导出</span>
+      </button>
+      {open && (
+        <div
+          id="export-menu"
+          role="menu"
+          aria-label={`导出第 ${turnNumber} 轮`}
+          onKeyDown={onMenuKey}
+          className="absolute right-0 top-full z-20 mt-1.5 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+        >
+          <p className="px-2.5 py-1.5 text-xs text-zinc-400" aria-hidden>
+            第 {turnNumber} 轮
+          </p>
+          {EXPORTS.map(([label, format, view], i) => (
+            <a
+              key={label}
+              ref={(node) => {
+                items.current[i] = node
+              }}
+              role="menuitem"
+              tabIndex={-1}
+              href={api.exportUrl(scope, turnNumber, format, view)}
+              onClick={() => close(false)}
+              className="block rounded-lg px-2.5 py-1.5 text-zinc-700 outline-none hover:bg-zinc-100 focus:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
+            >
+              {label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -297,7 +380,6 @@ function SessionHeader({
   onPanel: (panel: Panel) => void
   onShare?: () => void
 }) {
-  const [exportOpen, setExportOpen] = useState(false)
   const settings = info.settings as Record<string, string | number | null>
   const range = settings.since || settings.until ? `${settings.since || '开头'} → ${settings.until || '结尾'}` : null
   return (
@@ -345,38 +427,7 @@ function SessionHeader({
             </HeaderButton>
           )
         })}
-        {turnNumber !== undefined && (
-          <div className="relative">
-            <HeaderButton label="导出" active={exportOpen} onClick={() => setExportOpen((v) => !v)}>
-              <Download className="h-4 w-4" aria-hidden />
-            </HeaderButton>
-            {exportOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-20 mt-1.5 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
-                onMouseLeave={() => setExportOpen(false)}
-              >
-                <p className="px-2.5 py-1.5 text-xs text-zinc-400">第 {turnNumber} 轮</p>
-                {(
-                  [
-                    ['Markdown 报告', 'markdown', 'detailed'],
-                    ['工单视图', 'markdown', 'ticket'],
-                    ['JSON', 'json', 'detailed'],
-                  ] as const
-                ).map(([label, format, view]) => (
-                  <a
-                    key={label}
-                    role="menuitem"
-                    href={api.exportUrl(scope, turnNumber, format, view)}
-                    className="block rounded-lg px-2.5 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                  >
-                    {label}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {turnNumber !== undefined && <ExportMenu scope={scope} turnNumber={turnNumber} />}
         {scope.kind === 'owner' && (
           <Link
             to="/trace"

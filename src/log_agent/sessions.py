@@ -91,10 +91,17 @@ class SessionStore:
 
     def list(self) -> list[SessionInfo]:
         rows = self.conn.execute(
-            "SELECT name, logs, code, model, title, turns, total_tokens, created_at, updated_at "
-            "FROM log_agent_sessions ORDER BY updated_at DESC"
+            "SELECT s.name, s.logs, s.code, s.model, s.title, s.turns, s.total_tokens, s.created_at, s.updated_at, "
+            "st.settings FROM log_agent_sessions s "
+            "LEFT JOIN log_agent_session_settings st ON st.name = s.name ORDER BY s.updated_at DESC"
         ).fetchall()
-        return [self._with_settings(self._row(r)) for r in rows]
+        result = []
+        for *row, settings in rows:
+            info = self._row(tuple(row))
+            if settings:
+                info.settings = json.loads(settings)
+            result.append(info)
+        return result
 
     def _with_settings(self, info: SessionInfo) -> SessionInfo:
         row = self.conn.execute("SELECT settings FROM log_agent_session_settings WHERE name = ?", (info.name,)).fetchone()
@@ -214,6 +221,40 @@ class SessionStore:
             "SELECT payload FROM log_agent_turns WHERE name = ? ORDER BY id DESC LIMIT 1", (name,),
         ).fetchone()
         return json.loads(row[0]) if row else None
+
+    _BRIEF_PATHS = ("question", "generated_at", "status", "summary", "schema_version",
+                    "analysis.assessment", "analysis.confidence", "evidence_check.status")
+
+    def last_turn_briefs(self) -> dict[str, dict[str, Any]]:
+        """Every session's latest-turn sidebar fields in one query, without loading report bodies.
+
+        Multi-path json_extract returns a JSON array, so value types survive the round trip.
+        """
+        paths = ", ".join(f"'$.{p}'" for p in self._BRIEF_PATHS)
+        rows = self.conn.execute(
+            f"""
+            SELECT t.name, json_extract(t.payload, {paths}),
+                   CASE WHEN json_type(t.payload, '$.analysis.issues') = 'array'
+                        THEN json_array_length(t.payload, '$.analysis.issues') ELSE 0 END
+              FROM log_agent_turns t
+              JOIN (SELECT MAX(id) AS id FROM log_agent_turns GROUP BY name) latest ON latest.id = t.id
+             WHERE json_valid(t.payload) AND json_type(t.payload) = 'object'
+            """
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for name, raw, issues in rows:
+            values = dict(zip(self._BRIEF_PATHS, json.loads(raw), strict=True))
+            result[name] = {
+                "question": values["question"] or "",
+                "generated_at": values["generated_at"],
+                "status": values["status"],
+                "summary": values["summary"],
+                "assessment": values["analysis.assessment"] if values["schema_version"] else None,
+                "confidence": values["analysis.confidence"],
+                "evidence_status": values["evidence_check.status"],
+                "issues": int(issues or 0),
+            }
+        return result
 
     def trace_summaries(self, limit: int = 200, name: str | None = None) -> list[dict[str, Any]]:
         """最近保存的轮次概况（新的在前），供 Web trace 列表使用。

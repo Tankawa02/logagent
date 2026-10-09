@@ -236,7 +236,8 @@ function MemoryList({ index }: { index: MemoryIndex }) {
   const items = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return index.memories.filter(
-      (m) => (!kind || m.kind === kind) && (!scope || scopeValue(m.project) === scope) && (!needle || m.text.toLowerCase().includes(needle)),
+      (m) =>
+        (!kind || m.kind === kind) && (!scope || scopeValue(m.project) === scope) && (!needle || m.text.toLowerCase().includes(needle)),
     )
   }, [index.memories, kind, scope, q])
   const counts = useMemo(() => {
@@ -268,10 +269,21 @@ function MemoryList({ index }: { index: MemoryIndex }) {
         <div className="flex flex-wrap gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
           <div className="relative min-w-48 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索记忆内容" aria-label="搜索记忆" className={`${FIELD} pl-8`} />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜索记忆内容"
+              aria-label="搜索记忆"
+              className={`${FIELD} pl-8`}
+            />
           </div>
           {scopes.length > 1 && (
-            <select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="按范围筛选" className={FIELD.replace('w-full', 'w-auto shrink-0')}>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              aria-label="按范围筛选"
+              className={FIELD.replace('w-full', 'w-auto shrink-0')}
+            >
               <option value="">全部范围</option>
               {scopes.map(([key, label]) => (
                 <option key={key} value={key}>
@@ -283,9 +295,7 @@ function MemoryList({ index }: { index: MemoryIndex }) {
         </div>
       )}
       {index.memories.length === 0 ? (
-        <Empty>
-          还没有记忆。在上方新增，或在 chat 里说&ldquo;记住……&rdquo;。
-        </Empty>
+        <Empty>还没有记忆。在上方新增，或在 chat 里说&ldquo;记住……&rdquo;。</Empty>
       ) : items.length === 0 ? (
         <Empty>没有符合筛选条件的记忆</Empty>
       ) : (
@@ -311,7 +321,11 @@ export function MemoryPage() {
           <p className="mt-1 text-sm text-zinc-500">
             跨会话记住你的表达偏好、术语和项目事实，每轮对话前注入给模型。表达偏好默认全局，术语和事实挂在项目上。
           </p>
-          {data && <p className="mt-1 truncate font-mono text-xs text-zinc-400" title={data.path}>{data.path}</p>}
+          {data && (
+            <p className="mt-1 truncate font-mono text-xs text-zinc-400" title={data.path}>
+              {data.path}
+            </p>
+          )}
         </header>
 
         {memory.isLoading && (
