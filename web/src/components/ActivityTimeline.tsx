@@ -16,7 +16,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { visibleReport } from '../lib/format'
 import { Spinner } from './ui'
 
@@ -60,7 +60,8 @@ function formatSeconds(seconds: number) {
   return seconds >= 60 ? `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s` : `${seconds.toFixed(1)}s`
 }
 
-export function ActivityTimeline({
+/** 回答正文流式输出时 tools / draft 都不变：memo 掉，免得每个字都重画整条取证时间线 */
+export const ActivityTimeline = memo(function ActivityTimeline({
   tools,
   draft,
   running,
@@ -136,7 +137,10 @@ export function ActivityTimeline({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-zinc-500">正在撰写结论</p>
-                <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-500">{visibleReport(draft)}</p>
+                {/* 只显示前三行：截掉看不到的部分，草稿再长每次增量也只排版这一小段 */}
+                <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[13px] leading-relaxed text-zinc-500">
+                  {visibleReport(draft).slice(0, DRAFT_PREVIEW_CHARS)}
+                </p>
               </div>
             </div>
           )}
@@ -144,7 +148,9 @@ export function ActivityTimeline({
       )}
     </section>
   )
-}
+})
+
+const DRAFT_PREVIEW_CHARS = 600
 
 function Step({ tool, last }: { tool: ToolActivity; last: boolean }) {
   const Icon = TOOL_ICONS[tool.name] ?? Wrench

@@ -15,7 +15,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { api, scopeKey } from '../lib/api'
 import { followUpsFor } from '../lib/follow-ups'
 import { ASSESSMENT, CHECK_STATUS, visibleReport } from '../lib/format'
@@ -23,6 +23,7 @@ import { useCopy, useStickToBottom } from '../lib/hooks'
 import { liveChatConnection } from '../lib/live-chat'
 import { takePendingQuestion } from '../lib/pending'
 import { PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
+import { useSmoothText } from '../lib/smooth-text'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
 import { FINISH_PHASES, FinishingStatus, type FinishPhase } from './FinishingStatus'
@@ -326,6 +327,7 @@ export function ChatPanel({
   })
   const followUps = useMemo(() => followUpsFor(latestPayload.data), [latestPayload.data])
 
+  const toggleRetry = useCallback(() => setRetrying((v) => !v), [])
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
   const questions = messages
@@ -374,6 +376,7 @@ export function ChatPanel({
                     text={text}
                     brief={turn !== undefined ? briefs.get(turn) : undefined}
                     historic={turn !== undefined}
+                    streaming={isLoading && message === lastAssistant && index > lastUserIndex}
                     savedTurn={
                       // 被中断、还没产出回答的一轮不能把「已保存」标到上一轮的回答上
                       message === lastAssistant && index > lastUserIndex && turn === undefined && !isLoading ? savedTurn : null
@@ -382,9 +385,7 @@ export function ChatPanel({
                     onShowTurn={onShowTurn}
                     turn={turn}
                     onRetry={
-                      message === lastAssistant && index > lastUserIndex && !isLoading && lastQuestion
-                        ? () => setRetrying((v) => !v)
-                        : undefined
+                      message === lastAssistant && index > lastUserIndex && !isLoading && lastQuestion ? toggleRetry : undefined
                     }
                     retrying={retrying}
                   />
@@ -590,10 +591,12 @@ export function ChatPanel({
   )
 }
 
-function AssistantMessage({
-  text,
+// memo：流式输出时只有正在写的那条回答需要重新渲染，历史回答的 props 都不变
+const AssistantMessage = memo(function AssistantMessage({
+  text: fullText,
   brief,
   historic,
+  streaming = false,
   savedTurn,
   turn,
   onOpen,
@@ -604,6 +607,8 @@ function AssistantMessage({
   text: string
   brief?: TurnBrief
   historic: boolean
+  /** 正在流式输出：按帧匀速放出文字，而不是跟着网络一阵一阵地蹦 */
+  streaming?: boolean
   savedTurn: number | null
   turn?: number
   onOpen: (target: SourceTarget) => void
@@ -611,6 +616,7 @@ function AssistantMessage({
   onRetry?: () => void
   retrying?: boolean
 }) {
+  const text = useSmoothText(fullText, streaming)
   const { state: copyState, copy } = useCopy()
   const reportTurn = turn ?? savedTurn ?? undefined
   return (
@@ -685,7 +691,7 @@ function AssistantMessage({
       </div>
     </article>
   )
-}
+})
 
 function RetryForm({ question, onRetry, onCancel }: { question: string; onRetry: (extra: string) => void; onCancel: () => void }) {
   const [extra, setExtra] = useState('')

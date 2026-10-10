@@ -201,6 +201,7 @@ def custom(name: str, value: Any) -> dict[str, Any]:
 
 
 _APPENDIX_START = re.compile(r"^```log-agent", re.MULTILINE)
+_APPENDIX_LOOKBEHIND = len("```log-agent")
 
 
 class _TextTap:
@@ -222,14 +223,19 @@ class _TextTap:
         renderer = self._renderer
         renderer.emit(custom("log_agent.draft", {"reset": True}))
         buffer = ""
+        appendix_seen = False
         for delta in self._inner.text:
             renderer.check_cancelled()
             if delta:
+                scan_from = max(0, len(buffer) - _APPENDIX_LOOKBEHIND)
                 buffer += delta
                 if renderer.live_answer:
                     renderer.emit_answer(delta)
-                    # 正文写完、开始写机器附录：附录在页面上是隐藏的，不提示的话看起来像已经结束
-                    if _APPENDIX_START.search(buffer):
+                    # 正文写完、开始写机器附录：附录在页面上是隐藏的，不提示的话看起来像已经结束。
+                    # 只扫新增的尾部（多留一个围栏标记的长度，接住跨增量的情况），不必每个字都扫全文；
+                    # 带 pos 的 search 里 ^ 仍只匹配真正的行首，语义不变
+                    if not appendix_seen and _APPENDIX_START.search(buffer, scan_from):
+                        appendix_seen = True
                         renderer.phase("structuring")
                 elif looks_like_report(buffer):
                     renderer.live_answer = True
