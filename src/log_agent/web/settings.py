@@ -1,7 +1,7 @@
 """网页设置页：查看 / 修改模型连接与常用配置，保存后立即作用于正在运行的 serve，不用重启。
 
 写到哪里：
-- 模型、接口地址、超时等：用户级 `~/.log-agent/config.toml` 的顶层配置项。只改这几行，注释和其它配置段原样保留，
+- 模型（含子代理 / 备用模型）、接口地址、超时等：用户级 `~/.log-agent/config.toml` 的顶层配置项。只改这几行，注释和其它配置段原样保留，
   改完重新解析一遍，确认除了这几项其它内容都没变，否则拒绝写入。
 - API Key：`~/.log-agent/credentials.toml`（0600，见 credentials.py），不写进 config.toml。
 
@@ -29,6 +29,8 @@ from ..config import ConfigError, LoadedConfig, _read, find_project_config, load
 # 配置键 -> 能覆盖它的环境变量
 FIELDS: dict[str, str | None] = {
     "model": "LOG_AGENT_MODEL",
+    "subagent_model": "LOG_AGENT_SUBAGENT_MODEL",
+    "fallback_models": "LOG_AGENT_FALLBACK_MODELS",
     "base_url": "OPENAI_BASE_URL",
     "timeout": "LOG_AGENT_TIMEOUT",
     "max_retries": "LOG_AGENT_MAX_RETRIES",
@@ -37,6 +39,8 @@ FIELDS: dict[str, str | None] = {
 }
 LABELS = {
     "model": "默认模型",
+    "subagent_model": "子代理模型",
+    "fallback_models": "备用模型",
     "base_url": "接口地址",
     "timeout": "请求超时",
     "max_retries": "重试次数",
@@ -44,7 +48,10 @@ LABELS = {
     "memory": "长期记忆",
 }
 ENV_VARS = frozenset(env for env in FIELDS.values() if env)
+# 只经环境变量作用于 build_agent 的项：保存后改写进程环境变量即可生效（每次新建 agent 时读取）
+_ENV_APPLIED = ("timeout", "max_retries", "timezone", "subagent_model", "fallback_models")
 MEMORY_MODES = ("suggest", "explicit", "off")
+MAX_FALLBACK_MODELS = 5
 _HIDDEN_URL = "（地址含凭据，已隐藏）"
 
 _HEADER = re.compile(r"^\s*\[")
@@ -85,17 +92,42 @@ def _number(raw: Any) -> float:
     raise ValueError("需要数字")
 
 
+def _model_name(raw: str) -> str:
+    value = raw.strip()
+    if len(value) > 200 or any(ch.isspace() or ch in "\"'," for ch in value):
+        raise ValueError("模型名不能包含空格、引号或逗号，且不超过 200 个字符")
+    return value
+
+
+def _model_list(raw: Any) -> list[str] | None:
+    """备用模型：接受逗号 / 空白分隔的文本或字符串列表，去重保序。"""
+    if isinstance(raw, str):
+        items = re.split(r"[\s,]+", raw)
+    elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+        items = raw
+    else:
+        raise ValueError("需要用逗号分隔的模型名")
+    names = list(dict.fromkeys(_model_name(item) for item in items if item.strip()))
+    if len(names) > MAX_FALLBACK_MODELS:
+        raise ValueError(f"最多 {MAX_FALLBACK_MODELS} 个")
+    return names or None
+
+
+def _display(value: Any) -> Any:
+    """列表型配置在页面上显示为逗号分隔的文本，和输入框的写法一致。"""
+    return ", ".join(str(item) for item in value) if isinstance(value, list) else value
+
+
 def validate_value(key: str, raw: Any) -> Any:
     """返回写进配置文件的值；None 表示删除该项（恢复默认）。"""
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None
-    if key in ("model", "base_url", "timezone", "memory") and not isinstance(raw, str):
+    if key == "fallback_models":
+        return _model_list(raw)
+    if key in ("model", "subagent_model", "base_url", "timezone", "memory") and not isinstance(raw, str):
         raise ValueError("需要文本")
-    if key == "model":
-        value = raw.strip()
-        if len(value) > 200 or any(ch.isspace() for ch in value):
-            raise ValueError("模型名不能包含空格，且不超过 200 个字符")
-        return value
+    if key in ("model", "subagent_model"):
+        return _model_name(raw)
     if key == "base_url":
         from ..onboarding import unsafe_url_reason
 
@@ -141,6 +173,8 @@ def _toml_value(value: Any) -> str:
 
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)  # JSON 字符串转义是 TOML 基本字符串的子集
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     return repr(value)
 
 
@@ -235,8 +269,8 @@ def _layer(path: Path | None) -> LoadedConfig:
 def _defaults(ctx: SettingsContext) -> dict[str, Any]:
     from ..netguard import DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 
-    return {"model": ctx.default_model, "base_url": None, "timeout": DEFAULT_TIMEOUT,
-            "max_retries": DEFAULT_MAX_RETRIES, "timezone": "UTC", "memory": "suggest"}
+    return {"model": ctx.default_model, "subagent_model": None, "fallback_models": None, "base_url": None,
+            "timeout": DEFAULT_TIMEOUT, "max_retries": DEFAULT_MAX_RETRIES, "timezone": "UTC", "memory": "suggest"}
 
 
 def _safe_url(value: Any) -> Any:
@@ -278,8 +312,8 @@ def describe(ctx: SettingsContext, config: Any) -> dict[str, Any]:
                     break
         value = user.shared.get(key)
         fields[key] = {
-            "value": _safe_url(value) if key == "base_url" else value,
-            "effective": _safe_url(effective) if key == "base_url" else effective,
+            "value": _safe_url(value) if key == "base_url" else _display(value),
+            "effective": _safe_url(effective) if key == "base_url" else _display(effective),
             "default": defaults[key],
             "source": source,
             "origin": origin,
@@ -312,12 +346,13 @@ def apply(ctx: SettingsContext, config: Any) -> None:
     from . import workspace
 
     values = load_config(ctx.cwd).for_command("chat")
-    for key in ("timeout", "max_retries", "timezone"):
+    for key in _ENV_APPLIED:
         env = FIELDS[key]
         if env in ctx.env_locked:
             continue
-        if values.get(key) is not None:
-            os.environ[env] = str(values[key])
+        value = values.get(key)
+        if value is not None and value != []:
+            os.environ[env] = ",".join(map(str, value)) if isinstance(value, list) else str(value)
         else:
             os.environ.pop(env, None)
 

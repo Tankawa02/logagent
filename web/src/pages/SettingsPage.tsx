@@ -10,7 +10,11 @@ import type { ConnectionTestResult, SettingField, SettingKey, Settings, Settings
 const FIELD =
   'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:disabled:bg-zinc-900'
 
-const KEYS: SettingKey[] = ['model', 'base_url', 'timeout', 'max_retries', 'timezone', 'memory']
+const KEYS: SettingKey[] = ['model', 'subagent_model', 'fallback_models', 'base_url', 'timeout', 'max_retries', 'timezone', 'memory']
+
+function splitModels(value: string) {
+  return value.split(/[\s,]+/).filter(Boolean)
+}
 
 const MEMORY_OPTIONS = [
   { value: 'suggest', label: '主动建议：从对话里提议值得记住的内容，由你确认' },
@@ -47,7 +51,7 @@ export function SettingsPage() {
             模型连接与常用默认值。保存后立即对当前 serve 生效，不用重启；命令行的 analyze / chat 也读同一份配置。
           </p>
         </header>
-        {settings.isLoading && <FormSkeleton fields={6} label="加载设置" />}
+        {settings.isLoading && <FormSkeleton fields={8} label="加载设置" />}
         {settings.error && <ErrorBox error={settings.error} />}
         {/* 保存后用新数据重建表单，草稿自然回到「已保存」状态 */}
         {settings.data && <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />}
@@ -85,8 +89,16 @@ function SettingsForm({
   const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: 300_000, enabled: settings.can_chat })
   // 模型列表是按已保存的接口地址拉的；正在改地址或 Key 时列表可能对不上，先不拦
   const validateModel = !changed.includes('base_url') && !keyChanged
-  const modelUnknown =
-    validateModel && changed.includes('model') && !models.isFetching && isUnknownModel(draft.model, models.data?.models ?? [])
+  const modelOptions = models.data?.models ?? []
+  const checkModels = validateModel && !models.isFetching
+  const modelUnknown = checkModels && changed.includes('model') && isUnknownModel(draft.model, modelOptions)
+  const subagentUnknown =
+    checkModels && changed.includes('subagent_model') && isUnknownModel(draft.subagent_model, modelOptions)
+  const unknownFallbacks = checkModels && changed.includes('fallback_models')
+    ? splitModels(draft.fallback_models).filter((m) => isUnknownModel(m, modelOptions))
+    : []
+  const invalidModel = modelUnknown || subagentUnknown || unknownFallbacks.length > 0
+  const mainModel = draft.model.trim() || text(fields.model.effective)
 
   const save = useMutation({
     mutationFn: () => {
@@ -109,7 +121,7 @@ function SettingsForm({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (dirty && !modelUnknown && !save.isPending) save.mutate()
+    if (dirty && !invalidModel && !save.isPending) save.mutate()
   }
 
   function reset() {
@@ -192,6 +204,60 @@ function SettingsForm({
             }
           </Row>
           <ConnectionTest draft={draft} apiKey={clearKey ? '' : apiKey} fields={fields} />
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="模型分层" />
+        <div className="space-y-5 px-4 py-5">
+          <Row
+            label="子代理模型"
+            field={fields.subagent_model}
+            hint="子代理只做小范围取证（翻日志片段、查源码），可以配更便宜、更快的模型。留空与主模型相同。"
+          >
+            {(id) =>
+              fields.subagent_model.locked ? (
+                <input id={id} value={draft.subagent_model} disabled className={`${FIELD} font-mono`} />
+              ) : (
+                <ModelCombobox
+                  id={id}
+                  value={draft.subagent_model}
+                  onChange={set('subagent_model')}
+                  options={modelOptions}
+                  defaultModel={mainModel}
+                  loading={models.isFetching}
+                  validate={validateModel && changed.includes('subagent_model')}
+                  className={`${FIELD} font-mono`}
+                />
+              )
+            }
+          </Row>
+          <Row
+            label="备用模型"
+            field={fields.fallback_models}
+            hint="主模型重试后仍失败（限流、5xx、超时）时按顺序切换，主代理和子代理都生效。多个用逗号分隔，最多 5 个。"
+          >
+            {(id) => (
+              <>
+                <input
+                  id={id}
+                  value={draft.fallback_models}
+                  onChange={(e) => set('fallback_models')(e.target.value)}
+                  disabled={fields.fallback_models.locked}
+                  placeholder="不配置"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-invalid={unknownFallbacks.length > 0 || undefined}
+                  className={`${FIELD} font-mono ${unknownFallbacks.length ? 'border-red-400! dark:border-red-700!' : ''}`}
+                />
+                {unknownFallbacks.length > 0 && (
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    模型列表里没有：<span className="font-mono">{unknownFallbacks.join(', ')}</span>
+                  </p>
+                )}
+              </>
+            )}
+          </Row>
         </div>
       </Card>
 
@@ -283,8 +349,10 @@ function SettingsForm({
               <Check className="h-4 w-4" aria-hidden />
               已保存，立即生效
             </span>
-          ) : modelUnknown ? (
-            <span className="text-red-600 dark:text-red-400">默认模型不在可用列表里，请重新选择</span>
+          ) : invalidModel ? (
+            <span className="text-red-600 dark:text-red-400">
+              {modelUnknown ? '默认模型' : subagentUnknown ? '子代理模型' : '备用模型'}不在可用列表里，请重新选择
+            </span>
           ) : dirty ? (
             <span className="text-zinc-500">有未保存的修改</span>
           ) : null}
@@ -293,7 +361,7 @@ function SettingsForm({
           <RotateCcw className="h-4 w-4" aria-hidden />
           撤销修改
         </Button>
-        <Button type="submit" variant="primary" disabled={!dirty || modelUnknown || save.isPending}>
+        <Button type="submit" variant="primary" disabled={!dirty || invalidModel || save.isPending}>
           {save.isPending ? <Spinner className="border-white/40 border-t-white" /> : <Save className="h-4 w-4" aria-hidden />}
           保存
         </Button>
