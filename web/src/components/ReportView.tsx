@@ -121,9 +121,9 @@ export function ReportView({
               <Target className="h-3.5 w-3.5" aria-hidden />
               结论
             </h3>
-            <p className="text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50">{analysis.conclusion}</p>
+            <p className={`text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50 ${PROSE}`}>{analysis.conclusion}</p>
             {analysis.impact && (
-              <p className="mt-3 border-t border-brand-200/70 pt-3 text-sm leading-relaxed text-zinc-700 dark:border-brand-900/70 dark:text-zinc-300">
+              <p className={`mt-3 border-t border-brand-200/70 pt-3 text-sm leading-relaxed text-zinc-700 dark:border-brand-900/70 dark:text-zinc-300 ${PROSE}`}>
                 <span className="mr-1.5 font-medium text-zinc-900 dark:text-zinc-100">影响范围</span>
                 {analysis.impact}
               </p>
@@ -137,7 +137,7 @@ export function ReportView({
                     <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-[11px] font-semibold tabular-nums text-white dark:bg-zinc-100 dark:text-zinc-900">
                       {i + 1}
                     </span>
-                    <span className="min-w-0">
+                    <span className={PROSE}>
                       <RichText text={step} />
                     </span>
                   </li>
@@ -206,18 +206,18 @@ function IssueCard({
           <span className="mt-px flex h-6 shrink-0 items-center rounded-md bg-zinc-100 px-1.5 text-xs font-semibold tabular-nums text-zinc-700 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-700">
             问题 {number}
           </span>
-          <span className="min-w-0 text-pretty">{issue.title}</span>
+          <span className={`text-pretty ${PROSE}`}>{issue.title}</span>
         </h3>
         <dl className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
+          <div className="min-w-0 rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
             <dt className="text-xs font-medium text-zinc-500 dark:text-zinc-400">现象</dt>
-            <dd className="mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+            <dd className={`mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200 ${PROSE}`}>
               <RichText text={issue.symptoms} />
             </dd>
           </div>
-          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
+          <div className="min-w-0 rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/70">
             <dt className="text-xs font-medium text-zinc-500 dark:text-zinc-400">影响</dt>
-            <dd className="mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+            <dd className={`mt-1 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200 ${PROSE}`}>
               <RichText text={issue.impact} />
             </dd>
           </div>
@@ -295,7 +295,7 @@ function Hypothesis({
           <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">假设 {index}</span>
           <Badge tone={style.badge}>可信度 {CONFIDENCE[confidence]}</Badge>
         </div>
-        <p className="text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50">
+        <p className={`text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50 ${PROSE}`}>
           <RichText text={explanation} />
         </p>
         {points.length > 0 && (
@@ -305,7 +305,7 @@ function Hypothesis({
               {points.map((point, i) => (
                 <li key={i} className="flex gap-2 text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
                   <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-zinc-400" aria-hidden />
-                  <span className="min-w-0">
+                  <span className={PROSE}>
                     <RichText text={point} />
                   </span>
                 </li>
@@ -337,7 +337,7 @@ function ActionBlock({
   items: string[]
 }) {
   return (
-    <section className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+    <section className="min-w-0 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
       <h4 className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
         <span className={`flex h-6 w-6 items-center justify-center rounded-md ${ACCENT[accent]}`}>
           <Icon className="h-3.5 w-3.5" aria-hidden />
@@ -349,7 +349,7 @@ function ActionBlock({
           {items.map((item, i) => (
             <li key={i} className="flex gap-2 text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
               <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-zinc-400" aria-hidden />
-              <span className="min-w-0">
+              <span className={PROSE}>
                 <RichText text={item} />
               </span>
             </li>
@@ -361,6 +361,9 @@ function ActionBlock({
     </section>
   )
 }
+
+/** 报告正文容器：模型常写出 A/B 类名、长 URL 这类没有空格的长串，必须允许任意位置断行，否则会撑出卡片 */
+const PROSE = 'min-w-0 [overflow-wrap:anywhere]'
 
 /** 文件:行号、日志:行号 和 a.b() / FOO_BAR / key=value 这类代码片段用等宽高亮，扫一眼就能看到关键位置 */
 const TOKEN =
@@ -489,7 +492,7 @@ function SimilarCases({ cases }: { cases: SimilarCase[] }) {
               {c.correction && <Badge tone="amber">有纠正</Badge>}
               <span className="text-xs text-zinc-500">{c.matched.slice(0, 2).join(' · ')}</span>
             </div>
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">{c.correction ? `纠正：${c.correction}` : c.conclusion}</p>
+            <p className={`text-xs text-zinc-600 dark:text-zinc-400 ${PROSE}`}>{c.correction ? `纠正：${c.correction}` : c.conclusion}</p>
           </li>
         ))}
       </ul>
