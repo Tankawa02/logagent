@@ -2,11 +2,12 @@ import { Check } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Spinner } from './ui'
 
-export type FinishPhase = 'structuring' | 'verifying' | 'saving'
+export type FinishPhase = 'structuring' | 'verifying' | 'repairing' | 'saving'
 
 const STEPS: { phase: FinishPhase; label: string; hint: string }[] = [
   { phase: 'structuring', label: '整理结构化报告', hint: '正文已写完，模型正在生成结论、证据清单等可核对的字段' },
   { phase: 'verifying', label: '核对证据原文', hint: '逐条回到日志与源码里确认引用的行号和内容' },
+  { phase: 'repairing', label: '修正证据引用', hint: '有证据与原文对不上，正在对照原文校正行号或摘录' },
   { phase: 'saving', label: '保存本轮', hint: '写入会话记录，完成后可查看结构化报告' },
 ]
 
@@ -25,8 +26,10 @@ function useElapsed(key: string) {
 
 /** 正文之后到存档之间的收尾进度：这段时间页面上没有新文字，必须明确告诉用户还在跑 */
 export function FinishingStatus({ phase }: { phase: FinishPhase }) {
-  const current = STEPS.findIndex((s) => s.phase === phase)
-  const step = STEPS[current]
+  // 修正只在回查有不符时才发生：其余情况不列出这一步，免得看起来像做过修正
+  const steps = STEPS.filter((s) => s.phase !== 'repairing' || phase === 'repairing')
+  const current = steps.findIndex((s) => s.phase === phase)
+  const step = steps[current]
   const seconds = useElapsed(phase)
 
   return (
@@ -44,7 +47,7 @@ export function FinishingStatus({ phase }: { phase: FinishPhase }) {
       </div>
       <p className="mt-1 pl-[26px] text-xs text-zinc-600 dark:text-zinc-400">{step.hint}</p>
       <ol aria-label="收尾步骤" className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-[26px] text-xs">
-        {STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const done = i < current
           const active = i === current
           return (

@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelFallbackMiddleware
 
 from .budget import BudgetMiddleware, TokenBudget
 from .memory import MemoryPromptMiddleware, MemorySession, build_suggest_tool
-from .report import REPORT_INSTRUCTIONS
+from .report import EXTRACT_INSTRUCTIONS, REPORT_INSTRUCTIONS
 from .skills import build_skills, resolve_skill_sources
 from .tools import as_langchain_tools
 
@@ -227,6 +228,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 """
 
 
+SYSTEM_PROMPT_BASE = SYSTEM_PROMPT
 SYSTEM_PROMPT += REPORT_INSTRUCTIONS
 
 _SUBAGENT_PROMPT = """你是日志排查团队里负责取证的子代理，由主代理委派一个具体的子问题。
@@ -324,6 +326,10 @@ def _resolve_chat_model(model: Any, base_url: str | None, *, timeout: float | No
         return model
 
 
+def _env_models(name: str) -> list[str]:
+    return [m.strip() for m in os.environ.get(name, "").split(",") if m.strip()]
+
+
 def build_agent(
     model: str = "openai:gpt-4.1",
     checkpointer=None,
@@ -331,6 +337,10 @@ def build_agent(
     skill_dirs: Sequence[str | Path] | None = None,
     memory: MemorySession | None = None,
     budget: TokenBudget | None = None,
+    *,
+    subagent_model: str | None = None,
+    fallback_models: Sequence[str] | None = None,
+    structured: str | None = None,
 ):
     """创建并返回一个配置好的日志分析 deep agent。
 
@@ -345,10 +355,30 @@ def build_agent(
             传 None 时完全不加载 skill，包括默认目录；CLI 总会传入列表（可以为空）。
         memory: 本次运行的记忆上下文（见 memory.py）。传入后每轮把记忆追加到系统提示词末尾，
             suggest 模式下主代理还会多一个 `suggest_memory` 工具。传 None 时提示词与工具都保持原样。
+        subagent_model: 子代理用的模型（只做窄范围取证，可以配更便宜更快的模型）；
+            默认读环境变量 LOG_AGENT_SUBAGENT_MODEL，都没有时与主模型相同。
+        fallback_models: 备用模型，主模型重试后仍失败（429 / 5xx / 超时）时按顺序切换；
+            默认读 LOG_AGENT_FALLBACK_MODELS（逗号分隔）。
+        structured: 结构化报告的产出方式 inline / extract / auto，默认读 LOG_AGENT_STRUCTURED，缺省 auto
+            （见 postprocess.py）。
     """
+    from .postprocess import PostProcessor, normalize_mode
+
+    mode = normalize_mode(structured if structured is not None else os.environ.get("LOG_AGENT_STRUCTURED"))
     resolved_model = _resolve_chat_model(model, base_url)
+    sub_name = subagent_model if subagent_model is not None else os.environ.get("LOG_AGENT_SUBAGENT_MODEL", "")
+    fallback_names = list(fallback_models) if fallback_models is not None else _env_models("LOG_AGENT_FALLBACK_MODELS")
+    fallbacks = [_resolve_chat_model(name, base_url) for name in fallback_names if name and name != model]
     tools = as_langchain_tools()
     subagents = _subagents(tools)
+    if sub_name.strip() and sub_name.strip() != model:
+        sub_model = _resolve_chat_model(sub_name.strip(), base_url)
+        for spec in subagents:
+            spec["model"] = sub_model
+    if fallbacks:
+        # 子代理也挂上：子代理模型挂掉时同样切到备用模型，而不是让整个 task 失败
+        for spec in subagents:
+            spec["middleware"] = [*spec["middleware"], ModelFallbackMiddleware(*fallbacks)]
     middleware: list[AgentMiddleware] = [
         _HarnessOverrides(task_description=_TASK_DESCRIPTION.format(agents=_subagent_lines(subagents))),
     ]
@@ -368,12 +398,25 @@ def build_agent(
             main_tools.append(build_suggest_tool(memory))
     if budget is not None:
         middleware.append(BudgetMiddleware(budget))
-    return create_deep_agent(
+    if fallbacks:
+        # 放在最内层：前面的中间件改好的请求（工具列表、系统提示词）原样交给备用模型
+        middleware.append(ModelFallbackMiddleware(*fallbacks))
+    graph = create_deep_agent(
         model=resolved_model,
         tools=main_tools,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=_system_prompt(mode),
         subagents=subagents,
         middleware=middleware,
         backend=backend,
         checkpointer=checkpointer,
     )
+    # StreamRenderer.run 收尾时取用：结构化抽取与证据修正（测试里的脚本化 agent 没有这个属性，行为不变）
+    repair = os.environ.get("LOG_AGENT_EVIDENCE_REPAIR", "on").strip().lower() not in ("off", "false", "0", "no")
+    graph.log_agent_post = PostProcessor(resolved_model, mode, repair=repair)
+    return graph
+
+
+def _system_prompt(mode: str) -> str:
+    if mode == "extract":
+        return SYSTEM_PROMPT_BASE + EXTRACT_INSTRUCTIONS
+    return SYSTEM_PROMPT

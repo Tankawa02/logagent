@@ -24,6 +24,9 @@ build/
 venv/
 .uv/
 
+# log-agent eval 默认输出目录
+.log-agent-eval/
+
 # 缓存
 .mypy_cache/
 .pytest_cache/

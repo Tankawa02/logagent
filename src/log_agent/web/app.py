@@ -253,6 +253,11 @@ class ShareRequest(BaseModel):
 SESSION_TITLE_MAX = 80
 
 
+class FeedbackRequest(BaseModel):
+    rating: Literal["up", "down", "wrong"]
+    comment: str = Field(default="", max_length=2000)
+
+
 class SessionPatchRequest(BaseModel):
     title: str | None = None
     pinned: bool | None = None
@@ -405,9 +410,11 @@ def create_app(config: WebConfig) -> FastAPI:
             items = store.search(q) if q.strip() else store.list()
             briefs = store.last_turn_briefs()
             pinned = store.pinned_names()
+            costs = store.session_costs()
         return [
             {
                 **_session_dict(info),
+                "cost_usd": costs.get(info.name),
                 "pinned": info.name in pinned,
                 "last": {"turn": info.turns, **briefs[info.name]} if info.name in briefs else None,
             }
@@ -500,9 +507,11 @@ def create_app(config: WebConfig) -> FastAPI:
                 "generated_at": row["generated_at"],
                 "elapsed_seconds": elapsed if measured else None,
                 "usage": (
-                    {"input": row["input"] or 0, "output": row["output"] or 0, "total": row["total"] or 0}
+                    {"input": row["input"] or 0, "output": row["output"] or 0, "total": row["total"] or 0,
+                     "cache_read": row["cache_read"] or 0}
                     if measured else None
                 ),
+                "cost_usd": row["cost_usd"] if measured else None,
                 "tool_count": len(tools),
                 "failed_tools": sum(1 for t in tools if t[2]),
                 "incomplete_tools": sum(1 for t in tools if t[3]),
@@ -563,6 +572,45 @@ def create_app(config: WebConfig) -> FastAPI:
             if not ShareStore(conn).revoke(scope.name, share_id):
                 raise HTTPException(404, "分享链接不存在")
         return {"revoked": share_id}
+
+    # ---- 回答反馈：有用 / 没用 / 根因不对（附纠正）---------------------------
+
+    @app.put("/api/sessions/{name}/turns/{number}/feedback")
+    def put_feedback(number: int, body: FeedbackRequest, scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        with _connect(config) as conn:
+            store, _ = _load(conn, scope.name)
+            if not store.set_feedback(scope.name, number, body.rating, body.comment):
+                raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
+            return {"turn": number, "feedback": store.feedback(scope.name).get(number)}
+
+    @app.delete("/api/sessions/{name}/turns/{number}/feedback")
+    def delete_feedback(number: int, scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        with _connect(config) as conn:
+            store, _ = _load(conn, scope.name)
+            store.clear_feedback(scope.name, number)
+        return {"turn": number, "feedback": None}
+
+    @app.get("/api/sessions/{name}/turns/{number}/eval-case")
+    def eval_case(number: int, scope: Scope = Depends(owner_scope)) -> Response:
+        """把这一轮导出为评测案例 case.toml（见 evals.py），用于回归评测。"""
+        from ..evals import case_from_turn
+
+        with _connect(config) as conn:
+            store, _ = _load(conn, scope.name)
+            payload = store.turn(scope.name, number)
+            feedback = store.feedback(scope.name).get(number)
+        if payload is None:
+            raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
+        filename = f"{scope.name}-{number}.case.toml"
+        return Response(case_from_turn(payload, feedback), media_type="application/toml; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+    @app.get("/api/feedback", dependencies=[Depends(require_owner)])
+    def list_feedback() -> list[dict[str, Any]]:
+        if not config.db_path.exists():
+            return []
+        with _connect(config) as conn:
+            return _redacted_copy(SessionStore(conn).feedback_summary(), config.redact_owner)
 
     # ---- 只读接口：本人与分享链接共用 ---------------------------------------
 
@@ -679,6 +727,9 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
         with _connect(config) as conn:
             store, info = _load(conn, scope.name)
             turns = [_turn_brief(n, p) for n, p in store.history(scope.name)]
+            feedback = {} if scope.read_only else store.feedback(scope.name)
+        for brief in turns:
+            brief["feedback"] = feedback.get(brief["turn"])
         result = {**(_shared_session_dict(info) if scope.read_only else _session_dict(info)),
                   "read_only": scope.read_only, "turn_list": turns}
         if scope.read_only:
@@ -694,7 +745,8 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
             raise HTTPException(404, f"第 {number} 轮不存在或未保存报告")
         payload = {**payload, "settings": {k: v for k, v in payload.get("settings", {}).items() if k != "base_url"}}
         if scope.read_only:
-            payload = _without_trace_detail(_shared_copy(payload, info))
+            # 历史案例指向分享对象看不到的其他会话
+            payload = _without_trace_detail(_shared_copy({k: v for k, v in payload.items() if k != "similar_cases"}, info))
         payload = _redacted_copy(payload, scope.redact, ViewSourceResolver(info.logs, info.code))
         if not payload.get("schema_version"):
             payload = {**payload, "analysis": None, "structured_status": "missing"}

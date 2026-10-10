@@ -386,6 +386,65 @@ def check_analysis(
     }
 
 
+# 全文重定位最多扫描的日志行数：只在回查不通过后的修正阶段用，大日志宁可放弃也不拖慢收尾
+RELOCATE_MAX_LOG_LINES = 100_000
+_RELOCATE_MAX_STARTS = 50
+
+
+def _read_source(kind: str, path: Path, lo: int, hi: int) -> dict[int, str]:
+    return (_read_log_lines if kind == "log" else _read_code_lines)(path, lo, hi)[0]
+
+
+def relocate(resolver: SourceResolver, evidence: dict[str, Any]) -> tuple[int, int] | None:
+    """摘录真实存在但行号写错太多（超出偏移容差）时，在整份来源里找它实际所在的行。
+
+    只认逐字命中（不做模糊匹配）；出现多处时取离原引用最近的一处。找不到返回 None。
+    """
+    target = resolver.resolve(str(evidence.get("source", "")))
+    reqs = _requirements(str(evidence.get("excerpt", "")))
+    if target is None or not reqs:
+        return None
+    kind, path = target
+    try:
+        lines = _read_source(kind, path, 1, RELOCATE_MAX_LOG_LINES if kind == "log" else 10**9)
+    except Exception:  # noqa: BLE001 — 修正是锦上添花，读取失败就放弃
+        return None
+    normalized = {n: _norm(t) for n, t in lines.items()}
+    starts = [n for n, text in normalized.items() if _line_satisfies(reqs[0], text, False)][:_RELOCATE_MAX_STARTS]
+    cited = int(evidence.get("line_start") or 1)
+    found: list[tuple[int, int]] = []
+    for start in starts:
+        hits, cursor = [start], start
+        for variants in reqs[1:]:
+            nxt = next((n for n in range(cursor + 1, cursor + 2 + SHIFT_TOLERANCE)
+                        if n in normalized and _line_satisfies(variants, normalized[n], False)), None)
+            if nxt is None:
+                break
+            hits.append(nxt)
+            cursor = nxt
+        if len(hits) == len(reqs):
+            found.append((min(hits), max(hits)))
+    return min(found, key=lambda span: abs(span[0] - cited)) if found else None
+
+
+def source_window(resolver: SourceResolver, source: str, start: int, end: int,
+                  pad: int = 12, limit: int = 80) -> str | None:
+    """所引行前后的原文（带行号、与工具输出同样脱敏），用于让模型对照修正引用。"""
+    target = resolver.resolve(source)
+    if target is None:
+        return None
+    kind, path = target
+    lo = max(1, start - pad)
+    hi = min(max(start, min(end, start + limit)) + pad, lo + limit)
+    try:
+        lines = _read_source(kind, path, lo, hi)
+    except Exception:  # noqa: BLE001
+        return None
+    if not lines:
+        return None
+    return "\n".join(f"{n}: {_clip(text, 400)}" for n, text in sorted(lines.items()))
+
+
 def item_for(check: dict[str, Any] | None, issue: int, index: int) -> dict[str, Any] | None:
     if not check:
         return None

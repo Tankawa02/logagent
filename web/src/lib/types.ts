@@ -130,7 +130,9 @@ export interface TraceItem {
   generated_at: string | null
   /** 旧版恢复的轮次没有保存耗时与用量，为 null */
   elapsed_seconds: number | null
-  usage: { input: number; output: number; total: number } | null
+  usage: { input: number; output: number; total: number; cache_read?: number } | null
+  /** 本轮费用（美元）；价格未知或旧会话为 null */
+  cost_usd?: number | null
   tool_count: number
   failed_tools: number
   incomplete_tools: number
@@ -159,14 +161,67 @@ export interface TurnPayload {
   confidence: string | null
   budget_hit?: boolean
   elapsed_seconds: number
-  usage: { input?: number; output?: number; total?: number }
+  usage: Usage
   tool_calls: ToolCall[]
   llm_calls?: LlmCall[]
   report: string
   provenance?: string
+  /** inline：模型在正文末尾写的附录；extracted：正文写完后单独抽取 */
+  structured_source?: 'inline' | 'extracted' | null
+  evidence_repair?: EvidenceRepair | null
+  cost?: TurnCost | null
+  similar_cases?: SimilarCase[]
+}
+
+export interface Usage {
+  input?: number
+  output?: number
+  total?: number
+  cache_read?: number
+  cache_write?: number
+  reasoning?: number
+}
+
+export interface TurnCost {
+  usd: number | null
+  complete: boolean
+  unpriced_tokens?: number
+  sources?: string[]
+}
+
+export interface EvidenceRepair {
+  adopted: boolean
+  shifted_fixed?: number
+  relocated?: number
+  model_fixed?: number
+  dropped?: number
+  error?: string
+}
+
+export interface SimilarCase {
+  session: string
+  turn: number
+  title: string
+  conclusion: string
+  confidence: string
+  created_at: string
+  matched: string[]
+  correction: string
+  confirmed: boolean
+  same_project: boolean
+}
+
+export type FeedbackRating = 'up' | 'down' | 'wrong'
+
+export interface TurnFeedback {
+  rating: FeedbackRating
+  comment: string
+  created_at: string
 }
 
 export interface TurnBrief {
+  /** 本人视图才有：这一轮的回答反馈 */
+  feedback?: TurnFeedback | null
   turn: number
   question: string
   generated_at: string | null
@@ -199,6 +254,8 @@ export interface SessionSummary {
   settings: Record<string, unknown>
   /** 只在会话列表里返回 */
   pinned?: boolean
+  /** 只在会话列表里返回：已记录的费用合计（美元），没有任何一轮能计价时为 null */
+  cost_usd?: number | null
   /** 来源 / 范围在会话中途改过、还没在下一次提问里告知模型 */
   pending_change?: boolean
   last?: TurnBrief | null

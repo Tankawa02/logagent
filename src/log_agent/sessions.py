@@ -74,6 +74,14 @@ class SessionStore:
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS log_agent_session_pins (name TEXT PRIMARY KEY, pinned_at TEXT NOT NULL)"
             )
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS log_agent_feedback (name TEXT NOT NULL, turn_number INTEGER NOT NULL, "
+                "rating TEXT NOT NULL, comment TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, "
+                "PRIMARY KEY (name, turn_number))"
+            )
+            from .cases import ensure_schema
+
+            ensure_schema(self.conn)
             columns = {r[1] for r in self.conn.execute("PRAGMA table_info(log_agent_turns)")}
             if "turn_number" not in columns:
                 self.conn.execute("ALTER TABLE log_agent_turns ADD COLUMN turn_number INTEGER")
@@ -177,6 +185,69 @@ class SessionStore:
                     "SELECT name, ?, turns FROM log_agent_sessions WHERE name = ?",
                     (json.dumps(payload, ensure_ascii=False), name),
                 )
+        if payload is not None:
+            self._index_case(name, payload)
+
+    def _index_case(self, name: str, payload: dict) -> None:
+        """登记历史案例（见 cases.py）；失败不影响本轮保存。"""
+        from .cases import index_turn
+
+        row = self.conn.execute("SELECT turns FROM log_agent_sessions WHERE name = ?", (name,)).fetchone()
+        if not row:
+            return
+        try:
+            with self.conn:
+                index_turn(self.conn, name, int(row[0]), payload)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---- 回答反馈 ---------------------------------------------------------
+
+    FEEDBACK_RATINGS = ("up", "down", "wrong")
+
+    def set_feedback(self, name: str, number: int, rating: str, comment: str = "") -> bool:
+        if rating not in self.FEEDBACK_RATINGS:
+            raise ValueError(f"未知的反馈类型：{rating}")
+        if self.turn(name, number) is None:
+            return False
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO log_agent_feedback (name, turn_number, rating, comment, created_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(name, turn_number) DO UPDATE SET rating = excluded.rating, comment = excluded.comment, "
+                "created_at = excluded.created_at",
+                (name, number, rating, comment.strip()[:2000], _now()),
+            )
+        return True
+
+    def clear_feedback(self, name: str, number: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM log_agent_feedback WHERE name = ? AND turn_number = ?", (name, number))
+
+    def feedback(self, name: str) -> dict[int, dict[str, str]]:
+        rows = self.conn.execute(
+            "SELECT turn_number, rating, comment, created_at FROM log_agent_feedback WHERE name = ?", (name,),
+        )
+        return {int(n): {"rating": r, "comment": c, "created_at": t} for n, r, c, t in rows}
+
+    def feedback_summary(self) -> list[dict[str, Any]]:
+        """全部反馈（新的在前），带上该轮的问题与结论，供导出评测案例和统计。"""
+        rows = self.conn.execute(
+            "SELECT f.name, f.turn_number, f.rating, f.comment, f.created_at, "
+            "json_extract(t.payload, '$.question'), json_extract(t.payload, '$.summary'), "
+            "json_extract(t.payload, '$.model') FROM log_agent_feedback f "
+            "JOIN log_agent_turns t ON t.name = f.name AND t.turn_number = f.turn_number "
+            "WHERE json_valid(t.payload) ORDER BY f.created_at DESC"
+        )
+        keys = ("session", "turn", "rating", "comment", "created_at", "question", "summary", "model")
+        return [dict(zip(keys, row, strict=True)) for row in rows]
+
+    def session_costs(self) -> dict[str, float]:
+        """每个会话已记录的费用合计（美元）；没有任何一轮能计价的会话不出现。"""
+        rows = self.conn.execute(
+            "SELECT name, SUM(json_extract(payload, '$.cost.usd')) FROM log_agent_turns "
+            "WHERE json_valid(payload) AND json_type(payload, '$.cost.usd') IN ('real', 'integer') GROUP BY name"
+        )
+        return {name: round(float(total), 6) for name, total in rows if total is not None}
 
     def history(self, name: str, search: str = "") -> list[tuple[int, dict]]:
         rows = self.conn.execute(
@@ -276,6 +347,7 @@ class SessionStore:
                    json_extract(t.payload, '$.usage.input'), json_extract(t.payload, '$.usage.output'),
                    json_extract(t.payload, '$.usage.total'), json_extract(t.payload, '$.budget_hit'),
                    json_extract(t.payload, '$.provenance'),
+                   json_extract(t.payload, '$.usage.cache_read'), json_extract(t.payload, '$.cost.usd'),
                    CASE WHEN json_type(t.payload, '$.llm_calls') = 'array'
                         THEN json_array_length(t.payload, '$.llm_calls') END,
                    (SELECT json_group_array(json_array(
@@ -289,7 +361,8 @@ class SessionStore:
             (*params, limit),
         )
         keys = ("session", "title", "turn", "question", "model", "status", "error", "generated_at",
-                "elapsed_seconds", "input", "output", "total", "budget_hit", "provenance", "llm_calls", "tools")
+                "elapsed_seconds", "input", "output", "total", "budget_hit", "provenance", "cache_read", "cost_usd",
+                "llm_calls", "tools")
         result = []
         for row in rows:
             item = dict(zip(keys, row, strict=True))
@@ -318,7 +391,8 @@ class SessionStore:
         with self.conn:
             cur = self.conn.execute("DELETE FROM log_agent_sessions WHERE name = ?", (name,))
             deleted = cur.rowcount > 0
-            for table in ("log_agent_session_settings", "log_agent_turns", "log_agent_session_pins"):
+            for table in ("log_agent_session_settings", "log_agent_turns", "log_agent_session_pins",
+                          "log_agent_feedback", "log_agent_cases"):
                 self.conn.execute(f"DELETE FROM {table} WHERE name = ?", (name,))
             # Web 分享链接随会话一起失效；从没开过 serve 的库里没有这张表
             try:

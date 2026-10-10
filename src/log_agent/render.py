@@ -56,6 +56,7 @@ from .report import visible_report
 from .subtrace import SubagentTracker
 from .term import REFRESH_PER_SECOND, console, glyphs
 from .trace_capture import OUTPUT_CHARS, TOOL_OUTPUT_CHARS, clip, input_delta, output_detail, tool_output_text
+from .usage import add_usage, empty_usage
 
 __all__ = [
     "StreamRenderer",
@@ -117,7 +118,7 @@ class StreamRenderer:
         self.running: list[ToolRun] = []
         self.seen_calls: set[str] = set()
         self.tool_count = 0
-        self.usage = {"input": 0, "output": 0, "total": 0}
+        self.usage = empty_usage()
         self.pending_chunks = 0
         self.writing = False
         self.rendered_any = False
@@ -133,8 +134,7 @@ class StreamRenderer:
     # ---- 统计（主代理 + 子代理）--------------------------------------------
 
     def _total_usage(self) -> dict[str, int]:
-        sub = self.tracker.usage
-        return {key: self.usage[key] + sub[key] for key in self.usage}
+        return add_usage(add_usage(empty_usage(), self.usage), self.tracker.usage)
 
     def _total_tools(self) -> int:
         return self.tool_count + self.tracker.tool_count
@@ -338,6 +338,9 @@ class StreamRenderer:
             "first_token": round(first_token - call_start, 3) if first_token is not None else None,
             "input": None if incomplete else usage.get("input", 0),
             "output": None if incomplete else usage.get("output", 0),
+            "cache_read": None if incomplete else usage.get("cache_read", 0),
+            "reasoning": None if incomplete else usage.get("reasoning", 0),
+            "usage": None if incomplete else dict(usage),
             "tool_calls": None if incomplete else len(getattr(output, "tool_calls", None) or []),
             "model": str(metadata.get("model_name") or metadata.get("model") or ""),
             "finish_reason": str(metadata.get("finish_reason") or ""),
@@ -390,8 +393,7 @@ class StreamRenderer:
         self.writing = False
         self.pending_chunks = 0
         call_usage = usage_from_message(output) if output is not None else {}
-        for key, value in call_usage.items():
-            self.usage[key] += value
+        add_usage(self.usage, call_usage)
         self._record_llm_call(output, call_start, first_token, call_usage)
         final_text = final_text.strip()
         if holding and getattr(output, "tool_calls", None) and not looks_like_report(final_text):
@@ -538,6 +540,14 @@ class StreamRenderer:
             budget_hit=budget_hit,
             llm_calls=list(self.llm_calls),
         )
+        post = getattr(agent, "log_agent_post", None)
+        if (result.structured_status != "valid" and post is not None and post.extracts
+                and result.ok and result.report.strip()):
+            self._on_phase("structuring")
+            analysis, calls = post.structure(result.report)
+            self._absorb_post_calls(result, calls)
+            if analysis is not None:
+                result.adopt_analysis(analysis, "extracted")
         if result.structured_status != "valid":
             console.print(Text("未获取到有效结构化报告，保留原始回答；自动化异常判定为未知。", style="warn"))
         elif self.linker is not None:
@@ -555,5 +565,62 @@ class StreamRenderer:
                     "mismatch": 0, "unresolved": 0, "items": [],
                     "error": redact_log(f"{type(exc).__name__}: {exc}"),
                 }
+            check = result.evidence_check
+            if (post is not None and post.repairs and check and not check.get("error")
+                    and (check["mismatch"] or check["shifted"])):
+                self._on_phase("repairing")
+                try:
+                    analysis, check, repair, calls = post.repair(
+                        result.analysis, check, self.linker.log_paths, self.linker.code_dirs,
+                    )
+                except Exception as exc:  # noqa: BLE001 — 修正失败保留原结果
+                    repair, calls = {"adopted": False, "error": f"{type(exc).__name__}: {exc}"[:300]}, []
+                else:
+                    if repair.get("adopted"):
+                        result.analysis, result.evidence_check = analysis, check
+                self._absorb_post_calls(result, calls)
+                result.evidence_repair = repair
+                print_repair_note(repair)
             print_evidence_check(result.evidence_check)
+        result.usage_by_model = self._usage_by_model(result)
+        if post is not None:
+            result.elapsed = round(time.perf_counter() - self.start, 3)  # 收尾调用也算进本轮耗时
         return result
+
+    def _absorb_post_calls(self, result: TurnResult, calls: list[dict]) -> None:
+        """收尾调用（结构化抽取 / 证据修正）也计入本轮用量与 trace。"""
+        for call in calls:
+            add_usage(result.usage, call.get("usage"))
+            started = call.pop("t0", None)
+            offset = (started - self.start) if started is not None else time.perf_counter() - self.start
+            result.llm_calls.append({**call, "started": round(max(0.0, offset), 3)})
+
+    def _usage_by_model(self, result: TurnResult) -> dict[str, dict[str, int]]:
+        by_model: dict[str, dict[str, int]] = {}
+        for call in result.llm_calls:
+            if call.get("usage"):
+                add_usage(by_model.setdefault(call.get("model") or "", empty_usage()), call["usage"])
+        for model, usage in self.tracker.usage_by_model.items():
+            add_usage(by_model.setdefault(model, empty_usage()), usage)
+        counted = add_usage(empty_usage(), None)
+        for usage in by_model.values():
+            add_usage(counted, usage)
+        # 流式时拿不到逐次用量、只能从最终状态汇总的部分，记在未知模型下按会话模型计价
+        missing = {key: max(0, result.usage.get(key, 0) - counted[key]) for key in counted}
+        if any(missing.values()):
+            add_usage(by_model.setdefault("", empty_usage()), missing)
+        return by_model
+
+
+def print_repair_note(repair: dict) -> None:
+    if not repair.get("adopted"):
+        return
+    parts = []
+    if repair.get("shifted_fixed") or repair.get("relocated"):
+        parts.append(f"校正行号 {repair.get('shifted_fixed', 0) + repair.get('relocated', 0)} 条")
+    if repair.get("model_fixed"):
+        parts.append(f"修正摘录 {repair['model_fixed']} 条")
+    if repair.get("dropped"):
+        parts.append(f"移除无法对应原文的证据 {repair['dropped']} 条")
+    if parts:
+        console.print(Text(f"{glyphs.notice} 证据已自动修正：" + "，".join(parts), style="muted"))

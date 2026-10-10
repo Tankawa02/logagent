@@ -34,6 +34,7 @@ import {
 } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
 import { ReportView, evidenceTargets } from '../components/ReportView'
+import { TurnFeedbackBar } from '../components/TurnFeedbackBar'
 import { SessionSourcesDialog } from '../components/SessionSourcesDialog'
 import { SharePanel } from '../components/SharePanel'
 import { SourceViewer } from '../components/SourceViewer'
@@ -933,6 +934,7 @@ function ReportPane({
     queryFn: () => api.turn(scope, turnNumber!),
     enabled: turnNumber !== undefined,
   })
+  const queryClient = useQueryClient()
   const ordered = useMemo(() => [...info.turn_list].reverse(), [info.turn_list])
   const current = info.turn_list.find((t) => t.turn === turnNumber)
   return (
@@ -982,6 +984,15 @@ function ReportPane({
         </div>
       )}
       {turn.data && <ReportView payload={turn.data} activeEvidence={activeEvidence} onOpen={onOpen} />}
+      {turn.data && current && scope.kind === 'owner' && (
+        <TurnFeedbackBar
+          key={current.turn}
+          session={scope.name}
+          turn={current.turn}
+          feedback={current.feedback}
+          onSaved={() => void queryClient.invalidateQueries({ queryKey: scopeKey(scope) })}
+        />
+      )}
     </div>
   )
 }

@@ -131,11 +131,7 @@ def _evidence_entry(check: dict | None, issue: int, index: int, evidence: dict) 
     return head + "\n\n    " + evidence["excerpt"].replace("\n", "\n    ")
 
 
-REPORT_INSTRUCTIONS = """
-## 机器可读报告附录（主代理每轮最终回答必须提供）
-在所有正文之后追加且仅追加一个 ```log-agent-report 围栏，内容是符合下方 JSON Schema 的 JSON 对象。
-不要在该围栏之后输出其他内容。正文仍按上述要求撰写；附录供本地程序校验与生成速览和工单。
-assessment 必须显式填写 finding（发现问题）、clear（检查后未发现问题）、unknown（无法判定）。
+REPORT_RULES = """assessment 必须显式填写 finding（发现问题）、clear（检查后未发现问题）、unknown（无法判定）。
 不能仅根据是否有 ERROR 判断。finding 必须有问题列表，clear 的 issues 必须为空。
 confidence 使用 high/medium/low；结论措辞不作为自动判定依据。简短追问、取证不足可用 unknown。
 每个问题写明现象、影响、证据、根因假设及推导、待确认项、处理建议、复现条件、验证步骤。
@@ -144,5 +140,19 @@ confidence 使用 high/medium/low；结论措辞不作为自动判定依据。�
 程序会按 source 和行号回查原文核对 excerpt：excerpt 必须逐字摘自工具输出（可去掉行号前缀、用 … 省略中间部分），
 不要改写、翻译或概括；核对不通过的证据会在报告里标为“与原文不符”。git 提交不作为 evidence 条目，写在根因假设的 reasoning 里。
 根因是待验证的假设时明确标注，不能包装成已证实事实。不要自行填写运行时间、时区或来源清单，程序会记录。
-Schema：
-""" + json.dumps(Analysis.model_json_schema(), ensure_ascii=False)
+"""
+
+REPORT_INSTRUCTIONS = """
+## 机器可读报告附录（主代理每轮最终回答必须提供）
+在所有正文之后追加且仅追加一个 ```log-agent-report 围栏，内容是符合下方 JSON Schema 的 JSON 对象。
+不要在该围栏之后输出其他内容。正文仍按上述要求撰写；附录供本地程序校验与生成速览和工单。
+""" + REPORT_RULES + "Schema：\n" + json.dumps(Analysis.model_json_schema(), ensure_ascii=False)
+
+# structured = "extract" 时替代 REPORT_INSTRUCTIONS：附录由程序在正文写完后单独抽取（见 postprocess.py）
+EXTRACT_INSTRUCTIONS = """
+## 证据写法（程序会据此生成结构化报告）
+本轮不需要输出 JSON 附录，程序会在你写完正文后单独抽取结构化数据。为了让抽取出的证据能通过原文核对：
+- "关键证据"里的日志和源码用代码块**逐字**贴出工具返回的原文（可去掉行号前缀、用 … 省略中间部分），不要改写或翻译；
+- 每段代码块前写明 `日志文件名:起止行号` 或 `相对路径:起止行号`，行号必须来自工具返回的真实行号；
+- 结论里明确写出判定：发现问题 / 检查后未发现问题 / 无法判定。
+"""

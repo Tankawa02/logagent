@@ -143,6 +143,9 @@ def print_stats(elapsed: float, usage: dict[str, int], tool_count: int, interrup
             f"{sep}{glyphs.up}{usage['input']:,} {glyphs.down}{usage['output']:,}{sep}共 {usage['total']:,} tokens",
             style="muted",
         )
+        cached = int(usage.get("cache_read") or 0)
+        if cached and usage["input"]:
+            title.append(f"{sep}缓存命中 {cached / usage['input']:.0%}", style="muted")
     else:
         title.append(f"{sep}tokens 未知", style="muted")
     console.print()

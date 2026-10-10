@@ -83,7 +83,7 @@ class TokenBudget(BaseCallbackHandler):
             return True
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        total = _usage_of(response)["total"]
+        total = sum(usage["total"] for _model, usage in _usage_of(response))
         with self._lock:
             self._used += total
 

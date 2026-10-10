@@ -16,6 +16,8 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+from .usage import add_usage, empty_usage, usage_from_metadata
+
 _MAX_ANCESTRY = 256
 
 
@@ -35,15 +37,16 @@ class SubCall:
         return self.ended is not None
 
 
-def _usage_of(response: Any) -> dict[str, int]:
-    totals = {"input": 0, "output": 0, "total": 0}
+def _usage_of(response: Any) -> list[tuple[str, dict[str, int]]]:
+    """每个 generation 的（接口回报的模型名, 用量）。"""
+    found = []
     for batch in getattr(response, "generations", None) or []:
         for generation in batch:
-            usage = getattr(getattr(generation, "message", None), "usage_metadata", None) or {}
-            totals["input"] += int(usage.get("input_tokens") or 0)
-            totals["output"] += int(usage.get("output_tokens") or 0)
-            totals["total"] += int(usage.get("total_tokens") or 0)
-    return totals
+            message = getattr(generation, "message", None)
+            metadata = getattr(message, "response_metadata", None) or {}
+            model = str(metadata.get("model_name") or metadata.get("model") or "")
+            found.append((model, usage_from_metadata(getattr(message, "usage_metadata", None))))
+    return found
 
 
 class SubagentTracker(BaseCallbackHandler):
@@ -57,7 +60,8 @@ class SubagentTracker(BaseCallbackHandler):
         self._task_runs: dict[UUID, str] = {}
         self._calls: dict[UUID, SubCall] = {}
         self._children: dict[str, list[SubCall]] = defaultdict(list)
-        self._usage = {"input": 0, "output": 0, "total": 0}
+        self._usage = empty_usage()
+        self._usage_by_model: dict[str, dict[str, int]] = {}
         self._model_calls = 0
         self._main_inputs: list[list[Any]] = []
 
@@ -71,6 +75,11 @@ class SubagentTracker(BaseCallbackHandler):
     def usage(self) -> dict[str, int]:
         with self._lock:
             return dict(self._usage)
+
+    @property
+    def usage_by_model(self) -> dict[str, dict[str, int]]:
+        with self._lock:
+            return {model: dict(usage) for model, usage in self._usage_by_model.items()}
 
     @property
     def tool_count(self) -> int:
@@ -124,8 +133,9 @@ class SubagentTracker(BaseCallbackHandler):
             if self._owner(run_id) is None:
                 return
             self._model_calls += 1
-            for key, value in _usage_of(response).items():
-                self._usage[key] += value
+            for model, usage in _usage_of(response):
+                add_usage(self._usage, usage)
+                add_usage(self._usage_by_model.setdefault(model, empty_usage()), usage)
 
     def on_tool_start(
         self,

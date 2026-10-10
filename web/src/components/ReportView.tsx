@@ -12,9 +12,21 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { ASSESSMENT, CHECK_STATUS, CONFIDENCE, EVIDENCE, formatDuration, formatGenerated, splitPath, visibleReport } from '../lib/format'
+import { Link } from '@tanstack/react-router'
+import {
+  ASSESSMENT,
+  CHECK_STATUS,
+  CONFIDENCE,
+  EVIDENCE,
+  cacheHitRate,
+  formatDuration,
+  formatGenerated,
+  formatUsd,
+  splitPath,
+  visibleReport,
+} from '../lib/format'
 import { useCopy } from '../lib/hooks'
-import type { Evidence, EvidenceCheck, EvidenceItem, Issue, SourceTarget, TurnPayload } from '../lib/types'
+import type { Evidence, EvidenceCheck, EvidenceItem, EvidenceRepair, Issue, SimilarCase, SourceTarget, TurnPayload } from '../lib/types'
 import { Markdown } from './Markdown'
 import { Badge, List } from './ui'
 
@@ -51,6 +63,7 @@ export function ReportView({
   const analysis = payload.analysis
   const check = payload.evidence_check
   const report = visibleReport(payload.report || '')
+  const cacheRate = cacheHitRate(payload.usage)
 
   return (
     <div className="space-y-6 p-4 sm:p-5">
@@ -72,10 +85,24 @@ export function ReportView({
             <span>
               · {formatDuration(payload.elapsed_seconds)} · 工具 {payload.tool_calls.length} 次 · tokens{' '}
               {(payload.usage.total ?? 0).toLocaleString()}
+              {cacheRate != null && cacheRate > 0 && <> · 缓存命中 {Math.round(cacheRate * 100)}%</>}
+              {payload.cost && (
+                <span title={payload.cost.complete ? undefined : '部分调用的模型价格未知，未计入'}>
+                  {' '}
+                  · 费用 {formatUsd(payload.cost.usd)}
+                  {payload.cost.usd != null && !payload.cost.complete && '+'}
+                </span>
+              )}
             </span>
+          )}
+          {payload.structured_source === 'extracted' && (
+            <Badge title="模型没有写出合格的结构化附录，正文写完后单独抽取了一次">附录由补抽生成</Badge>
           )}
         </div>
       </header>
+
+      {payload.evidence_repair?.adopted && <RepairNote repair={payload.evidence_repair} />}
+      {payload.similar_cases && payload.similar_cases.length > 0 && <SimilarCases cases={payload.similar_cases} />}
 
       {!analysis && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
@@ -423,6 +450,50 @@ function EvidenceCard({
         </button>
       </div>
     </div>
+  )
+}
+
+function RepairNote({ repair }: { repair: EvidenceRepair }) {
+  const parts: string[] = []
+  const lines = (repair.shifted_fixed ?? 0) + (repair.relocated ?? 0)
+  if (lines) parts.push(`校正行号 ${lines} 条`)
+  if (repair.model_fixed) parts.push(`对照原文修正摘录 ${repair.model_fixed} 条`)
+  if (repair.dropped) parts.push(`移除无法对应原文的证据 ${repair.dropped} 条`)
+  if (parts.length === 0) return null
+  return (
+    <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+      证据已自动修正：{parts.join('，')}。下方核对结果是修正后的状态。
+    </p>
+  )
+}
+
+function SimilarCases({ cases }: { cases: SimilarCase[] }) {
+  return (
+    <details className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+      <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        参考了 {cases.length} 个历史相似案例
+      </summary>
+      <ul className="mt-2 space-y-2">
+        {cases.map((c) => (
+          <li key={`${c.session}-${c.turn}`} className="space-y-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                to="/sessions/$name"
+                params={{ name: c.session }}
+                search={{ turn: c.turn, panel: 'report' }}
+                className="font-medium text-zinc-900 underline-offset-2 hover:underline dark:text-zinc-100"
+              >
+                {c.title || c.session}
+              </Link>
+              {c.confirmed && <Badge tone="green">已确认</Badge>}
+              {c.correction && <Badge tone="amber">有纠正</Badge>}
+              <span className="text-xs text-zinc-500">{c.matched.slice(0, 2).join(' · ')}</span>
+            </div>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">{c.correction ? `纠正：${c.correction}` : c.conclusion}</p>
+          </li>
+        ))}
+      </ul>
+    </details>
   )
 }
 

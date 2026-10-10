@@ -34,6 +34,9 @@ def _register_memory_app() -> None:
     from .memory_cli import memory_app
 
     app.add_typer(memory_app, name="memory")
+    from .eval_cli import eval_app
+
+    app.add_typer(eval_app, name="eval")
 
 
 _register_memory_app()
@@ -342,6 +345,11 @@ def analyze(
             saved_session.register(log_paths, code_paths, model, settings)
 
         content = _build_context_message(log_paths, code_paths, question, baseline_window)
+        from .cases import first_turn_hint
+
+        hint, similar = first_turn_hint(saved_session.conn if saved_session else None, log_paths, code_paths,
+                                        session_name if saved_session else None)
+        content += hint
         payload = {"messages": [{"role": "user", "content": content}]}
         from .citations import CitationLinker
         from .export import build_payload
@@ -355,6 +363,8 @@ def analyze(
             result, question=question, logs=log_paths, code=code_paths, model=model,
             settings={**settings, "no_redact": no_redact},
         )
+        if similar:
+            data["similar_cases"] = similar
 
         if saved_session:
             saved_session.record(question, result.usage.get("total", 0), data)

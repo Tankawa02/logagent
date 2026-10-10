@@ -1,0 +1,10 @@
+question = "今天 14:00 到 14:30 支付回调服务触发了 WARN 告警，有没有真正影响业务的问题？"
+logs = ["logs/pay-callback.log"]
+code = []
+timezone = "+08:00"
+
+[expected]
+# 只有查询超时后一次重试即成功的 WARN，所有回调最终都是 PAID
+assessment = "clear"
+keywords = ["重试"]
+notes = "WARN 全部是 query status timeout 后 retry 1 成功，没有失败的回调"
