@@ -90,7 +90,7 @@ function buildComponents(onOpen?: (target: SourceTarget) => void, onTime?: ((at:
                 open()
               }
             }}
-            className="cursor-pointer rounded bg-brand-50 px-1 py-0.5 font-mono text-[0.85em] text-brand-700 underline decoration-brand-300 underline-offset-2 [box-decoration-break:clone] hover:bg-brand-100 focus-visible:outline-2 focus-visible:outline-brand-500 dark:bg-brand-950/50 dark:text-brand-300 dark:hover:bg-brand-900/60"
+            className="cursor-pointer rounded bg-brand-50 px-1 py-0.5 font-mono text-[0.85em] [overflow-wrap:anywhere] text-brand-700 underline decoration-brand-300 underline-offset-2 [box-decoration-break:clone] hover:bg-brand-100 focus-visible:outline-2 focus-visible:outline-brand-500 dark:bg-brand-950/50 dark:text-brand-300 dark:hover:bg-brand-900/60"
             title={`在右侧查看原文：${value.trim()}`}
           >
             {shortCitation(match[1], value.trim())}

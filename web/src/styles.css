@@ -157,6 +157,10 @@ pre,
 .markdown ol {
   @apply list-decimal space-y-1.5 pl-5 marker:text-zinc-400;
 }
+/* 面板拖得很窄时，没有空格的长路径 / URL 也要能折行，不能把面板撑破 */
+.markdown {
+  @apply min-w-0 [overflow-wrap:anywhere];
+}
 .markdown a {
   @apply text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-600 dark:text-brand-300 dark:decoration-brand-700;
 }
