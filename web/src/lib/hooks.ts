@@ -31,6 +31,19 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, deps: unkno
     if (el && pinned.current) el.scrollTop = el.scrollHeight
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 流式回答在 memo 过的子组件里逐帧变长，父组件的 deps 不会变：直接盯内容高度。
+  // ResizeObserver 在布局之后、绘制之前回调，跟随滚动不会闪一帧
+  useEffect(() => {
+    const el = ref.current
+    const content = el?.firstElementChild
+    if (!el || !content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [ref])
+
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'smooth') => {
       const el = ref.current

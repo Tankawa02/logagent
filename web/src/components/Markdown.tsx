@@ -1,7 +1,8 @@
-import { memo, useDeferredValue, useMemo, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import { memo, useMemo, type ReactNode } from 'react'
+import ReactMarkdown, { type Components, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CITATION } from '../lib/format'
+import { splitBlocks } from '../lib/markdown-blocks'
 import { TIME_HREF, findTimes, remarkTimePoints, useTimeJump } from '../lib/time-jump'
 import type { SourceTarget } from '../lib/types'
 
@@ -18,23 +19,40 @@ function shortCitation(source: string, full: string): string {
  * 不渲染原始 HTML：报告内容来自模型，可能夹带日志里的任意文本。
  */
 export const Markdown = memo(function Markdown({ text, onOpen }: { text: string; onOpen?: (target: SourceTarget) => void }) {
-  // 流式输出时每个字都会更新 text：解析让位给输入与滚动，跟不上时合并成下一帧再渲染，而不是逐字卡住主线程
-  const deferred = useDeferredValue(text)
   // 只有能跳到原文的地方（工作区里的回答 / 报告）才把时间点变成跳转
   const onTime = useTimeJump()
   const jump = onOpen ? onTime : null
   const components = useMemo(() => buildComponents(onOpen, jump), [onOpen, jump])
+  const plugins = jump ? TIME_PLUGINS : REMARK_PLUGINS
+  // 流式输出时前面的块文本不变，MarkdownBlock 直接复用上次的结果，只重新解析正在写的最后一块
+  const blocks = useMemo(() => splitBlocks(text), [text])
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={jump ? TIME_PLUGINS : REMARK_PLUGINS} components={components}>
-        {deferred}
-      </ReactMarkdown>
+      {blocks.map((block, index) => (
+        <MarkdownBlock key={index} text={block} plugins={plugins} components={components} />
+      ))}
     </div>
   )
 })
 
-const REMARK_PLUGINS = [remarkGfm]
-const TIME_PLUGINS = [remarkGfm, remarkTimePoints]
+const MarkdownBlock = memo(function MarkdownBlock({
+  text,
+  plugins,
+  components,
+}: {
+  text: string
+  plugins: typeof REMARK_PLUGINS
+  components: Components
+}) {
+  return (
+    <ReactMarkdown remarkPlugins={plugins} components={components}>
+      {text}
+    </ReactMarkdown>
+  )
+})
+
+const REMARK_PLUGINS: Options['remarkPlugins'] = [remarkGfm]
+const TIME_PLUGINS: Options['remarkPlugins'] = [remarkGfm, remarkTimePoints]
 
 const TIME_CLASS =
   'cursor-pointer rounded-sm text-inherit underline decoration-dotted decoration-brand-400 underline-offset-[3px] hover:bg-brand-50 hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-brand-500 dark:hover:bg-brand-950/50 dark:hover:text-brand-300'
