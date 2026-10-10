@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ArrowRight, ArrowUp, Check, ChevronDown, Settings2, Sparkles } from 'lucide-react'
-import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ArrowRight, ArrowUp, ChevronDown, Settings2, Sparkles } from 'lucide-react'
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { isUnknownModel, ModelCombobox } from '../components/ModelCombobox'
 import { SourcePicker, type SourceValidity } from '../components/SourcePicker'
+import { browserTimezone, FIELD, FIELD_OK, TimeField, TimePresets } from '../components/TimeField'
 import { ErrorBox, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { clearDraft, EMPTY_DRAFT, readDraft, writeDraft } from '../lib/draft'
@@ -17,11 +18,6 @@ const SUGGESTIONS = [
   { tag: '连锁故障', text: '找出最早出现的异常，以及它引发的连锁错误' },
   { tag: '基线对比', text: '对比基线时段，这次多出来的错误是什么？' },
 ]
-
-const FIELD =
-  'w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:ring-4 dark:bg-zinc-950'
-const FIELD_OK = 'border-zinc-200 focus:border-brand-400 focus:ring-brand-500/10 dark:border-zinc-700'
-const FIELD_BAD = 'border-red-300 focus:border-red-400 focus:ring-red-500/10 dark:border-red-800'
 
 const NO_ISSUES: SourceValidity = { invalid: 0, checking: 0 }
 
@@ -102,22 +98,43 @@ export function NewSession({ from }: { from?: string }) {
   const modelUnknown = !models.isFetching && isUnknownModel(model, models.data?.models ?? [])
 
   const canChat = !!meta.data?.can_chat
-  const blocker = !canChat
-    ? '还没有配置 API Key，暂时不能提问'
+  const firstBadTime = [
+    ['since', sinceCheck],
+    ['until', untilCheck],
+    ['timezone', timezoneCheck],
+    ['baseline', baselineCheck],
+  ].find(([, c]) => c && typeof c === 'object' && !c.ok)?.[0] as string | undefined
+  // 每个原因带上要去的输入框：点一下就跳过去，不用自己找
+  const block: { text: string; field?: string; advanced?: boolean } | null = !canChat
+    ? { text: '还没有配置 API Key，暂时不能提问' }
     : !question.trim()
-      ? '先写下要排查的问题'
+      ? { text: '先写下要排查的问题', field: 'question' }
       : logs.length === 0
-        ? '先添加至少一个日志文件'
-        : logValidity.invalid + codeValidity.invalid > 0
-          ? '有路径不存在或类型不对，先修正标红的路径'
-          : logValidity.checking + codeValidity.checking > 0
-            ? '正在检查路径…'
-            : timeInvalid
-              ? '时间设置有误，展开「模型与时间范围」查看'
-              : modelUnknown
-                ? '模型不在可用列表里，展开「模型与时间范围」重新选择'
-                : null
+        ? { text: '先添加至少一个日志文件', field: 'log-path-input' }
+        : logValidity.invalid > 0
+          ? { text: '有日志路径不存在或类型不对，先修正标红的路径', field: 'log-path-input' }
+          : codeValidity.invalid > 0
+            ? { text: '有源码目录不存在或类型不对，先修正标红的路径', field: 'code-path-input' }
+            : logValidity.checking + codeValidity.checking > 0
+              ? { text: '正在检查路径…' }
+              : timeInvalid
+                ? { text: '时间设置有误', field: firstBadTime, advanced: true }
+                : modelUnknown
+                  ? { text: '模型不在可用列表里，请重新选择', field: 'model-input', advanced: true }
+                  : null
+  const blocker = block?.text ?? null
   const ready = !blocker && !create.isPending
+
+  function goToBlocker() {
+    if (!block?.field) return
+    const id = block.field
+    if (block.advanced) setAdvanced(true)
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id)
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el?.focus({ preventScroll: true })
+    })
+  }
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -237,6 +254,20 @@ export function NewSession({ from }: { from?: string }) {
                   className={`${FIELD} ${FIELD_OK}`}
                 />
               </div>
+              <TimePresets
+                timezone={timezone.trim() || browserTimezone()}
+                active={!!(since || until)}
+                onPick={(s, u) => {
+                  setSince(s)
+                  setUntil(u)
+                  // 快捷范围按浏览器所在时区算：没填时区时一并填上，免得按默认的 UTC 解释错位
+                  if (!timezone.trim()) setTimezone(browserTimezone())
+                }}
+                onClear={() => {
+                  setSince('')
+                  setUntil('')
+                }}
+              />
               <TimeField
                 id="since"
                 label="开始时间"
@@ -291,6 +322,11 @@ export function NewSession({ from }: { from?: string }) {
         {create.error && <ErrorBox error={create.error} />}
         <p id="start-blocker" aria-live="polite" className={`-mt-4 text-center text-xs text-zinc-500 ${showBlocker ? '' : 'sr-only'}`}>
           {blocker ?? ''}
+          {showBlocker && block?.field && (
+            <button type="button" onClick={goToBlocker} className="ml-1.5 font-medium text-brand-700 hover:underline dark:text-brand-300">
+              去修改
+            </button>
+          )}
         </p>
 
         {!question && (
@@ -315,61 +351,6 @@ export function NewSession({ from }: { from?: string }) {
           </div>
         )}
       </form>
-    </div>
-  )
-}
-
-function TimeField({
-  id,
-  label,
-  value,
-  onChange,
-  placeholder,
-  check,
-  hint,
-  wide = false,
-}: {
-  id: string
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder: string
-  check: BoundCheck | null
-  hint?: ReactNode
-  wide?: boolean
-}) {
-  const bad = !!check && !check.ok
-  const noteId = `${id}-note`
-  return (
-    <div className={`space-y-1.5 ${wide ? 'sm:col-span-2' : ''}`}>
-      <label htmlFor={id} className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-        {label}
-      </label>
-      <input
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        spellCheck={false}
-        aria-invalid={bad || undefined}
-        aria-describedby={check || hint ? noteId : undefined}
-        className={`${FIELD} ${bad ? FIELD_BAD : FIELD_OK}`}
-      />
-      {check ? (
-        <p
-          id={noteId}
-          className={`flex items-start gap-1 text-xs ${bad ? 'text-red-700 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-400'}`}
-        >
-          {!bad && <Check className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />}
-          {check.ok ? check.text : check.error}
-        </p>
-      ) : (
-        hint && (
-          <p id={noteId} className="text-xs text-zinc-500 dark:text-zinc-400">
-            {hint}
-          </p>
-        )
-      )}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import {
   BookOpen,
   Brain,
   GanttChart,
+  Keyboard,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -21,6 +22,7 @@ import { dismissDeleteError, scheduleDelete, undoDelete, useDeferredDelete } fro
 import { ASSESSMENT } from '../lib/format'
 import { MOD } from '../lib/shortcuts'
 import { useToast } from './Feedback'
+import { openShortcuts } from './ShortcutsDialog'
 import type { SessionSummary } from '../lib/types'
 import { ErrorBox, Skeleton } from './ui'
 
@@ -219,13 +221,6 @@ export function Sidebar({
     await patch(s, { title: next })
   }
 
-  function onSearchKey(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    setText('')
-    event.currentTarget.blur()
-  }
-
   const groups = useMemo(() => {
     const map = new Map<string, SessionSummary[]>()
     for (const s of sessions.data ?? []) {
@@ -236,6 +231,41 @@ export function Sidebar({
     // 置顶组永远在最前；其他组按最近更新的先后自然排好
     return [...map.entries()].sort(([a], [b]) => Number(b === '置顶') - Number(a === '置顶'))
   }, [sessions.data, deletion.pending?.name])
+  const flat = useMemo(() => groups.flatMap(([, items]) => items), [groups])
+
+  // 搜索框里 ↑ / ↓ 在结果间移动，Enter 打开；换了搜索词就回到第一条
+  const [cursor, setCursor] = useState(-1)
+  useEffect(() => setCursor(q ? 0 : -1), [q])
+  const activeName = searchFocused && cursor >= 0 ? flat[cursor]?.name : undefined
+
+  function openSession(s: SessionSummary, input: HTMLInputElement) {
+    input.blur()
+    setText('')
+    onNavigate?.()
+    void navigate({ to: '/sessions/$name', params: { name: s.name } })
+  }
+
+  function onSearchKey(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setText('')
+      event.currentTarget.blur()
+    } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && flat.length) {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      setCursor((c) => (c < 0 ? (step > 0 ? 0 : flat.length - 1) : (c + step + flat.length) % flat.length))
+    } else if (event.key === 'Enter') {
+      const target = flat[cursor] ?? (q ? flat[0] : undefined)
+      if (!target) return
+      event.preventDefault()
+      openSession(target, event.currentTarget)
+    }
+  }
+
+  useEffect(() => {
+    if (activeName) document.getElementById(`session-option-${activeName}`)?.scrollIntoView({ block: 'nearest' })
+  }, [activeName])
 
   return (
     <div className="flex h-full flex-col">
@@ -290,7 +320,9 @@ export function Sidebar({
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="搜索历史会话"
-            aria-label="搜索会话"
+            aria-label="搜索会话（↑↓ 选择，Enter 打开）"
+            aria-controls="session-list"
+            aria-activedescendant={activeName ? `session-option-${activeName}` : undefined}
             aria-keyshortcuts={MOD === '⌘' ? 'Meta+K' : 'Control+K'}
             className="w-full rounded-lg bg-zinc-200/50 py-1.5 pl-8 pr-12 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-brand-500/25 dark:bg-zinc-900 dark:focus:bg-zinc-900"
           />
@@ -305,7 +337,12 @@ export function Sidebar({
         </div>
       </div>
 
-      <nav aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-3 pb-3">
+      {searchFocused && flat.length > 0 && (
+        <p className="mt-1.5 px-4 text-[11px] text-zinc-400 dark:text-zinc-500" aria-hidden>
+          ↑↓ 选择 · Enter 打开 · Esc 清空
+        </p>
+      )}
+      <nav id="session-list" aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-3 pb-3">
         {sessions.isLoading && (
           <div role="status" aria-label="加载会话列表" className="space-y-3 px-2.5 pt-1">
             {[0, 1, 2, 3].map((i) => (
@@ -362,6 +399,7 @@ export function Sidebar({
                 return (
                   <li key={s.name} className="group relative">
                     <Link
+                      id={`session-option-${s.name}`}
                       onDoubleClick={(e) => {
                         e.preventDefault()
                         setEditing(s.name)
@@ -373,12 +411,12 @@ export function Sidebar({
                       aria-current={active ? 'page' : undefined}
                       className={`block rounded-lg px-2.5 py-2 pr-8 transition-colors group-focus-within:pr-20 group-hover:pr-20 pointer-coarse:pr-20 ${
                         active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
-                      }`}
+                      } ${activeName === s.name ? 'ring-2 ring-inset ring-brand-400/70' : ''}`}
                     >
                       <span
                         className={`flex items-center gap-1 text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
                       >
-                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="已置顶" />}
+                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="��置顶" />}
                         <span className="truncate">{label}</span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
@@ -393,6 +431,10 @@ export function Sidebar({
                           {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮{s.origin === 'analyze' ? ' · CLI' : ''}
                         </span>
                       </span>
+                      {/* 搜索时多给一行最近一轮的结论，方便认出要找的是哪个会话 */}
+                      {q && s.last?.summary && (
+                        <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-zinc-500 dark:text-zinc-400">{s.last.summary}</span>
+                      )}
                     </Link>
                     <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
                       <button
@@ -452,6 +494,15 @@ export function Sidebar({
           <div className="flex items-center gap-2 px-1 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
             <span className={`h-2 w-2 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
             <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
+            <button
+              type="button"
+              onClick={openShortcuts}
+              title="键盘快捷键（?）"
+              aria-label="键盘快捷键"
+              className="shrink-0 rounded-md p-0.5 text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <Keyboard className="h-3.5 w-3.5" aria-hidden />
+            </button>
             <span className="shrink-0 font-mono text-zinc-500 dark:text-zinc-400">v{meta.data.version}</span>
           </div>
         )}

@@ -1,7 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { Search, WrapText } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { splitPath } from '../lib/format'
+import { useCopy } from '../lib/hooks'
 import type { SourceTarget } from '../lib/types'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, Spinner } from './ui'
 
@@ -11,8 +13,13 @@ const MAX_CONTEXT = 200 // Keep in sync with web/sources.py.
 export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTarget | null }) {
   const [before, setBefore] = useState(15)
   const [after, setAfter] = useState(15)
-  const [copied, setCopied] = useState(false)
-  const highlight = useRef<HTMLDivElement>(null)
+  const { state, copy } = useCopy()
+  const [wrap, setWrap] = useState(true)
+  const [finding, setFinding] = useState(false)
+  const [needle, setNeedle] = useState('')
+  const [cursor, setCursor] = useState(0)
+  const highlight = useRef<HTMLDivElement | null>(null)
+  const currentMatch = useRef<HTMLDivElement | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
 
   // 换一处引用时上下文恢复默认范围
@@ -45,6 +52,20 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
       scrolledFor.current = key
     }
   }, [query.data, query.isPlaceholderData, key])
+
+  const lines = query.data?.lines
+  const matches = useMemo(() => {
+    const q = needle.trim().toLowerCase()
+    if (!q || !lines) return []
+    return lines.filter((l) => l.text.toLowerCase().includes(q)).map((l) => l.n)
+  }, [needle, lines])
+
+  useEffect(() => {
+    const line = currentMatch.current
+    const box = scroller.current
+    if (!matches.length || !line || !box) return
+    box.scrollTo({ top: line.offsetTop - box.clientHeight / 2, behavior: 'smooth' })
+  }, [matches, cursor])
 
   if (!target) {
     return (
@@ -86,19 +107,61 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
           </span>
         }
       >
-        <Button
-          variant="ghost"
-          className="text-xs"
-          onClick={() => {
-            void navigator.clipboard?.writeText(ref).then(() => {
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
-            })
-          }}
+        <button
+          type="button"
+          onClick={() => setFinding((v) => !v)}
+          aria-pressed={finding}
+          aria-label="在原文中查找"
+          title="在已加载的原文中查找"
+          className={`rounded-lg p-1.5 transition-colors ${finding ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'}`}
         >
-          {copied ? '已复制' : '复制引用'}
+          <Search className="h-3.5 w-3.5" aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={() => setWrap((v) => !v)}
+          aria-pressed={wrap}
+          aria-label="自动换行"
+          title={wrap ? '自动换行：开' : '自动换行：关'}
+          className={`rounded-lg p-1.5 transition-colors ${wrap ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'}`}
+        >
+          <WrapText className="h-3.5 w-3.5" aria-hidden />
+        </button>
+        <Button variant="ghost" className="text-xs" onClick={() => void copy(ref)}>
+          {state === 'copied' ? '已复制' : state === 'failed' ? '复制失败，请手动选中' : '复制引用'}
         </Button>
       </CardHeader>
+      {finding && (
+        <div className="flex items-center gap-2 border-b border-zinc-100 px-3 py-1.5 dark:border-zinc-800">
+          <input
+            autoFocus
+            type="search"
+            value={needle}
+            onChange={(e) => {
+              setNeedle(e.target.value)
+              setCursor(0)
+            }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return
+              if (e.key === 'Enter' && matches.length) {
+                e.preventDefault()
+                setCursor((c) => (c + (e.shiftKey ? -1 : 1) + matches.length) % matches.length)
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                setFinding(false)
+                setNeedle('')
+              }
+            }}
+            placeholder="查找（Enter 下一个，Shift+Enter 上一个）"
+            aria-label="在原文中查找"
+            className="min-w-0 flex-1 bg-transparent font-mono text-xs text-zinc-800 outline-none placeholder:font-sans placeholder:text-zinc-400 dark:text-zinc-200"
+          />
+          <span className="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400" aria-live="polite">
+            {needle ? (matches.length ? `${cursor + 1}/${matches.length}` : '无匹配') : ''}
+          </span>
+        </div>
+      )}
       {query.error && (
         <div className="p-4">
           <ErrorBox error={query.error} />
@@ -112,21 +175,27 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
               label={`向上加载 ${STEP} 行（从第 ${data.first} 行起）`}
             />
           )}
-          <div className="font-mono text-xs leading-5">
+          <div className={`font-mono text-xs leading-5 ${wrap ? '' : 'w-max min-w-full'}`}>
             {data.lines.map(({ n, text }) => {
               const marked = n >= data.line_start && n <= data.line_end
+              const current = matches[cursor] === n
               return (
                 <div
                   key={n}
-                  ref={n === data.line_start ? highlight : undefined}
-                  className={`flex ${marked ? 'bg-amber-100/80 dark:bg-amber-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}
+                  ref={(node) => {
+                    if (n === data.line_start) highlight.current = node
+                    if (current) currentMatch.current = node
+                  }}
+                  className={`flex ${marked ? 'bg-amber-100/80 dark:bg-amber-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'} ${current ? 'outline outline-1 -outline-offset-1 outline-brand-400' : ''}`}
                 >
                   <span
-                    className={`w-14 shrink-0 select-none border-r px-2 text-right tabular-nums ${marked ? 'border-amber-400 text-amber-700 dark:text-amber-300' : 'border-zinc-100 text-zinc-400 dark:border-zinc-800'}`}
+                    className={`sticky left-0 w-14 shrink-0 select-none border-r px-2 text-right tabular-nums ${marked ? 'border-amber-400 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'border-zinc-100 bg-white text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900'}`}
                   >
                     {n}
                   </span>
-                  <span className="whitespace-pre-wrap break-all px-3 text-zinc-800 dark:text-zinc-200">{text || ' '}</span>
+                  <span className={`px-3 text-zinc-800 dark:text-zinc-200 ${wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+                    {text ? <Highlighted text={text} needle={needle} /> : ' '}
+                  </span>
                 </div>
               )
             })}
@@ -142,6 +211,28 @@ export function SourceViewer({ scope, target }: { scope: Scope; target: SourceTa
       )}
     </Card>
   )
+}
+
+function Highlighted({ text, needle }: { text: string; needle: string }) {
+  const q = needle.trim()
+  if (!q) return <>{text}</>
+  const lower = text.toLowerCase()
+  const target = q.toLowerCase()
+  const parts: ReactNode[] = []
+  let from = 0
+  let at = lower.indexOf(target)
+  while (at !== -1) {
+    if (at > from) parts.push(text.slice(from, at))
+    parts.push(
+      <mark key={at} className="rounded-sm bg-yellow-300/80 text-inherit dark:bg-yellow-500/40">
+        {text.slice(at, at + q.length)}
+      </mark>,
+    )
+    from = at + q.length
+    at = lower.indexOf(target, from)
+  }
+  if (from < text.length) parts.push(text.slice(from))
+  return <>{parts}</>
 }
 
 function LoadMore({ onClick, label }: { onClick: () => void; label: string }) {

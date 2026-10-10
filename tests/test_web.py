@@ -1239,3 +1239,55 @@ def test_finishing_phases_are_announced_after_report_text() -> None:
     first_phase = next(i for i, e in enumerate(events) if e.get("name") == "log_agent.phase")
     text_before = "".join(e["delta"] for e in events[:first_phase] if e["type"] == "TEXT_MESSAGE_CONTENT")
     assert "```log-agent" in text_before
+
+
+def test_update_sources_mid_session_marks_pending_change(demo, tmp_path: Path) -> None:
+    db, log, code = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    url = f"/api/sessions/{SESSION}/sources"
+    unchanged = client.put(url, json={"logs": [str(log)], "code": [str(code)]}, headers=WRITE).json()
+    assert unchanged["pending_change"] is False
+    assert client.put(url, json={"logs": [], "code": []}, headers=WRITE).status_code == 400
+    assert client.put(url, json={"logs": [str(log)], "since": "not a time"}, headers=WRITE).status_code == 400
+
+    extra = spike_log(tmp_path / "extra.log")
+    updated = client.put(url, json={"logs": [str(log), str(extra)], "code": [], "since": "10:00", "until": "10:30"},
+                         headers=WRITE).json()
+    assert [x["path"] for x in updated["logs"]] == [str(log), str(extra)] and updated["code"] == []
+    assert updated["settings"]["since"] == "10:00" and updated["settings"]["until"] == "10:30"
+    assert updated["pending_change"] is True and "pending_note" not in updated["settings"]
+    with sqlite3.connect(str(db)) as conn:
+        note = SessionStore(conn).get(SESSION).settings["pending_note"]
+    assert str(extra) in note and "10:00" in note
+
+
+def test_chat_sends_pending_note_and_retry_prefix_then_clears(demo, scripted_agent, monkeypatch, tmp_path) -> None:
+    db, log, code = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    sent: list[str] = []
+    real_run = runner.WebStreamRenderer.run
+
+    def capture(self, agent, inputs, **kwargs):
+        sent.append(inputs["messages"][0]["content"])
+        return real_run(self, agent, inputs, **kwargs)
+
+    monkeypatch.setattr(runner.WebStreamRenderer, "run", capture)
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        info = store.get(SESSION)
+        store.touch(SESSION, info.logs, info.code, info.model, {**info.settings, "pending_note": "NOTE-来源已更新"})
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    # 让这一轮按「续问」处理（已有对话记录），才会带上待告知的来源变更
+    real_get = SqliteSaver.get
+    monkeypatch.setattr(SqliteSaver, "get", lambda self, config: real_get(self, config) or {"v": 1})
+    body = {"question": "再看一次", "forwardedProps": {"retry": {"extra": "重点看 10:05"}}}
+    with client.stream("POST", f"/api/sessions/{SESSION}/chat", json=body, headers=WRITE) as response:
+        assert response.status_code == 200
+        sse_events(response)
+    assert sent and sent[0].startswith("请重新回答我上一个问题") and "补充要求：重点看 10:05" in sent[0]
+    assert "NOTE-来源已更新" in sent[0] and sent[0].rstrip().endswith("再看一次")
+    with sqlite3.connect(str(db)) as conn:
+        store = SessionStore(conn)
+        assert "pending_note" not in store.get(SESSION).settings
+        assert store.last_turn(SESSION)["question"] == "再看一次"

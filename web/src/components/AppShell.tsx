@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMediaQuery } from '../lib/hooks'
 import { hasMod, isEditable, PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
 import { ConnectionBanner } from './ConnectionBanner'
+import { onOpenShortcuts, ShortcutsDialog } from './ShortcutsDialog'
 import { Brand, Sidebar, SidebarRail } from './Sidebar'
 
 const COLLAPSE_KEY = 'log-agent:sidebar-collapsed'
@@ -25,6 +26,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const narrow = !useMediaQuery('(min-width: 1024px)')
   const collapsed = stored ?? narrow
   const [searchNonce, setSearchNonce] = useState(0)
+  const [shortcuts, setShortcuts] = useState(false)
+  useEffect(() => onOpenShortcuts(() => setShortcuts(true)), [])
   const navigate = useNavigate()
   const desktop = useMediaQuery('(min-width: 768px)')
   const latest = useRef({ collapsed, desktop })
@@ -45,6 +48,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         event.preventDefault()
         setOpen(false)
         void navigate({ to: '/' })
+      } else if (event.key === '?' && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditable(event.target)) {
+        if (document.querySelector('[aria-modal="true"]')) return
+        event.preventDefault()
+        setShortcuts(true)
       } else if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditable(event.target)) {
         if (document.querySelector('[aria-modal="true"]')) return
         const input = document.querySelector<HTMLElement>(`[${PRIMARY_INPUT_ATTR}]`)
@@ -116,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main className="min-h-0 flex-1">{children}</main>
         </div>
       </div>
+      {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
     </div>
   )
 }

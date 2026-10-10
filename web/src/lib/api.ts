@@ -15,6 +15,7 @@ import type {
   ModelList,
   Place,
   SessionDetail,
+  SessionSourcesBody,
   SessionSummary,
   Share,
   SkillDetail,
@@ -93,6 +94,12 @@ export const api = {
     request<{ revoked: string }>(`/api/sessions/${encodeURIComponent(name)}/shares/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: CSRF_HEADERS,
+    }),
+  updateSources: (name: string, body: SessionSourcesBody) =>
+    request<SessionSummary>(`/api/sessions/${encodeURIComponent(name)}/sources`, {
+      method: 'PUT',
+      headers: { ...CSRF_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     }),
   chatUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat`,
   chatStreamUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat/stream`,
