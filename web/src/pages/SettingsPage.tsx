@@ -340,7 +340,13 @@ function SettingsForm({
         )}
       </p>
 
-      <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200/80 bg-white/90 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
+      <div
+        className={`sticky bottom-4 flex flex-wrap items-center justify-end gap-2 rounded-xl border bg-white/95 py-2 pl-4 pr-2 backdrop-blur transition-shadow dark:bg-zinc-900/95 ${
+          dirty
+            ? 'border-zinc-300 shadow-lg shadow-zinc-900/5 dark:border-zinc-700 dark:shadow-black/30'
+            : 'border-zinc-200/80 dark:border-zinc-800'
+        }`}
+      >
         <div className="mr-auto min-w-0 text-sm" aria-live="polite">
           {save.error ? (
             <span className="text-red-600 dark:text-red-400">{save.error.message}</span>
@@ -354,8 +360,13 @@ function SettingsForm({
               {modelUnknown ? '默认模型' : subagentUnknown ? '子代理模型' : '备用模型'}不在可用列表里，请重新选择
             </span>
           ) : dirty ? (
-            <span className="text-zinc-500">有未保存的修改</span>
-          ) : null}
+            <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+              有未保存的修改
+            </span>
+          ) : (
+            <span className="text-zinc-400 dark:text-zinc-500">没有未保存的修改</span>
+          )}
         </div>
         <Button variant="ghost" onClick={reset} disabled={!dirty || save.isPending}>
           <RotateCcw className="h-4 w-4" aria-hidden />
