@@ -52,9 +52,17 @@ def _entry(path: Path) -> dict[str, Any] | None:
 
 
 def list_directory(
-    raw: str | None, show_hidden: bool = False, query: str = "", dirs_only: bool = False
+    raw: str | None,
+    show_hidden: bool = False,
+    query: str = "",
+    dirs_only: bool = False,
+    sort: str = "name",
 ) -> dict[str, Any]:
-    """列出目录。筛选词和「只要目录」在截断到 MAX_ENTRIES 之前生效，大目录里的条目也能被搜到。"""
+    """列出目录。筛选词、「只要目录」和排序都在截断到 MAX_ENTRIES 之前生效，
+    大目录里的条目也能被搜到，按时间排时最新的文件也不会被截掉。
+
+    sort="mtime" 时按修改时间从新到旧；目录始终排在文件前面。
+    """
     target = Path(raw).expanduser() if raw else Path.home()
     try:
         target = target.resolve()
@@ -78,7 +86,11 @@ def list_directory(
     entries = [e for e in (_entry(c) for c in children) if e]
     if dirs_only:
         entries = [e for e in entries if e["kind"] == "dir"]
-    entries.sort(key=lambda e: (e["kind"] != "dir", e["name"].lower()))
+    # 先按名字排一遍作为次序，再按时间稳定排序：同一时间的条目仍按名字排
+    entries.sort(key=lambda e: e["name"].lower())
+    if sort == "mtime":
+        entries.sort(key=lambda e: -e["mtime"])
+    entries.sort(key=lambda e: e["kind"] != "dir")
     parent = target.parent if target.parent != target else None
     return {
         "path": str(target),

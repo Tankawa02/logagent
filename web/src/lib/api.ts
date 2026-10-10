@@ -103,13 +103,14 @@ export const api = {
       headers: { ...CSRF_HEADERS, 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_id: runId ?? null }),
     }),
-  fsList: (path: string, opts: { hidden?: boolean; q?: string; dirs?: boolean } = {}) =>
+  fsList: (path: string, opts: { hidden?: boolean; q?: string; dirs?: boolean; sort?: 'name' | 'mtime' } = {}) =>
     request<FsListing>(
       `/api/fs/list?${query({
         path,
         hidden: opts.hidden ? 'true' : undefined,
         q: opts.q || undefined,
         dirs: opts.dirs ? 'true' : undefined,
+        sort: opts.sort === 'mtime' ? 'mtime' : undefined,
       })}`,
     ),
   fsGlob: (pattern: string) => request<FsGlob>(`/api/fs/glob?${query({ pattern })}`),

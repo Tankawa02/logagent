@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -319,10 +319,16 @@ def create_app(config: WebConfig) -> FastAPI:
     # ---- 新建分析：浏览本机文件、列出模型、登记会话（仅本人）-----------------
 
     @app.get("/api/fs/list", dependencies=[Depends(require_owner)])
-    def fs_list(path: str = "", hidden: bool = False, q: str = "", dirs: bool = False) -> dict[str, Any]:
+    def fs_list(
+        path: str = "",
+        hidden: bool = False,
+        q: str = "",
+        dirs: bool = False,
+        sort: Literal["name", "mtime"] = "name",
+    ) -> dict[str, Any]:
         from .workspace import list_directory
 
-        return list_directory(path or None, show_hidden=hidden, query=q, dirs_only=dirs)
+        return list_directory(path or None, show_hidden=hidden, query=q, dirs_only=dirs, sort=sort)
 
     @app.get("/api/fs/glob", dependencies=[Depends(require_owner)])
     def fs_glob(pattern: str) -> dict[str, Any]:
@@ -358,6 +364,13 @@ def create_app(config: WebConfig) -> FastAPI:
         model = (body.model or "").strip() or config.default_model
         if ":" not in model:
             model = f"openai:{model}"
+        if body.model and body.model.strip():
+            from .workspace import list_models
+
+            # 拿不到模型列表（接口不支持 /models 等）时无从校验，按用户填写的放行
+            known = list_models(config.base_url, config.default_model)["models"]
+            if known and model not in known:
+                raise HTTPException(400, f"模型列表里没有「{body.model.strip()}」，请从下拉列表中选择")
         name = new_session_name()
         config.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(config.db_path), check_same_thread=False)

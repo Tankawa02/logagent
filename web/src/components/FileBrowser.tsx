@@ -67,6 +67,8 @@ export function FileBrowser({
   const [filter, setFilter] = useState('')
   const [serverFilter, setServerFilter] = useState('')
   const [hidden, setHidden] = useState(false)
+  // 默认最新的在前：多数时候要找的是刚下载 / 刚生成的日志
+  const [sort, setSort] = useState<'mtime' | 'name'>('mtime')
   const [picked, setPicked] = useState<string[]>([])
   const [globError, setGlobError] = useState<unknown>(null)
 
@@ -78,8 +80,8 @@ export function FileBrowser({
   const places = useQuery({ queryKey: ['places'], queryFn: api.places, staleTime: 60_000 })
   // 筛选词交给服务端，在截断到 2000 条之前生效，大目录里靠后的条目也能搜到
   const listing = useQuery({
-    queryKey: ['fs', path, hidden, serverFilter, mode],
-    queryFn: () => api.fsList(path, { hidden, q: serverFilter, dirs: mode === 'dir' }),
+    queryKey: ['fs', path, hidden, serverFilter, mode, sort],
+    queryFn: () => api.fsList(path, { hidden, q: serverFilter, dirs: mode === 'dir', sort }),
     placeholderData: keepPreviousData,
     retry: false,
   })
@@ -261,6 +263,29 @@ export function FileBrowser({
                   aria-label="筛选"
                   className="w-full rounded-md border border-zinc-200 bg-zinc-50 py-1 pl-7 pr-2 text-xs outline-none focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950"
                 />
+              </div>
+              <div role="group" aria-label="排序" className="flex shrink-0 rounded-md bg-zinc-100 p-0.5 text-xs dark:bg-zinc-800">
+                {(
+                  [
+                    ['mtime', '最新'],
+                    ['name', '名称'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={sort === key}
+                    title={key === 'mtime' ? '按修改时间排序，最新的在前' : '按名称排序'}
+                    onClick={() => setSort(key)}
+                    className={`rounded px-2 py-0.5 ${
+                      sort === key
+                        ? 'bg-white font-medium text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100'
+                        : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
                 <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} className="accent-brand-600" />
