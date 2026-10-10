@@ -368,7 +368,7 @@ def run_turn(
     memory_mode: str = "suggest",
     prefix: str = "",
 ) -> dict[str, Any] | None:
-    """执行一���续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
+    """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     from .. import logfile, redact, timefilter
