@@ -17,11 +17,22 @@ from .report import ReportView, report_body
 def build_payload(
     result: TurnResult, *, question: str, logs: list[str], code: list[str], model: str, settings: dict | None = None,
 ) -> dict[str, Any]:
+    from .pricing import turn_cost
+
+    base_url = (settings or {}).get("base_url") or None
+    try:
+        cost = turn_cost(result.usage_by_model or {"": dict(result.usage)}, model, base_url)
+    except Exception:  # noqa: BLE001 — 计价失败不能影响保存
+        cost = {"usd": None, "complete": False, "unpriced_tokens": result.usage.get("total", 0), "sources": []}
     return {
         "schema_version": 2,
         "analysis": deepcopy(result.analysis),
         "structured_status": result.structured_status,
+        "structured_source": result.structured_source or None,
         "evidence_check": deepcopy(result.evidence_check),
+        "evidence_repair": deepcopy(result.evidence_repair),
+        "cost": cost,
+        "usage_by_model": deepcopy(result.usage_by_model),
         "tool": "log-agent",
         "version": __version__,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -44,6 +55,26 @@ def build_payload(
     }
 
 
+def format_usd(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"${value:.4f}" if value < 1 else f"${value:.2f}"
+
+
+def _usage_extras(payload: dict[str, Any]) -> str:
+    """缓存命中与金额：旧会话没有这些字段时不显示。"""
+    from .usage import cache_hit_rate
+
+    out = ""
+    rate = cache_hit_rate(payload.get("usage"))
+    if rate:
+        out += f"（缓存命中 {rate:.0%}）"
+    cost = payload.get("cost") or {}
+    if cost.get("usd") is not None:
+        out += f" · 费用约 {format_usd(cost['usd'])}" + ("" if cost.get("complete", True) else "（部分模型价格未知）")
+    return out
+
+
 def to_markdown(payload: dict[str, Any], view: str = "detailed") -> str:
     meta = [
         f"- 问题：{payload['question']}",
@@ -53,7 +84,7 @@ def to_markdown(payload: dict[str, Any], view: str = "detailed") -> str:
         f"- 生成时间：{payload['generated_at'] or '未知'}",
         ("- 用量：旧版会话未保存逐轮统计" if payload.get("provenance") == "legacy_unknown" else
          f"- 用时 {payload['elapsed_seconds']}s · 工具调用 {len(payload['tool_calls'])} 次"
-         f" · tokens {payload['usage'].get('total', 0):,}"),
+         f" · tokens {payload['usage'].get('total', 0):,}{_usage_extras(payload)}"),
     ]
     analysis = payload.get("analysis")
     if analysis:

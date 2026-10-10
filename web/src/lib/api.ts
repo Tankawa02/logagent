@@ -3,6 +3,7 @@ import type {
   Settings,
   SettingsUpdate,
   CreateSessionBody,
+  FeedbackRating,
   FsGlob,
   FsListing,
   LiveRun,
@@ -23,6 +24,7 @@ import type {
   SourceContext,
   Timeline,
   TraceItem,
+  TurnFeedback,
   TurnPayload,
 } from './types'
 
@@ -101,6 +103,18 @@ export const api = {
       headers: { ...CSRF_HEADERS, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  setFeedback: (name: string, turn: number, rating: FeedbackRating, comment = '') =>
+    request<{ turn: number; feedback: TurnFeedback | null }>(`/api/sessions/${encodeURIComponent(name)}/turns/${turn}/feedback`, {
+      method: 'PUT',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ rating, comment }),
+    }),
+  clearFeedback: (name: string, turn: number) =>
+    request<{ turn: number; feedback: null }>(`/api/sessions/${encodeURIComponent(name)}/turns/${turn}/feedback`, {
+      method: 'DELETE',
+      headers: CSRF_HEADERS,
+    }),
+  evalCaseUrl: (name: string, turn: number) => `/api/sessions/${encodeURIComponent(name)}/turns/${turn}/eval-case`,
   chatUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat`,
   chatStreamUrl: (name: string) => `/api/sessions/${encodeURIComponent(name)}/chat/stream`,
   liveRun: (name: string) => request<LiveRun>(`/api/sessions/${encodeURIComponent(name)}/chat/live`),

@@ -14,6 +14,7 @@ from rich.text import Text
 from .render_common import content_to_text
 from .report import extract_analysis, visible_report
 from .term import console, glyphs
+from .usage import add_usage, empty_usage, usage_from_metadata
 
 # 短文本先作为旁白等待消息结束；长文本、标题或一句话结论视为报告。
 _NARRATION_MAX_CHARS = 300
@@ -32,24 +33,18 @@ _CONFIDENCE_STYLE = {"高": "ok", "中": "warn", "低": "err"}
 
 
 def usage_from_message(msg: Any) -> dict[str, int]:
-    usage = getattr(msg, "usage_metadata", None) or {}
-    return {
-        "input": int(usage.get("input_tokens") or 0),
-        "output": int(usage.get("output_tokens") or 0),
-        "total": int(usage.get("total_tokens") or 0),
-    }
+    return usage_from_metadata(getattr(msg, "usage_metadata", None))
 
 
 def collect_usage(messages: list[Any]) -> dict[str, int]:
     """汇总本轮（自上一条 human 消息之后）所有 AI 消息的 token 用量。"""
-    totals = {"input": 0, "output": 0, "total": 0}
+    totals = empty_usage()
     for msg in reversed(messages):
         msg_type = getattr(msg, "type", "")
         if msg_type == "human":
             break
         if msg_type == "ai":
-            for key, value in usage_from_message(msg).items():
-                totals[key] += value
+            add_usage(totals, usage_from_message(msg))
     return totals
 
 
@@ -193,26 +188,38 @@ class TurnResult:
 
     report: str = ""
     elapsed: float = 0.0
-    usage: dict[str, int] = field(default_factory=lambda: {"input": 0, "output": 0, "total": 0})
+    usage: dict[str, int] = field(default_factory=empty_usage)
     tools: list[ToolRecord] = field(default_factory=list)
     interrupted: bool = False
     error: str = ""
     summary: str = ""
     confidence: str = ""
     budget_hit: bool = False
-    # 主代理每次模型调用的时间与用量（见 StreamRenderer._on_message）
+    # 主代理每次模型调用的时间与用量（��� StreamRenderer._on_message）
     llm_calls: list[dict] = field(default_factory=list)
+    # 按接口回报的模型名分别累计的用量（主代理 / 子代理 / 备用模型 / 收尾调用），用于按模型计价
+    usage_by_model: dict[str, dict[str, int]] = field(default_factory=dict)
 
     analysis: dict | None = field(default=None, init=False)
     structured_status: str = field(default="missing", init=False)
+    # 结构化附录的来源：inline（模型在正文末尾写的围栏）/ extracted（正文写完后单独抽取）
+    structured_source: str = field(default="", init=False)
     # 证据回查结果（见 evidence.check_analysis）；没有结构化证据或未提供来源时为 None
     evidence_check: dict | None = field(default=None, init=False)
+    # 回查不通过后的自动修正记录（见 postprocess.repair_evidence）；没有尝试时为 None
+    evidence_repair: dict | None = field(default=None, init=False)
 
     def __post_init__(self):
-        self.report, self.analysis, self.structured_status = extract_analysis(self.report)
-        if self.analysis:
-            self.summary = self.analysis["conclusion"]
-            self.confidence = {"high": "高", "medium": "中", "low": "低"}[self.analysis["confidence"]]
+        self.report, analysis, self.structured_status = extract_analysis(self.report)
+        if analysis:
+            self.adopt_analysis(analysis, "inline")
+
+    def adopt_analysis(self, analysis: dict, source: str) -> None:
+        self.analysis = analysis
+        self.structured_status = "valid"
+        self.structured_source = source
+        self.summary = analysis["conclusion"]
+        self.confidence = {"high": "高", "medium": "中", "low": "低"}[analysis["confidence"]]
 
     @property
     def finding(self) -> bool | None:

@@ -48,8 +48,15 @@ def run_chat_loop(
                 continue
             user_input = outcome.question
             retry_prefix = outcome.retry_prefix
+        similar: list[dict] = []
         if state.first_turn:
+            from .cases import first_turn_hint
+
             message = _build_context_message(state.log_paths, state.code_paths, user_input, state.baseline_window)
+            hint, similar = first_turn_hint(state.store.conn, state.log_paths, state.code_paths, state.session)
+            message += hint
+            if similar:
+                console.print(Text(f"{glyphs.notice} 找到 {len(similar)} 个历史相似案例，已作为线索提供给模型", style="muted"))
             state.first_turn = False
         elif state.source_note:
             message = f"{state.source_note}\n\n{user_input}"
@@ -73,6 +80,8 @@ def run_chat_loop(
             model=state.model,
             settings={**state.settings, "no_redact": state.no_redact},
         )
+        if similar:
+            state.last["similar_cases"] = similar
         state.store.record_turn(state.session, user_input, result.usage.get("total", 0), state.last)
         if result.interrupted:
             console.print(Text("本轮回答已中断，可以继续追问或换个问题。", style="muted"))

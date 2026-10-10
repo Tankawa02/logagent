@@ -50,6 +50,18 @@ export function formatTokens(value: number | undefined | null): string {
   return `${(n / 1_000_000).toFixed(2)}M`
 }
 
+/** 金额（美元）：不足 1 美元保留 4 位，便于看出单轮几分钱的差别；未知时显示破折号 */
+export function formatUsd(value: number | undefined | null): string {
+  if (value == null) return '—'
+  return value < 1 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`
+}
+
+/** 输入 tokens 里命中缓存的比例；没有输入或没有缓存统计时为 null */
+export function cacheHitRate(usage: { input?: number; cache_read?: number } | null | undefined): number | null {
+  if (!usage?.input || usage.cache_read == null) return null
+  return usage.cache_read / usage.input
+}
+
 /** 去掉 provider 前缀，列表里更紧凑 */
 export function shortModel(model: string): string {
   return model.replace(/^[a-z_-]+:/i, '')

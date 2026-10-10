@@ -1,0 +1,11 @@
+question = "下单接口 14 点开始陆续报 500，是什么原因？怎么修？"
+logs = ["logs/app.log"]
+code = ["code"]
+timezone = "+08:00"
+
+[expected]
+assessment = "finding"
+# 空指针发生的位置，以及返回 null 的过期分支
+root_cause = ["OrderService.java:17", "CouponRepository.java:24"]
+keywords = ["SPRING2026", "findValid"]
+notes = "SPRING2026 在 14:00 过期，findValid 对过期券返回 null，placeOrder 没有判空直接 getAmount()"

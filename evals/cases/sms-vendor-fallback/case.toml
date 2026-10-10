@@ -1,0 +1,11 @@
+question = "Twilio 8 月就下线了，为什么印尼（+62）号码的验证码还在走 Twilio？"
+logs = ["logs/sms.log"]
+code = ["code"]
+timezone = "+08:00"
+
+[expected]
+assessment = "finding"
+# 兜底链里还残留 twilio，且 ID 没有单独配置、infobip 也不支持 ID
+root_cause = ["settings.py:12", "router.py:22"]
+keywords = ["DEFAULT_CHAIN", "twilio"]
+notes = "ID 不在 COUNTRY_VENDORS 里，走 DEFAULT_CHAIN；infobip 不支持 ID 被跳过，落到残留的 twilio"

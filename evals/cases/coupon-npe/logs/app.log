@@ -1,0 +1,344 @@
+2026-10-10 13:50:00.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 13:50:03.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 76ms
+2026-10-10 13:50:10.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 13:50:13.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 84ms
+2026-10-10 13:50:20.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 13:50:26.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 35ms
+2026-10-10 13:50:30.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 48ms
+2026-10-10 13:50:37.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 53ms
+2026-10-10 13:50:44.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 42ms
+2026-10-10 13:50:47.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 56ms
+2026-10-10 13:50:54.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 89ms
+2026-10-10 13:51:00.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 61ms
+2026-10-10 13:51:08.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 68ms
+2026-10-10 13:51:13.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 39ms
+2026-10-10 13:51:19.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:51:25.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 70ms
+2026-10-10 13:51:30.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 88ms
+2026-10-10 13:51:33.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 38ms
+2026-10-10 13:51:41.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 87ms
+2026-10-10 13:51:47.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 89ms
+2026-10-10 13:51:54.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 13:51:59.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 13:52:08.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 51ms
+2026-10-10 13:52:15.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 85ms
+2026-10-10 13:52:20.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 78ms
+2026-10-10 13:52:24.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:52:28.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 53ms
+2026-10-10 13:52:31.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 77ms
+2026-10-10 13:52:36.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 36ms
+2026-10-10 13:52:45.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 13:52:48.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 13:52:52.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 44ms
+2026-10-10 13:52:55.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:53:00.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 56ms
+2026-10-10 13:53:04.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 76ms
+2026-10-10 13:53:07.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 91ms
+2026-10-10 13:53:10.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 73ms
+2026-10-10 13:53:16.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 32ms
+2026-10-10 13:53:23.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 33ms
+2026-10-10 13:53:28.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 76ms
+2026-10-10 13:53:33.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 94ms
+2026-10-10 13:53:37.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 81ms
+2026-10-10 13:53:41.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 13:53:44.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 90ms
+2026-10-10 13:53:52.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 74ms
+2026-10-10 13:53:57.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 43ms
+2026-10-10 13:54:01.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 91ms
+2026-10-10 13:54:08.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 74ms
+2026-10-10 13:54:11.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 55ms
+2026-10-10 13:54:15.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 13:54:23.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 81ms
+2026-10-10 13:54:26.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 46ms
+2026-10-10 13:54:26.120 WARN  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 400 12ms coupon not found: SUMMER2025
+2026-10-10 13:54:35.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 90ms
+2026-10-10 13:54:40.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 46ms
+2026-10-10 13:54:40.120 WARN  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 400 6ms coupon not found: SUMMER2025
+2026-10-10 13:54:47.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 54ms
+2026-10-10 13:54:51.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 57ms
+2026-10-10 13:54:55.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 83ms
+2026-10-10 13:54:58.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 83ms
+2026-10-10 13:55:05.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:55:08.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 30ms
+2026-10-10 13:55:12.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 90ms
+2026-10-10 13:55:15.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 71ms
+2026-10-10 13:55:22.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 43ms
+2026-10-10 13:55:25.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 65ms
+2026-10-10 13:55:28.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 33ms
+2026-10-10 13:55:31.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 94ms
+2026-10-10 13:55:35.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 95ms
+2026-10-10 13:55:41.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 63ms
+2026-10-10 13:55:45.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 83ms
+2026-10-10 13:55:51.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 60ms
+2026-10-10 13:55:55.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:56:03.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 62ms
+2026-10-10 13:56:09.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 13:56:13.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 85ms
+2026-10-10 13:56:19.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 55ms
+2026-10-10 13:56:22.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 73ms
+2026-10-10 13:56:28.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 72ms
+2026-10-10 13:56:33.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 44ms
+2026-10-10 13:56:42.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 13:56:45.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 46ms
+2026-10-10 13:56:54.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 13:57:01.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 13:57:10.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 39ms
+2026-10-10 13:57:13.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 13:57:17.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 45ms
+2026-10-10 13:57:22.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 64ms
+2026-10-10 13:57:25.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 44ms
+2026-10-10 13:57:30.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 55ms
+2026-10-10 13:57:38.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 56ms
+2026-10-10 13:57:45.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 74ms
+2026-10-10 13:57:50.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 32ms
+2026-10-10 13:57:57.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 90ms
+2026-10-10 13:58:03.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 13:58:09.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 57ms
+2026-10-10 13:58:14.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 81ms
+2026-10-10 13:58:17.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 39ms
+2026-10-10 13:58:22.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 13:58:31.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 66ms
+2026-10-10 13:58:39.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 88ms
+2026-10-10 13:58:44.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 63ms
+2026-10-10 13:58:49.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 61ms
+2026-10-10 13:58:49.120 WARN  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 400 9ms coupon not found: SUMMER2025
+2026-10-10 13:58:53.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 30ms
+2026-10-10 13:58:56.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 94ms
+2026-10-10 13:59:00.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 13:59:03.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 35ms
+2026-10-10 13:59:08.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 13:59:15.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 79ms
+2026-10-10 13:59:23.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 66ms
+2026-10-10 13:59:31.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 95ms
+2026-10-10 13:59:39.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 94ms
+2026-10-10 13:59:48.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 13:59:51.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 43ms
+2026-10-10 13:59:57.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 32ms
+2026-10-10 14:00:05.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 63ms
+2026-10-10 14:00:05.120 WARN  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 400 6ms coupon not found: SUMMER2025
+2026-10-10 14:00:13.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 14:00:16.120 ERROR [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 500 20ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:00:21.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 14:00:27.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 39ms
+2026-10-10 14:00:35.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 55ms
+2026-10-10 14:00:39.120 ERROR [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 500 18ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:00:44.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 91ms
+2026-10-10 14:00:49.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 92ms
+2026-10-10 14:00:56.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 89ms
+2026-10-10 14:00:59.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 69ms
+2026-10-10 14:01:05.120 ERROR [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 500 15ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:01:12.120 ERROR [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 500 14ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:01:16.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 14:01:23.120 ERROR [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 500 10ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:01:31.120 ERROR [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 500 9ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:01:35.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 14:01:35.120 WARN  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 400 5ms coupon not found: SUMMER2025
+2026-10-10 14:01:41.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 68ms
+2026-10-10 14:01:47.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 70ms
+2026-10-10 14:01:52.120 ERROR [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 500 20ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:01:58.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 31ms
+2026-10-10 14:02:03.120 ERROR [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 500 9ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:02:12.120 ERROR [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 500 14ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:02:21.120 ERROR [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 500 9ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:02:29.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 61ms
+2026-10-10 14:02:35.120 ERROR [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 500 11ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:02:44.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 81ms
+2026-10-10 14:02:51.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 14:02:59.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 47ms
+2026-10-10 14:03:04.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 46ms
+2026-10-10 14:03:10.120 ERROR [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 500 12ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:03:18.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 60ms
+2026-10-10 14:03:25.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 51ms
+2026-10-10 14:03:28.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 14:03:34.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 84ms
+2026-10-10 14:03:38.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 52ms
+2026-10-10 14:03:41.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 77ms
+2026-10-10 14:03:48.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 82ms
+2026-10-10 14:03:56.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 78ms
+2026-10-10 14:04:05.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 65ms
+2026-10-10 14:04:10.120 INFO  [http-nio-8080-exec-3] c.s.OrderController - POST /api/orders 200 57ms
+2026-10-10 14:04:14.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 87ms
+2026-10-10 14:04:19.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 34ms
+2026-10-10 14:04:28.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 92ms
+2026-10-10 14:04:28.120 WARN  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 400 11ms coupon not found: SUMMER2025
+2026-10-10 14:04:37.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 87ms
+2026-10-10 14:04:40.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 49ms
+2026-10-10 14:04:48.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 14:04:51.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 14:04:54.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 62ms
+2026-10-10 14:05:00.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 39ms
+2026-10-10 14:05:07.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 63ms
+2026-10-10 14:05:14.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 68ms
+2026-10-10 14:05:19.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 90ms
+2026-10-10 14:05:26.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 82ms
+2026-10-10 14:05:31.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 54ms
+2026-10-10 14:05:39.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 62ms
+2026-10-10 14:05:45.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 14:05:45.120 WARN  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 400 10ms coupon not found: SUMMER2025
+2026-10-10 14:05:53.120 ERROR [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 500 18ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:05:56.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 38ms
+2026-10-10 14:06:00.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 14:06:05.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 14:06:09.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 14:06:13.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 57ms
+2026-10-10 14:06:13.120 WARN  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 400 7ms coupon not found: SUMMER2025
+2026-10-10 14:06:19.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 53ms
+2026-10-10 14:06:27.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 14:06:32.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 89ms
+2026-10-10 14:06:32.120 WARN  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 400 11ms coupon not found: SUMMER2025
+2026-10-10 14:06:41.120 ERROR [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 500 15ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:06:44.120 ERROR [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 500 9ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:06:47.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 78ms
+2026-10-10 14:06:56.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 41ms
+2026-10-10 14:07:02.120 ERROR [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 500 16ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:07:06.120 ERROR [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 500 19ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:07:09.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 81ms
+2026-10-10 14:07:12.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 37ms
+2026-10-10 14:07:20.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 73ms
+2026-10-10 14:07:25.120 ERROR [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 500 19ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:07:30.120 ERROR [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 500 8ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:07:37.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 14:07:45.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 62ms
+2026-10-10 14:07:54.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 93ms
+2026-10-10 14:08:03.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 60ms
+2026-10-10 14:08:08.120 ERROR [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 500 20ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:08:11.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 80ms
+2026-10-10 14:08:15.120 INFO  [http-nio-8080-exec-7] c.s.OrderController - POST /api/orders 200 34ms
+2026-10-10 14:08:22.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 84ms
+2026-10-10 14:08:25.120 INFO  [http-nio-8080-exec-5] c.s.OrderController - POST /api/orders 200 40ms
+2026-10-10 14:08:31.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 52ms
+2026-10-10 14:08:37.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 60ms
+2026-10-10 14:08:46.120 ERROR [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 500 12ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:08:51.120 ERROR [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 500 19ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:08:57.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 61ms
+2026-10-10 14:09:02.120 ERROR [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 500 9ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:09:06.120 INFO  [http-nio-8080-exec-9] c.s.OrderController - POST /api/orders 200 59ms
+2026-10-10 14:09:09.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 43ms
+2026-10-10 14:09:09.120 WARN  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 400 8ms coupon not found: SUMMER2025
+2026-10-10 14:09:18.120 ERROR [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 500 8ms couponCode=SPRING2026
+java.lang.NullPointerException: Cannot invoke "com.shop.Coupon.getAmount()" because "coupon" is null
+	at com.shop.OrderService.placeOrder(OrderService.java:17)
+	at com.shop.OrderController.create(OrderController.java:17)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:883)
+2026-10-10 14:09:22.120 INFO  [http-nio-8080-exec-2] c.s.OrderController - POST /api/orders 200 54ms
+2026-10-10 14:09:31.120 INFO  [http-nio-8080-exec-4] c.s.OrderController - POST /api/orders 200 77ms
+2026-10-10 14:09:35.120 INFO  [http-nio-8080-exec-8] c.s.OrderController - POST /api/orders 200 63ms
+2026-10-10 14:09:43.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 74ms
+2026-10-10 14:09:48.120 INFO  [http-nio-8080-exec-6] c.s.OrderController - POST /api/orders 200 35ms
+2026-10-10 14:09:53.120 INFO  [http-nio-8080-exec-1] c.s.OrderController - POST /api/orders 200 56ms

@@ -347,7 +347,7 @@ def _open_memory(memory_path: Path | None, mode: str, info: SessionInfo):
     """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
     from ..memory import MemorySession, MemoryStore, default_memory_path, normalize_mode, project_key
 
-    # serve 启动时已校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
+    # serve 启动时���校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
     mode = normalize_mode(mode) or "off"
     if mode == "off":
         return None
@@ -416,6 +416,14 @@ def run_turn(
         except Exception:
             first_turn = True
         message = (_build_context_message(info.logs, info.code, question, baseline) if first_turn else question)
+        similar: list[dict[str, Any]] = []
+        if first_turn:
+            from ..cases import first_turn_hint
+
+            hint, similar = first_turn_hint(conn, info.logs, info.code, info.name)
+            message += hint
+            if similar:
+                emit(custom("log_agent.similar_cases", {"cases": similar}))
         # 会话中途在网页上改了来源 / 范围：和 CLI 的 source_note 一样，在下一条消息前告知模型
         pending_note = settings.pop("pending_note", None)
         if pending_note and not first_turn:
@@ -447,6 +455,8 @@ def run_turn(
             result, question=question, logs=info.logs, code=info.code, model=info.model,
             settings={**settings, "no_redact": no_redact},
         )
+        if similar:
+            payload["similar_cases"] = similar
         store.record_turn(info.name, question, result.usage.get("total", 0), payload)
         if pending_note:
             latest = store.get(info.name)

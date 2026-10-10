@@ -24,8 +24,13 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     """每个用例都从干净状态开始：脱敏开启、无强制编码、缓存清空、HOME 指向临时目录。"""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
-    for name in ("LOG_AGENT_CONFIG", "LOG_AGENT_MODEL", "OPENAI_BASE_URL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES"):
+    for name in ("LOG_AGENT_CONFIG", "LOG_AGENT_MODEL", "OPENAI_BASE_URL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES",
+                 "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_FALLBACK_MODELS"):
         monkeypatch.delenv(name, raising=False)
+    # 脚本化模型的剧本里没有为结构化抽取 / 证据修正准备回复：默认只用模型手写的附录，
+    # 抽取与修正的行为在 test_postprocess.py 里单独覆盖
+    monkeypatch.setenv("LOG_AGENT_STRUCTURED", "inline")
+    monkeypatch.setenv("LOG_AGENT_EVIDENCE_REPAIR", "off")
     monkeypatch.delenv("LOG_AGENT_TIMEZONE", raising=False)
     timefilter.set_default_timezone()
     config.set_loaded(config.LoadedConfig())

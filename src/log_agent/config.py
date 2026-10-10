@@ -47,6 +47,13 @@ _KEYS: dict[str, str | None] = {
     "memory": "memory",
     "timeout": None,
     "max_retries": None,
+    # 模型分层与结构化输出：经环境变量生效，build_agent 读取（见 agent.py）
+    "subagent_model": None,
+    "fallback_models": None,
+    "structured": None,
+    "evidence_repair": None,
+    # 价格表：[pricing."模型名"] input / output / cache_read / cache_write（美元 / 百万 tokens），见 pricing.py
+    "pricing": None,
     # 日志解析相关，不走命令行参数，由 apply_log_settings 生效
     "log_formats": None,
     "app_packages": None,
@@ -59,7 +66,12 @@ _ENV_OVERRIDES = {
     "base_url": "OPENAI_BASE_URL",
     "timeout": "LOG_AGENT_TIMEOUT",
     "max_retries": "LOG_AGENT_MAX_RETRIES",
+    "subagent_model": "LOG_AGENT_SUBAGENT_MODEL",
+    "fallback_models": "LOG_AGENT_FALLBACK_MODELS",
+    "structured": "LOG_AGENT_STRUCTURED",
+    "evidence_repair": "LOG_AGENT_EVIDENCE_REPAIR",
 }
+_ENV_ONLY_KEYS = ("timeout", "max_retries", "subagent_model", "fallback_models", "structured", "evidence_repair")
 _ONLY_FOR = {"db": ("chat", "analyze"), "no_save": ("analyze",)}
 _PATH_KEYS = {"code", "skills", "db"}
 _PATH_LIST_KEYS = {"code", "skills"}
@@ -138,6 +150,9 @@ def _read(path: Path, config: LoadedConfig) -> None:
             # 和 [[log_formats]] 数组一样按“后读的文件覆盖先读的”处理；追加会让用户级格式排在前面先命中
             config.shared["log_formats"] = [section]
             continue
+        if name == "pricing":  # [pricing."模型名"] 价格表：按模型名合并，后读的文件覆盖同名模型
+            config.shared["pricing"] = {**config.shared.get("pricing", {}), **section}
+            continue
         if name not in COMMANDS:
             config.warnings.append(f"{path}: 忽略不认识的配置段 [{name}]")
             continue
@@ -184,10 +199,15 @@ def apply_log_settings(values: dict[str, Any]) -> None:
 
 
 def apply_to_environment(values: dict[str, Any]) -> None:
-    """只作用于环境变量的配置项（超时、重试），环境变量已设置时不覆盖。"""
-    for key in ("timeout", "max_retries"):
+    """只作用于环境变量的配置项（超时、重试、模型分层、结构化方式），环境变量已设置时不覆盖。"""
+    for key in _ENV_ONLY_KEYS:
         if key in values:
-            os.environ.setdefault(_ENV_OVERRIDES[key], str(values[key]))
+            value = values[key]
+            if isinstance(value, bool):
+                text = "on" if value else "off"
+            else:
+                text = ",".join(str(v) for v in value) if isinstance(value, list) else str(value)
+            os.environ.setdefault(_ENV_OVERRIDES[key], text)
 
 
 def cli_defaults(values: dict[str, Any]) -> dict[str, Any]:
