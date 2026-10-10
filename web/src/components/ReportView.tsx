@@ -1,12 +1,42 @@
-import { ClipboardCheck, FlaskConical, HelpCircle, Lightbulb, ListChecks, Repeat, Target, Wrench, type LucideIcon } from 'lucide-react'
+import {
+  Check,
+  ClipboardCheck,
+  Copy,
+  FlaskConical,
+  HelpCircle,
+  Lightbulb,
+  ListChecks,
+  Repeat,
+  Target,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { ASSESSMENT, CHECK_STATUS, CONFIDENCE, EVIDENCE, formatDuration, formatGenerated, splitPath, visibleReport } from '../lib/format'
+import { useCopy } from '../lib/hooks'
 import type { Evidence, EvidenceCheck, EvidenceItem, Issue, SourceTarget, TurnPayload } from '../lib/types'
 import { Markdown } from './Markdown'
 import { Badge, List } from './ui'
 
 function itemFor(check: EvidenceCheck | null, issue: number, index: number): EvidenceItem | undefined {
   return check?.items.find((it) => it.issue === issue && it.index === index)
+}
+
+/** 行号偏移时跳到核对出的真实位置；对不上的证据仍然打开所引行，方便人工判断 */
+function targetFor(evidence: Evidence, item?: EvidenceItem): SourceTarget {
+  return { source: evidence.source, start: item?.actual_start ?? evidence.line_start, end: item?.actual_end ?? evidence.line_end }
+}
+
+/** 本轮报告里所有证据的原文位置，按问题、证据顺序排列；原文面板用它做上一条 / 下一条 */
+export function evidenceTargets(payload: TurnPayload | undefined | null): (SourceTarget & { evidenceKey: string })[] {
+  const analysis = payload?.analysis
+  if (!analysis) return []
+  return analysis.issues.flatMap((issue, i) =>
+    issue.evidence.map((evidence, j) => ({
+      ...targetFor(evidence, itemFor(payload.evidence_check, i + 1, j + 1)),
+      evidenceKey: `${i + 1}-${j + 1}`,
+    })),
+  )
 }
 
 export function ReportView({
@@ -341,25 +371,27 @@ function EvidenceCard({
   onOpen: (target: SourceTarget) => void
 }) {
   const status = item ? EVIDENCE[item.status] : null
-  // 行号偏移时跳到核对出的真实位置；对不上的证据仍然打开所引行，方便人工判断
-  const start = item?.actual_start ?? evidence.line_start
-  const end = item?.actual_end ?? evidence.line_end
   const range = `${evidence.line_start}${evidence.line_end !== evidence.line_start ? `-${evidence.line_end}` : ''}`
   const { dir, name } = splitPath(evidence.source)
+  const { state, copy } = useCopy()
   return (
-    <button
-      type="button"
-      onClick={() => onOpen({ source: evidence.source, start, end })}
-      className={`block w-full rounded-xl border bg-white text-left dark:bg-zinc-900 transition-colors ${
+    <div
+      className={`overflow-hidden rounded-xl border bg-white transition-colors dark:bg-zinc-900 ${
         active
           ? 'border-brand-400 bg-brand-50/60 ring-1 ring-brand-300 dark:border-brand-700 dark:bg-brand-950/30 dark:ring-brand-800'
-          : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40'
+          : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
       }`}
     >
-      {/* 源码路径往往很长：第一行只放文件名和行号（完整显示），目录弱化放到下一行；徽标和「查看原文」固定在右侧 */}
-      <div className="flex items-start gap-2 px-3 pt-2" title={`${evidence.source}:${range}`}>
+      {/* 只有标题行可点：摘录区留给用户选中、复制文字 */}
+      <button
+        type="button"
+        onClick={() => onOpen(targetFor(evidence, item))}
+        aria-current={active ? 'true' : undefined}
+        title={`${evidence.source}:${range}`}
+        className="group flex w-full items-start gap-2 px-3 pb-1 pt-2 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+      >
         <span className="min-w-0 flex-1">
-          <span className="block break-all font-mono text-xs font-semibold leading-5 text-brand-700 dark:text-brand-300">
+          <span className="block break-all font-mono text-xs font-semibold leading-5 text-brand-700 group-hover:underline dark:text-brand-300">
             {name}:{range}
           </span>
           {dir && <span className="block truncate font-mono text-xs leading-4 text-zinc-500 dark:text-zinc-400">{dir}</span>}
@@ -370,14 +402,27 @@ function EvidenceCard({
               {status.mark} {status.label}
             </Badge>
           )}
-          <span className="whitespace-nowrap text-xs leading-5 text-zinc-500 dark:text-zinc-400">查看原文 →</span>
+          <span className="whitespace-nowrap text-xs leading-5 text-zinc-500 group-hover:text-brand-700 dark:text-zinc-400 dark:group-hover:text-brand-300">
+            查看原文 →
+          </span>
         </span>
-      </div>
+      </button>
       {item?.note && <p className="px-3 pt-1 text-xs text-zinc-500 dark:text-zinc-400">{item.note}</p>}
-      <pre className="mx-3 my-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-50 px-2 py-1.5 font-mono text-xs text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-        {evidence.excerpt}
-      </pre>
-    </button>
+      <div className="group/excerpt relative mx-3 my-2">
+        <pre className="max-h-40 select-text overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-50 py-1.5 pl-2 pr-16 font-mono text-xs text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+          {evidence.excerpt}
+        </pre>
+        <button
+          type="button"
+          onClick={() => void copy(evidence.excerpt)}
+          aria-label="复制摘录"
+          className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md bg-white/90 px-1.5 py-0.5 text-[11px] text-zinc-500 opacity-0 shadow-xs ring-1 ring-inset ring-zinc-200 transition-opacity hover:text-zinc-900 focus-visible:opacity-100 group-hover/excerpt:opacity-100 dark:bg-zinc-900/90 dark:ring-zinc-700 dark:hover:text-zinc-100 [@media(hover:none)]:opacity-100"
+        >
+          {state === 'copied' ? <Check className="h-3 w-3" aria-hidden /> : <Copy className="h-3 w-3" aria-hidden />}
+          {state === 'copied' ? '已复制' : state === 'failed' ? '复制失败' : '复制'}
+        </button>
+      </div>
+    </div>
   )
 }
 

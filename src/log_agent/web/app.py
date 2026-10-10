@@ -151,7 +151,9 @@ def _session_dict(info: SessionInfo) -> dict[str, Any]:
         "total_tokens": info.total_tokens,
         "created_at": info.created_at,
         "updated_at": info.updated_at,
-        "settings": info.settings,
+        "settings": {k: v for k, v in info.settings.items() if k != "pending_note"},
+        # 来源 / 范围改过、但还没告知模型：页面据此提示「下一次提问生效」
+        "pending_change": bool(info.settings.get("pending_note")),
     }
 
 
@@ -254,6 +256,18 @@ SESSION_TITLE_MAX = 80
 class SessionPatchRequest(BaseModel):
     title: str | None = None
     pinned: bool | None = None
+
+
+class SessionSourcesRequest(BaseModel):
+    logs: list[str] = Field(default_factory=list)
+    code: list[str] = Field(default_factory=list)
+    since: str | None = None
+    until: str | None = None
+    baseline: str | None = None
+
+
+RETRY_PREFIX = "请重新回答我上一个问题，重新核实证据，不要直接沿用上一次的结论。"
+RETRY_EXTRA_MAX = 2000
 
 
 def create_app(config: WebConfig) -> FastAPI:
@@ -421,6 +435,42 @@ def create_app(config: WebConfig) -> FastAPI:
             info = store.get(scope.name)
             pinned = scope.name in store.pinned_names()
         return {**_session_dict(info), "pinned": pinned}
+
+    @app.put("/api/sessions/{name}/sources")
+    def update_sources(body: SessionSourcesRequest, scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
+        """会话中途调整日志 / 源码 / 时间窗口 / 基线（对应 CLI 的 /add-log、/window 等）；下一次提问生效。"""
+        from ..cli_context import _build_context_message
+        from ..compare import parse_range
+        from ..sessions import describe_source_change
+        from .runner import get_live_run
+        from .workspace import CreateSessionRequest, validate_request
+
+        live = get_live_run(scope.name)
+        if live is not None and not live.done:
+            raise HTTPException(409, "分析正在进行，请等这一轮结束后再调整设置")
+        with _connect(config) as conn:
+            store, info = _load(conn, scope.name)
+            current = info.settings
+            logs, code, checked = validate_request(CreateSessionRequest(
+                logs=body.logs, code=body.code, since=body.since, until=body.until, baseline=body.baseline,
+                timezone=current.get("timezone"), encoding=current.get("encoding"),
+            ))
+            settings = {**current, **{k: checked[k] for k in ("since", "until", "baseline")}}
+            changed_sources = logs != info.logs or code != info.code
+            changed_window = any(current.get(k) != settings[k] for k in ("since", "until", "baseline"))
+            if not changed_sources and not changed_window:
+                return _session_dict(info)
+            # 没提问过的会话第一轮本来就会带上完整的来源说明，不用额外提醒
+            if info.turns:
+                baseline = parse_range(settings["baseline"]) if settings.get("baseline") else None
+                note = describe_source_change(info, logs, code)
+                note += ("\n" if note else "") + "分析设置已更新，请以下列来源和范围重新核实，之前的范围和基线不再适用：\n"
+                note += _build_context_message(logs, code, "继续排查", baseline)
+                note += f"\n范围：{settings['since'] or '开头'} → {settings['until'] or '结尾'}；基线：{settings['baseline'] or '未设置'}。"
+                settings["pending_note"] = note
+            store.touch(scope.name, logs, code, info.model, settings)
+            updated = store.get(scope.name)
+        return _session_dict(updated)
 
     @app.get("/api/trace", dependencies=[Depends(require_owner)])
     def trace(limit: int = 200, session: str = "") -> list[dict[str, Any]]:
@@ -734,6 +784,13 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
         raise HTTPException(409, "已有一轮分析正在进行，请等它结束后再追问")
     thread_id = str(body.get("threadId") or info.name)
     run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")[:128]
+    # 重答：存档里的问题保持原样，只在发给模型的消息前加上「重新核实」和用户的补充要求
+    prefix = ""
+    forwarded = body.get("forwardedProps")
+    retry = body.get("retry") or (forwarded.get("retry") if isinstance(forwarded, dict) else None)
+    if isinstance(retry, dict):
+        extra = str(retry.get("extra") or "").strip()[:RETRY_EXTRA_MAX]
+        prefix = RETRY_PREFIX + (f"\n补充要求：{extra}" if extra else "")
     live = LiveRun(info.name, question, run_id, turn=info.turns + 1)
     register_live_run(live)
     emit = live.emit
@@ -744,6 +801,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
                 redact_owner=config.redact_owner, memory_path=config.memory_path, memory_mode=config.memory_mode,
+                prefix=prefix,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

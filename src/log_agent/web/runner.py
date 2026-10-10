@@ -366,8 +366,9 @@ def run_turn(
     redact_owner: bool = True,
     memory_path: Path | None = None,
     memory_mode: str = "suggest",
+    prefix: str = "",
 ) -> dict[str, Any] | None:
-    """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
+    """执行一���续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     from .. import logfile, redact, timefilter
@@ -409,6 +410,12 @@ def run_turn(
         except Exception:
             first_turn = True
         message = (_build_context_message(info.logs, info.code, question, baseline) if first_turn else question)
+        # 会话中途在网页上改了来源 / 范围：和 CLI 的 source_note 一样，在下一条消息前告知模型
+        pending_note = settings.pop("pending_note", None)
+        if pending_note and not first_turn:
+            message = f"{pending_note}\n\n{message}"
+        if prefix:
+            message = f"{prefix}\n\n{message}"
 
         renderer = WebStreamRenderer(
             original_emit, cancelled, linker=CitationLinker(info.logs, info.code, mode="off"), budget=budget,
@@ -435,6 +442,11 @@ def run_turn(
             settings={**settings, "no_redact": no_redact},
         )
         store.record_turn(info.name, question, result.usage.get("total", 0), payload)
+        if pending_note:
+            latest = store.get(info.name)
+            if latest is not None and latest.settings.get("pending_note") == pending_note:
+                store.touch(info.name, latest.logs, latest.code, latest.model,
+                            {k: v for k, v in latest.settings.items() if k != "pending_note"})
         updated = store.get(info.name)
         emit(custom("log_agent.turn", {
             "turn": updated.turns if updated else None,

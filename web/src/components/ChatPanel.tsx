@@ -91,6 +91,7 @@ export function ChatPanel({
   /** 在输入框里按 ↑ / ↓ 翻看之前问过的问题时，当前停在第几个 */
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const [inputFocused, setInputFocused] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [notifyPermission, setNotifyPermission] = useState(() =>
     typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
   )
@@ -158,11 +159,11 @@ export function ChatPanel({
   })
 
   /** 发出或排队；返回 false 表示没收下（空问题，或已经有一个在排队），调用方要保留输入 */
-  function submit(text: string): boolean {
+  function submit(text: string, retry?: { extra: string }): boolean {
     const question = text.trim()
     if (!question) return false
     if (isLoading) {
-      if (queued !== null) return false
+      if (queued !== null || retry) return false
       setQueued(question)
       return true
     }
@@ -171,8 +172,10 @@ export function ChatPanel({
     setPhase(null)
     setServerError(null)
     setSavedTurn(null)
+    setRetrying(false)
     scrollToBottom('auto')
-    void sendMessage(question)
+    // 重答：问题原样存档，服务端在发给模型的消息前加上「重新核实」和补充要求
+    void sendMessage(question, retry ? { body: { retry } } : undefined)
     return true
   }
 
@@ -378,6 +381,12 @@ export function ChatPanel({
                     onOpen={onOpen}
                     onShowTurn={onShowTurn}
                     turn={turn}
+                    onRetry={
+                      message === lastAssistant && index > lastUserIndex && !isLoading && lastQuestion
+                        ? () => setRetrying((v) => !v)
+                        : undefined
+                    }
+                    retrying={retrying}
                   />
                 )
               if (index === lastUserIndex && showActivity) {
@@ -390,6 +399,9 @@ export function ChatPanel({
               }
               return node
             })}
+            {retrying && !isLoading && lastQuestion && (
+              <RetryForm question={lastQuestion} onCancel={() => setRetrying(false)} onRetry={(extra) => submit(lastQuestion, { extra })} />
+            )}
             {isLoading && phase && !stopping && (
               <div className="mt-5">
                 <FinishingStatus phase={phase} />
@@ -586,6 +598,8 @@ function AssistantMessage({
   turn,
   onOpen,
   onShowTurn,
+  onRetry,
+  retrying = false,
 }: {
   text: string
   brief?: TurnBrief
@@ -594,6 +608,8 @@ function AssistantMessage({
   turn?: number
   onOpen: (target: SourceTarget) => void
   onShowTurn: (turn: number) => void
+  onRetry?: () => void
+  retrying?: boolean
 }) {
   const { state: copyState, copy } = useCopy()
   const reportTurn = turn ?? savedTurn ?? undefined
@@ -649,7 +665,81 @@ function AssistantMessage({
             )}
           </button>
         )}
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-expanded={retrying}
+            aria-controls="retry-form"
+            title="重新核实证据再回答一次，可以附上补充要求"
+            className={`flex items-center gap-1 rounded-full px-2 py-1.5 text-xs transition-colors ${
+              retrying
+                ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+            重新回答
+          </button>
+        )}
       </div>
     </article>
+  )
+}
+
+function RetryForm({ question, onRetry, onCancel }: { question: string; onRetry: (extra: string) => void; onCancel: () => void }) {
+  const [extra, setExtra] = useState('')
+  function send(event?: { preventDefault: () => void }) {
+    event?.preventDefault()
+    onRetry(extra.trim())
+  }
+  return (
+    <form
+      id="retry-form"
+      onSubmit={send}
+      className="mt-4 space-y-2 rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        重新回答「<span className="text-zinc-800 dark:text-zinc-200">{question.length > 60 ? `${question.slice(0, 59)}…` : question}</span>
+        」， agent 会重新核实证据，不直接沿用上一次的结论。
+      </p>
+      <label htmlFor="retry-extra" className="sr-only">
+        补充要求
+      </label>
+      <textarea
+        id="retry-extra"
+        autoFocus
+        rows={2}
+        value={extra}
+        onChange={(e) => setExtra(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          } else if (e.key === 'Enter' && !e.shiftKey) {
+            send(e)
+          }
+        }}
+        placeholder="补充要求（可选），例如：重点看 14:05 之后的重试日志"
+        className="block w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 dark:border-zinc-700"
+      />
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          重新回答
+        </button>
+      </div>
+    </form>
   )
 }

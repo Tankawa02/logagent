@@ -12,6 +12,14 @@ function parentOf(path: string): string {
   return index > 0 ? path.slice(0, index) : path
 }
 
+/** 多行粘贴：去掉空行和包裹路径的引号（终端「复制路径」常带引号） */
+export function splitPaths(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^(['"])(.*)\1$/, '$2'))
+    .filter(Boolean)
+}
+
 export interface SourceValidity {
   invalid: number
   checking: number
@@ -175,13 +183,21 @@ export function SourcePicker({
           {isLog ? '浏览文件' : '浏览目录'}
         </button>
         <input
+          id={`${kind}-path-input`}
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={onKey}
           onBlur={commitTyped}
+          onPaste={(e) => {
+            // 一次粘贴多行路径（比如从终端 ls 的输出复制）时逐行添加，而不是挤成一个路径
+            const lines = splitPaths(e.clipboardData.getData('text'))
+            if (lines.length < 2) return
+            e.preventDefault()
+            add(lines)
+          }}
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
-          placeholder={isLog ? '或粘贴路径，回车添加' : '或粘贴目录路径，回车添加'}
+          placeholder={isLog ? '或粘贴路径（可多行），回车添加' : '或粘贴目录路径（可多行），回车添加'}
           className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
         />
       </div>

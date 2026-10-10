@@ -199,6 +199,8 @@ export interface SessionSummary {
   settings: Record<string, unknown>
   /** 只在会话列表里返回 */
   pinned?: boolean
+  /** 来源 / 范围在会话中途改过、还没在下一次提问里告知模型 */
+  pending_change?: boolean
   last?: TurnBrief | null
 }
 
@@ -315,6 +317,14 @@ export interface CreateSessionBody {
   timezone?: string
   baseline?: string
   encoding?: string
+}
+
+export interface SessionSourcesBody {
+  logs: string[]
+  code: string[]
+  since?: string
+  until?: string
+  baseline?: string
 }
 
 export interface LineRef {

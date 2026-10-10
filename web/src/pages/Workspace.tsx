@@ -1,8 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
+  ArrowLeft,
   BarChart3,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
   FileCode2,
@@ -11,7 +14,9 @@ import {
   FolderCode,
   GanttChart,
   MoreHorizontal,
+  Pencil,
   Share2,
+  SlidersHorizontal,
   X,
 } from 'lucide-react'
 import {
@@ -25,14 +30,15 @@ import {
   type RefObject,
 } from 'react'
 import { ChatPanel, type AskRequest } from '../components/ChatPanel'
-import { ReportView } from '../components/ReportView'
+import { ReportView, evidenceTargets } from '../components/ReportView'
+import { SessionSourcesDialog } from '../components/SessionSourcesDialog'
 import { SharePanel } from '../components/SharePanel'
 import { SourceViewer } from '../components/SourceViewer'
 import { TimelinePane } from '../components/TimelinePane'
 import { useToast } from '../components/Feedback'
 import { Badge, Empty, ErrorBox, PageSkeleton } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
-import { ASSESSMENT } from '../lib/format'
+import { ASSESSMENT, formatGenerated } from '../lib/format'
 import { useClickOutside, useMediaQuery, useModal } from '../lib/hooks'
 import { discardPendingQuestion, holdPendingQuestion } from '../lib/pending'
 import type { Meta, SessionDetail, SourceTarget } from '../lib/types'
@@ -50,6 +56,7 @@ export function Workspace({
   const client = useQueryClient()
   const [ask, setAsk] = useState<AskRequest | null>(null)
   const [sharing, setSharing] = useState(false)
+  const [editingSources, setEditingSources] = useState(false)
 
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta })
   // 切回来时总要重新拉：离开期间服务端可能已经跑完并存档了一轮
@@ -71,6 +78,13 @@ export function Workspace({
   })
   const turns = session.data?.turn_list ?? []
   const turnNumber = search.turn ?? turns.at(-1)?.turn
+  // 和报告视图同一个查询键，共用缓存；原文面板拿它做证据的上一条 / 下一条
+  const turnPayload = useQuery({
+    queryKey: [...scopeKey(scope), 'turn', turnNumber],
+    queryFn: () => api.turn(scope, turnNumber!),
+    enabled: turnNumber !== undefined,
+  })
+  const evidence = useMemo(() => evidenceTargets(turnPayload.data), [turnPayload.data])
 
   // 对话面板挂不上（会话加载失败 / 不能提问）时，新建页交接过来的第一个问题就作废，
   // 免得以后再打开这个会话时被意外发出去
@@ -155,6 +169,7 @@ export function Workspace({
         panels={panels}
         onPanel={(p) => openPanel(panel === p ? undefined : p)}
         onShare={owner ? () => setSharing(true) : undefined}
+        onEditSources={canChat ? () => setEditingSources(true) : undefined}
       />
 
       <div ref={row} className="flex min-h-0 flex-1">
@@ -253,8 +268,18 @@ export function Workspace({
             <div className="min-h-0 flex-1">
               {panel === 'report' && <div className="h-full overflow-auto">{report}</div>}
               {panel === 'source' && (
-                <div className="h-full p-3">
-                  <SourceViewer scope={scope} target={target} />
+                <div className="flex h-full flex-col gap-2 p-3">
+                  {(panels.includes('report') || evidence.length > 0) && (
+                    <EvidenceNav
+                      evidence={evidence}
+                      active={search.ev}
+                      onBack={panels.includes('report') ? () => openPanel('report') : undefined}
+                      onOpen={openSource}
+                    />
+                  )}
+                  <div className="min-h-0 flex-1">
+                    <SourceViewer scope={scope} target={target} />
+                  </div>
                 </div>
               )}
               {panel === 'timeline' && (
@@ -274,7 +299,82 @@ export function Workspace({
       </div>
 
       {sharing && owner && meta.data && <SharePanel session={scope.name} meta={meta.data} onClose={() => setSharing(false)} />}
+      {editingSources && canChat && <SessionSourcesDialog info={info} onClose={() => setEditingSources(false)} />}
     </div>
+  )
+}
+
+const NAV_BUTTON =
+  'flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+
+/** 原文面板顶部：回到报告，或在本轮证据之间逐条翻看（[ / ] 快捷键） */
+function EvidenceNav({
+  evidence,
+  active,
+  onBack,
+  onOpen,
+}: {
+  evidence: (SourceTarget & { evidenceKey: string })[]
+  active?: string
+  onBack?: () => void
+  onOpen: (target: SourceTarget) => void
+}) {
+  const index = evidence.findIndex((e) => e.evidenceKey === active)
+  const prev = index > 0 ? evidence[index - 1] : undefined
+  const next = index < 0 ? evidence[0] : evidence[index + 1]
+
+  useEffect(() => {
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+      const el = event.target as HTMLElement | null
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      const target = event.key === '[' ? prev : event.key === ']' ? next : undefined
+      if (!target) return
+      event.preventDefault()
+      onOpen(target)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [prev, next, onOpen])
+
+  const [issue, item] = active?.split('-') ?? []
+  return (
+    <nav aria-label="证据导航" className="flex items-center gap-1 rounded-xl bg-zinc-100/80 p-1 dark:bg-zinc-900">
+      {onBack && (
+        <button type="button" onClick={onBack} className={NAV_BUTTON}>
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+          返回报告
+        </button>
+      )}
+      {evidence.length > 0 && (
+        <div className="ml-auto flex items-center gap-1">
+          <span className="px-1 text-xs tabular-nums text-zinc-500 dark:text-zinc-400" aria-live="polite">
+            {index >= 0 ? `问题 ${issue} · 证据 ${item}（${index + 1}/${evidence.length}）` : `共 ${evidence.length} 条证据`}
+          </span>
+          <button
+            type="button"
+            onClick={() => prev && onOpen(prev)}
+            disabled={!prev}
+            aria-label="上一条证据"
+            title="上一条证据 ["
+            className={NAV_BUTTON}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => next && onOpen(next)}
+            disabled={!next}
+            aria-label={index < 0 ? '查看第一条证据' : '下一条证据'}
+            title={index < 0 ? '查看第一条证据 ]' : '下一条证据 ]'}
+            className={NAV_BUTTON}
+          >
+            {index < 0 && '从第一条看'}
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      )}
+    </nav>
   )
 }
 
@@ -592,6 +692,94 @@ function SourceChips({ info }: { info: SessionDetail }) {
   )
 }
 
+const TITLE_MAX = 80
+
+/** 会话标题：双击或点铅笔就地改名，Enter 保存、Esc 取消；和侧栏的重命名走同一个接口 */
+function TitleEditor({ name, title }: { name: string; title: string }) {
+  const client = useQueryClient()
+  const toast = useToast()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(title)
+  const input = useRef<HTMLInputElement>(null)
+  const done = useRef(false)
+
+  function start() {
+    done.current = false
+    setValue(title)
+    setEditing(true)
+    requestAnimationFrame(() => input.current?.select())
+  }
+
+  async function finish(save: boolean) {
+    if (done.current) return
+    done.current = true
+    setEditing(false)
+    const next = value.replace(/\s+/g, ' ').trim()
+    if (!save || next === title) return
+    if (!next) {
+      toast('标题不能为空，已保留原标题', 'error')
+      return
+    }
+    try {
+      await api.patchSession(name, { title: next })
+      void client.invalidateQueries({ queryKey: ['owner', name, 'session'] })
+      void client.invalidateQueries({ queryKey: ['sessions'] })
+    } catch (error) {
+      toast(`重命名失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
+  }
+
+  if (editing) {
+    const left = TITLE_MAX - value.length
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <input
+          ref={input}
+          autoFocus
+          value={value}
+          maxLength={TITLE_MAX}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={() => void finish(true)}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void finish(true)
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              e.stopPropagation()
+              void finish(false)
+            }
+          }}
+          aria-label="会话标题"
+          className="min-w-0 flex-1 rounded-lg border border-brand-300 bg-white px-2 py-1 text-[15px] font-semibold outline-none ring-4 ring-brand-500/10 dark:border-brand-800 dark:bg-zinc-950"
+        />
+        {left <= 20 && <span className={`shrink-0 text-xs tabular-nums ${left <= 5 ? 'text-amber-600' : 'text-zinc-400'}`}>{left}</span>}
+      </div>
+    )
+  }
+  return (
+    <div className="group flex min-w-0 flex-1 items-center gap-1">
+      <h1
+        onDoubleClick={start}
+        title="双击重命名"
+        className="line-clamp-2 min-w-0 text-[15px] font-semibold leading-snug tracking-tight text-zinc-900 sm:truncate dark:text-zinc-50"
+      >
+        {title || '新的分析'}
+      </h1>
+      <button
+        type="button"
+        onClick={start}
+        aria-label="重命名会话"
+        title="重命名"
+        className="shrink-0 rounded-md p-1 text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 [@media(hover:none)]:opacity-100"
+      >
+        <Pencil className="h-3.5 w-3.5" aria-hidden />
+      </button>
+    </div>
+  )
+}
+
 function SessionHeader({
   info,
   scope,
@@ -601,6 +789,7 @@ function SessionHeader({
   panels,
   onPanel,
   onShare,
+  onEditSources,
 }: {
   info: SessionDetail
   scope: Scope
@@ -610,6 +799,7 @@ function SessionHeader({
   panels: Panel[]
   onPanel: (panel: Panel) => void
   onShare?: () => void
+  onEditSources?: () => void
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const settings = info.settings as Record<string, string | number | null>
@@ -621,9 +811,13 @@ function SessionHeader({
   return (
     <header className="space-y-2.5 border-b border-zinc-200/70 px-4 py-3 sm:px-5 dark:border-zinc-800">
       <div className="flex items-center gap-3">
-        <h1 className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-snug tracking-tight text-zinc-900 sm:truncate dark:text-zinc-50">
-          {info.title || '新的分析'}
-        </h1>
+        {scope.kind === 'owner' ? (
+          <TitleEditor name={scope.name} title={info.title} />
+        ) : (
+          <h1 className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-snug tracking-tight text-zinc-900 sm:truncate dark:text-zinc-50">
+            {info.title || '新的分析'}
+          </h1>
+        )}
         <PanelSwitch panels={panels} panel={panel} onPanel={onPanel} className="hidden shrink-0 md:flex" />
         <div className="flex shrink-0 items-center gap-1">
           <MoreMenu scope={scope} turnNumber={turnNumber} canChat={!!meta?.can_chat} />
@@ -664,6 +858,22 @@ function SessionHeader({
         <div id="session-sources" className={`${sourcesOpen ? 'flex' : 'hidden'} w-full flex-wrap gap-1.5 sm:flex sm:w-auto`}>
           <SourceChips info={info} />
         </div>
+        {onEditSources && (
+          <button
+            type="button"
+            onClick={onEditSources}
+            title="追加 / 移除日志与源码，调整时间窗口和基线"
+            className="flex items-center gap-1 rounded-full px-2 py-0.5 text-zinc-500 ring-1 ring-inset ring-transparent transition-colors hover:bg-white hover:text-zinc-900 hover:ring-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100 dark:hover:ring-zinc-800"
+          >
+            <SlidersHorizontal className="h-3 w-3" aria-hidden />
+            调整
+          </button>
+        )}
+        {info.pending_change && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900">
+            设置已改，下一次提问生效
+          </span>
+        )}
         {metaText && (
           <span title={metaText} className="hidden min-w-0 max-w-full truncate font-mono text-zinc-500 sm:inline dark:text-zinc-400">
             {metaText}
@@ -695,27 +905,44 @@ function ReportPane({
     enabled: turnNumber !== undefined,
   })
   const ordered = useMemo(() => [...info.turn_list].reverse(), [info.turn_list])
+  const current = info.turn_list.find((t) => t.turn === turnNumber)
   return (
     <div>
       {info.turn_list.length > 1 && (
-        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-200/70 px-4 py-2.5 dark:border-zinc-800">
-          {ordered.map((t) => (
-            <button
-              key={t.turn}
-              type="button"
-              onClick={() => onPick(t.turn)}
-              title={t.question}
-              className={`flex max-w-56 shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-xs ring-1 ring-inset transition-colors ${
-                t.turn === turnNumber
-                  ? 'bg-brand-50 text-brand-800 ring-brand-200 dark:bg-brand-950/50 dark:text-brand-200 dark:ring-brand-900'
-                  : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800'
-              }`}
-            >
-              <span className="font-semibold">#{t.turn}</span>
-              {t.assessment && <Badge tone={ASSESSMENT[t.assessment].tone}>{ASSESSMENT[t.assessment].label}</Badge>}
-              <span className="truncate">{t.question}</span>
-            </button>
-          ))}
+        <div className="border-b border-zinc-200/70 dark:border-zinc-800">
+          <div role="group" aria-label="切换轮次" className="flex gap-1.5 overflow-x-auto px-4 py-2.5">
+            {ordered.map((t) => (
+              <button
+                key={t.turn}
+                type="button"
+                onClick={() => onPick(t.turn)}
+                aria-pressed={t.turn === turnNumber}
+                title={[
+                  `第 ${t.turn} 轮：${t.question}`,
+                  t.summary ? `结论：${t.summary}` : null,
+                  t.issues ? `${t.issues} 个问题` : null,
+                  t.generated_at ? formatGenerated(t.generated_at) : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n')}
+                className={`flex max-w-56 shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-xs ring-1 ring-inset transition-colors ${
+                  t.turn === turnNumber
+                    ? 'bg-brand-50 text-brand-800 ring-brand-200 dark:bg-brand-950/50 dark:text-brand-200 dark:ring-brand-900'
+                    : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <span className="font-semibold">#{t.turn}</span>
+                {t.assessment && <Badge tone={ASSESSMENT[t.assessment].tone}>{ASSESSMENT[t.assessment].label}</Badge>}
+                <span className="truncate">{t.question}</span>
+              </button>
+            ))}
+          </div>
+          {current && turnNumber !== info.turn_list.at(-1)?.turn && (
+            <p className="px-4 pb-2.5 text-xs text-amber-700 dark:text-amber-400">
+              正在查看较早的第 {current.turn} 轮{current.generated_at ? `（${formatGenerated(current.generated_at)}）` : ''}
+              ，之后的轮次可能已有更新的结论。
+            </p>
+          )}
         </div>
       )}
       {info.turn_list.length === 0 && <Empty>还没有报告。提出第一个问题后，结构化报告与证据核对会出现在这里。</Empty>}
