@@ -114,9 +114,22 @@ const traceRoute = createRoute({
 const traceDetailRoute = createRoute({
   getParentRoute: () => ownerRoute,
   path: '/trace/$name/$turn',
+  validateSearch: (search: Record<string, unknown>): { span?: string } => ({
+    span: typeof search.span === 'string' && search.span ? search.span : undefined,
+  }),
   component: function TraceTurn() {
     const { name, turn } = traceDetailRoute.useParams()
-    return <TraceDetail key={`${name}-${turn}`} name={name} turn={Number(turn)} />
+    const { span } = traceDetailRoute.useSearch()
+    const navigate = useNavigate({ from: traceDetailRoute.fullPath })
+    return (
+      <TraceDetail
+        key={`${name}-${turn}`}
+        name={name}
+        turn={Number(turn)}
+        spanKey={span ?? null}
+        onSpanChange={(key) => void navigate({ search: { span: key }, replace: true })}
+      />
+    )
   },
 })
 
