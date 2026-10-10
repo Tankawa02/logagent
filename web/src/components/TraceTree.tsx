@@ -1,5 +1,5 @@
-import { Bot, ChevronRight, Wrench } from 'lucide-react'
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Bot, ChevronRight, Search, Wrench, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { formatDuration, formatTokens } from '../lib/format'
 import type { Span } from './TraceSpanDetail'
 
@@ -27,6 +27,12 @@ export function groupSpans(spans: Span[]): SpanGroup[] {
   return groups
 }
 
+/** 一秒以内显示毫秒，避免一列 0.0s 看不出差别 */
+export function spanDuration(seconds: number): string {
+  if (seconds > 0 && seconds < 1) return `${Math.max(1, Math.round(seconds * 1000))}ms`
+  return formatDuration(seconds)
+}
+
 function spanTone(span: Span) {
   if (span.kind === 'llm') return { bar: 'bg-brand-500', icon: 'text-brand-600 dark:text-brand-400' }
   if (span.call.failed) return { bar: 'bg-red-500', icon: 'text-red-600 dark:text-red-400' }
@@ -34,18 +40,27 @@ function spanTone(span: Span) {
   return { bar: 'bg-amber-500', icon: 'text-amber-600 dark:text-amber-500' }
 }
 
+function searchText(span: Span): string {
+  if (span.kind === 'llm') {
+    const names = (span.call.tool_requests ?? []).map((r) => r.name).join(' ')
+    return `${span.label} ${names} ${span.call.output_text?.text ?? ''}`.toLowerCase()
+  }
+  return `${span.label} ${JSON.stringify(span.call.args ?? {})} ${span.call.summary ?? ''}`.toLowerCase()
+}
+
 interface RowProps {
   span: Span
   depth: number
   total: number
   selected: boolean
+  focusable: boolean
   expanded?: boolean
   childCount?: number
   onSelect: () => void
   onToggle?: () => void
 }
 
-function TreeRow({ span, depth, total, selected, expanded, childCount, onSelect, onToggle }: RowProps) {
+function TreeRow({ span, depth, total, selected, focusable, expanded, childCount, onSelect, onToggle }: RowProps) {
   const tone = spanTone(span)
   const Icon = span.kind === 'llm' ? Bot : Wrench
   const failed = span.kind === 'tool' && span.call.failed
@@ -82,6 +97,7 @@ function TreeRow({ span, depth, total, selected, expanded, childCount, onSelect,
           aria-selected={selected}
           aria-expanded={onToggle ? expanded : undefined}
           aria-level={depth + 1}
+          tabIndex={focusable ? 0 : -1}
           data-span-key={span.key}
           onClick={onSelect}
           className="flex min-w-0 flex-1 items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
@@ -107,14 +123,14 @@ function TreeRow({ span, depth, total, selected, expanded, childCount, onSelect,
             {tokens != null && (
               <span className="hidden font-mono text-[11px] tabular-nums text-zinc-400 sm:inline">{formatTokens(tokens)} tok</span>
             )}
-            <span className="relative hidden h-1.5 w-24 rounded-full bg-zinc-100 md:block xl:w-32 dark:bg-zinc-800" aria-hidden>
+            <span className="relative hidden h-1.5 w-20 rounded-full bg-zinc-100 lg:block xl:w-28 dark:bg-zinc-800" aria-hidden>
               <span
                 className={`absolute inset-y-0 rounded-full ${tone.bar} ${incomplete ? 'opacity-40' : ''}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
               />
             </span>
             <span className="w-12 text-right font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
-              {formatDuration(span.seconds)}
+              {spanDuration(span.seconds)}
             </span>
           </span>
         </button>
@@ -138,6 +154,7 @@ export function TraceTree({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [filter, setFilter] = useState<Filter>('all')
+  const [query, setQuery] = useState('')
   const listRef = useRef<HTMLUListElement>(null)
 
   const counts = useMemo(() => {
@@ -150,11 +167,16 @@ export function TraceTree({
     }
   }, [groups])
 
-  // 筛选时打平成列表，否则按父子结构展示
+  const needle = query.trim().toLowerCase()
+  const flat = filter !== 'all' || needle !== ''
+
+  // 筛选或搜索时打平成列表，否则按父子结构展示
   const rows = useMemo(() => {
-    if (filter !== 'all') {
+    if (flat) {
       const match = (s: Span) =>
-        filter === 'llm' ? s.kind === 'llm' : filter === 'tool' ? s.kind === 'tool' : s.kind === 'tool' && s.call.failed
+        (filter === 'all' ||
+          (filter === 'llm' ? s.kind === 'llm' : filter === 'tool' ? s.kind === 'tool' : s.kind === 'tool' && s.call.failed)) &&
+        (!needle || searchText(s).includes(needle))
       return groups
         .flatMap((g) => [g.span, ...g.children])
         .filter(match)
@@ -164,7 +186,23 @@ export function TraceTree({
       { span: g.span, depth: 0, group: g.children.length ? g : null },
       ...(collapsed.has(g.span.key) ? [] : g.children.map((span) => ({ span, depth: 1, group: null }))),
     ])
-  }, [groups, collapsed, filter])
+  }, [groups, collapsed, filter, needle, flat])
+
+  // 选中项可能来自详情面板里的跳转：被收起时先展开父节点，再滚到可见处
+  const parentKey = useMemo(() => groups.find((g) => g.children.some((c) => c.key === selectedKey))?.span.key, [groups, selectedKey])
+  const [revealed, setRevealed] = useState<string | null>(null)
+  if (parentKey && selectedKey !== revealed && collapsed.has(parentKey)) {
+    setRevealed(selectedKey)
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      next.delete(parentKey)
+      return next
+    })
+  }
+  useEffect(() => {
+    if (!selectedKey) return
+    listRef.current?.querySelector<HTMLElement>(`[data-span-key="${selectedKey}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [selectedKey, rows])
 
   const toggle = (key: string) =>
     setCollapsed((prev) => {
@@ -174,6 +212,7 @@ export function TraceTree({
       return next
     })
 
+  const selectedVisible = rows.some((r) => r.span.key === selectedKey)
   const allCollapsed = groups.filter((g) => g.children.length).every((g) => collapsed.has(g.span.key))
   const hasChildren = groups.some((g) => g.children.length)
 
@@ -209,63 +248,101 @@ export function TraceTree({
   ]
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
-        <div role="radiogroup" aria-label="筛选调用" className="inline-flex rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
-          {filters.map((f) => (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="space-y-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="radiogroup" aria-label="筛选调用" className="inline-flex rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
+            {filters.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                role="radio"
+                aria-checked={filter === f.key}
+                disabled={f.key !== 'all' && f.count === 0}
+                onClick={() => setFilter(f.key)}
+                className={`rounded px-2 py-0.5 text-xs tabular-nums disabled:cursor-not-allowed disabled:opacity-40 ${
+                  filter === f.key
+                    ? 'bg-white font-medium text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                }`}
+              >
+                {f.label}
+                <span className={`ml-1 ${f.key === 'failed' && f.count ? 'text-red-600' : 'text-zinc-400'}`}>{f.count}</span>
+              </button>
+            ))}
+          </div>
+          {!flat && hasChildren && (
             <button
-              key={f.key}
               type="button"
-              role="radio"
-              aria-checked={filter === f.key}
-              disabled={f.key !== 'all' && f.count === 0}
-              onClick={() => setFilter(f.key)}
-              className={`rounded px-2 py-0.5 text-xs tabular-nums disabled:cursor-not-allowed disabled:opacity-40 ${
-                filter === f.key
-                  ? 'bg-white font-medium text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-              }`}
+              onClick={() =>
+                setCollapsed(allCollapsed ? new Set() : new Set(groups.filter((g) => g.children.length).map((g) => g.span.key)))
+              }
+              className="ml-auto rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             >
-              {f.label}
-              <span className={`ml-1 ${f.key === 'failed' && f.count ? 'text-red-600' : 'text-zinc-400'}`}>{f.count}</span>
+              {allCollapsed ? '全部展开' : '全部收起'}
             </button>
-          ))}
+          )}
         </div>
-        {filter === 'all' && hasChildren && (
-          <button
-            type="button"
-            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(groups.filter((g) => g.children.length).map((g) => g.span.key)))}
-            className="ml-auto rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-          >
-            {allCollapsed ? '全部展开' : '全部收起'}
-          </button>
-        )}
+        <label className="relative block">
+          <span className="sr-only">搜索调用</span>
+          <Search className="pointer-events-none absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && query) {
+                e.stopPropagation()
+                setQuery('')
+              }
+            }}
+            placeholder="搜索工具名、参数或结果"
+            className="w-full rounded-md border border-zinc-200 bg-white py-1 pr-7 pl-7 text-xs text-zinc-800 outline-none placeholder:text-zinc-400 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="清空搜索"
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-0.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            >
+              <X className="h-3 w-3" aria-hidden />
+            </button>
+          )}
+        </label>
       </div>
       <div
-        className="hidden items-center justify-end gap-2 px-3 pt-1.5 font-mono text-[10px] tabular-nums text-zinc-400 md:flex"
+        className="hidden items-center justify-end gap-2 px-3 pt-1.5 font-mono text-[10px] tabular-nums text-zinc-400 lg:flex"
         aria-hidden
       >
-        <span className="flex w-24 justify-between xl:w-32">
+        <span className="flex w-20 justify-between xl:w-28">
           <span>0s</span>
           <span>{formatDuration(total)}</span>
         </span>
         <span className="w-12" />
       </div>
-      <ul ref={listRef} role="tree" aria-label="调用树" onKeyDown={onKeyDown} className="py-1">
-        {rows.map((row) => (
-          <TreeRow
-            key={row.span.key}
-            span={row.span}
-            depth={row.depth}
-            total={total}
-            selected={row.span.key === selectedKey}
-            expanded={row.group ? !collapsed.has(row.span.key) : undefined}
-            childCount={row.group?.children.length}
-            onSelect={() => onSelect(row.span)}
-            onToggle={row.group ? () => toggle(row.span.key) : undefined}
-          />
-        ))}
-      </ul>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {rows.length === 0 ? (
+          <p className="px-4 py-8 text-center text-xs text-zinc-400">没有匹配的调用</p>
+        ) : (
+          <ul ref={listRef} role="tree" aria-label="调用树" onKeyDown={onKeyDown} className="py-1">
+            {rows.map((row, i) => (
+              <TreeRow
+                key={row.span.key}
+                span={row.span}
+                depth={row.depth}
+                total={total}
+                selected={row.span.key === selectedKey}
+                focusable={row.span.key === selectedKey || (!selectedVisible && i === 0)}
+                expanded={row.group ? !collapsed.has(row.span.key) : undefined}
+                childCount={row.group?.children.length}
+                onSelect={() => onSelect(row.span)}
+                onToggle={row.group ? () => toggle(row.span.key) : undefined}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

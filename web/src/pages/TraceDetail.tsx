@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, MessageSquare } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Badge, Card, CardHeader, Empty, ErrorBox, ListSkeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { baseName, formatDuration, formatGenerated, formatTokens, TURN_STATUS } from '../lib/format'
 import type { ToolCall, TurnPayload } from '../lib/types'
-import { TraceSpanDetail, type Span } from '../components/TraceSpanDetail'
+import { TraceSpanDetail, type Span, type SpanLinks, type Tab } from '../components/TraceSpanDetail'
 import { groupSpans, TraceTree } from '../components/TraceTree'
 
 function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; approximate: boolean } {
@@ -34,7 +34,7 @@ function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; appro
   return { spans, total: Math.max(payload.elapsed_seconds || 0, end, 0.001), approximate }
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: ReactNode }) {
   return (
     <div className="min-w-0 px-4 py-3">
       <dt className="text-xs text-zinc-500">{label}</dt>
@@ -98,12 +98,38 @@ const SETTING_LABELS: Record<string, string> = {
   max_steps: '最大步数',
 }
 
-export function TraceDetail({ name, turn }: { name: string; turn: number }) {
+export function TraceDetail({
+  name,
+  turn,
+  spanKey,
+  onSpanChange,
+}: {
+  name: string
+  turn: number
+  spanKey: string | null
+  onSpanChange: (key: string) => void
+}) {
   const payload = useQuery({ queryKey: ['owner', name, 'turn', turn], queryFn: () => api.turn({ kind: 'owner', name }, turn) })
   const view = useMemo(() => (payload.data ? buildSpans(payload.data) : null), [payload.data])
   const groups = useMemo(() => (view ? groupSpans(view.spans) : []), [view])
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const selected = view?.spans.find((s) => s.key === selectedKey) ?? view?.spans[0] ?? null
+  const ordered = useMemo(() => groups.flatMap((g) => [g.span, ...g.children]), [groups])
+  const [tab, setTab] = useState<Tab>('output')
+  const selectedIndex = Math.max(
+    0,
+    ordered.findIndex((s) => s.key === spanKey),
+  )
+  const selected = ordered[selectedIndex] ?? null
+  const links = useMemo<SpanLinks>(() => {
+    const toolByRequestId = new Map<string, Span>()
+    for (const s of ordered) if (s.kind === 'tool' && s.call.call_id) toolByRequestId.set(s.call.call_id, s)
+    const parent = groups.find((g) => g.children.some((c) => c.key === selected?.key))?.span ?? null
+    return { toolByRequestId, parent, onJump: onSpanChange }
+  }, [ordered, groups, selected?.key, onSpanChange])
+  const detailRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    detailRef.current?.scrollTo({ top: 0 })
+  }, [selected?.key])
+  const firstFailed = ordered.find((s) => s.kind === 'tool' && s.call.failed)
 
   if (payload.isLoading) {
     return (
@@ -190,36 +216,78 @@ export function TraceDetail({ name, turn }: { name: string; turn: number }) {
             <Metric
               label="tokens"
               value={formatTokens(data.usage?.total)}
-              hint={`输入 ${formatTokens(data.usage?.input)} · 输出 ${formatTokens(data.usage?.output)}`}
+              hint={`输入 ${formatTokens(data.usage?.input)} · ���出 ${formatTokens(data.usage?.output)}`}
             />
-            <Metric label="工具调用" value={String(tools.length)} hint={failed ? `${failed} 次失败` : '无失败'} />
+            <Metric
+              label="工具调用"
+              value={String(tools.length)}
+              hint={
+                failed && firstFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSpanChange(firstFailed.key)
+                      setTab('output')
+                      document.getElementById('trace-spans')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }}
+                    className="text-red-600 underline-offset-2 hover:underline"
+                  >
+                    {failed} 次失败，查看第一个
+                  </button>
+                ) : (
+                  '无失败'
+                )
+              }
+            />
           </dl>
         </Card>
 
-        <Card>
-          <CardHeader title="执行过程">
-            {view.spans.length > 0 && <span className="hidden text-xs text-zinc-500 sm:inline">点击调用查看输入与输出，方向键可切换</span>}
-          </CardHeader>
-          {view.approximate && view.spans.length > 0 && (
-            <p className="border-b border-zinc-100 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800">
-              这一轮由旧版本记录，没有保存开始时间，时间轴按调用顺序首尾相接排列，仅供比较长短。
-            </p>
-          )}
-          {view.spans.length === 0 ? (
-            <Empty>这一轮没有模型或工具调用记录</Empty>
-          ) : (
-            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-              <div className="min-w-0 border-b border-zinc-100 lg:border-r lg:border-b-0 dark:border-zinc-800">
-                <TraceTree groups={groups} total={view.total} selectedKey={selected?.key ?? null} onSelect={(s) => setSelectedKey(s.key)} />
-              </div>
-              <div className="min-w-0 bg-zinc-50/60 dark:bg-zinc-900/60">
-                <div className="p-4 lg:sticky lg:top-0 lg:max-h-[calc(100vh-2rem)] lg:overflow-auto">
-                  {selected && <TraceSpanDetail key={selected.key} span={selected} />}
+        <div id="trace-spans" className="scroll-mt-4">
+          <Card className="overflow-hidden">
+            <CardHeader title="执行过程">
+              {view.spans.length > 0 && (
+                <span className="hidden items-center gap-1 text-xs text-zinc-400 sm:inline-flex">
+                  <kbd className="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700">↑↓</kbd>
+                  切换
+                  <kbd className="ml-1.5 rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700">←→</kbd>
+                  收起展开
+                </span>
+              )}
+            </CardHeader>
+            {view.approximate && view.spans.length > 0 && (
+              <p className="border-b border-zinc-100 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800">
+                这一轮由旧版本记录，没有保存开始时间，时间轴按调用顺序首尾相接排列，仅供比较长短。
+              </p>
+            )}
+            {view.spans.length === 0 ? (
+              <Empty>这一轮没有模型或工具调用记录</Empty>
+            ) : (
+              <div className="grid md:h-[min(80vh,52rem)] md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+                <div className="max-h-[45vh] min-w-0 overflow-auto border-b md:max-h-none md:overflow-visible border-zinc-100 md:h-auto md:border-r md:border-b-0 dark:border-zinc-800">
+                  <TraceTree groups={groups} total={view.total} selectedKey={selected?.key ?? null} onSelect={(s) => onSpanChange(s.key)} />
+                </div>
+                <div ref={detailRef} className="min-w-0 bg-zinc-50/60 md:overflow-auto dark:bg-zinc-900/60">
+                  <div className="p-4">
+                    {selected && (
+                      <TraceSpanDetail
+                        span={selected}
+                        tab={tab}
+                        onTabChange={setTab}
+                        links={links}
+                        nav={{
+                          position: selectedIndex + 1,
+                          count: ordered.length,
+                          onPrev: selectedIndex > 0 ? () => onSpanChange(ordered[selectedIndex - 1].key) : undefined,
+                          onNext: selectedIndex < ordered.length - 1 ? () => onSpanChange(ordered[selectedIndex + 1].key) : undefined,
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </Card>
+            )}
+          </Card>
+        </div>
 
         <div className="grid gap-5 lg:grid-cols-2">
           <ToolSummary tools={tools} />
