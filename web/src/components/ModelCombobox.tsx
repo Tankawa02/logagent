@@ -1,6 +1,21 @@
 import { Check, ChevronDown } from 'lucide-react'
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
+/** 和服务端一致：不带 provider 前缀的按 openai 处理 */
+function normalizeModel(value: string) {
+  const v = value.trim()
+  return v.includes(':') ? v : `openai:${v}`
+}
+
+/**
+ * 填写的模型不在列表里时返回 true。
+ * 列表为空（接口不支持 /models、还没配 Key 等）时无从判断，按用户填写的放行。
+ */
+export function isUnknownModel(value: string, options: string[]) {
+  if (!value.trim() || options.length === 0) return false
+  return !options.includes(normalizeModel(value))
+}
+
 export function ModelCombobox({
   id,
   value,
@@ -8,6 +23,7 @@ export function ModelCombobox({
   options,
   defaultModel,
   loading,
+  validate = true,
   className,
 }: {
   id: string
@@ -16,12 +32,16 @@ export function ModelCombobox({
   options: string[]
   defaultModel?: string
   loading?: boolean
+  /** 列表可能已过期（比如设置页正在改接口地址）时关掉校验 */
+  validate?: boolean
   className: string
 }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
   const [filtering, setFiltering] = useState(false)
   const listId = useId()
+  const errorId = `${listId}-error`
+  const unknown = validate && !loading && isUnknownModel(value, options)
   const listRef = useRef<HTMLUListElement>(null)
 
   const filtered = useMemo(() => {
@@ -53,6 +73,10 @@ export function ModelCombobox({
     } else if (e.key === 'Enter' && open && active >= 0 && filtered[active]) {
       e.preventDefault()
       choose(filtered[active])
+    } else if (e.key === 'Enter' && open && filtering && filtered.length === 1 && filtered[0] !== value) {
+      // 只剩一个候选时回车直接选中，不用再按方向键
+      e.preventDefault()
+      choose(filtered[0])
     } else if (e.key === 'Escape' && open) {
       e.preventDefault()
       setOpen(false)
@@ -68,6 +92,8 @@ export function ModelCombobox({
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
+        aria-invalid={unknown || undefined}
+        aria-describedby={unknown ? errorId : undefined}
         value={value}
         onChange={(e) => {
           onChange(e.target.value)
@@ -82,7 +108,7 @@ export function ModelCombobox({
         placeholder={defaultModel ? `默认 ${defaultModel}` : 'provider:model'}
         autoComplete="off"
         spellCheck={false}
-        className={`${className} pr-9 font-mono`}
+        className={`${className} pr-9 font-mono ${unknown ? 'border-red-400! focus:ring-red-500/10! dark:border-red-700!' : ''}`}
       />
       <ChevronDown
         className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -123,6 +149,11 @@ export function ModelCombobox({
           })}
           {loading && !filtered.length && <li className="px-2.5 py-1.5 text-xs text-zinc-400">正在读取模型列表…</li>}
         </ul>
+      )}
+      {unknown && (
+        <p id={errorId} className="mt-1 text-xs text-red-600 dark:text-red-400">
+          模型列表里没有「{value.trim()}」，请从下拉列表中选择{defaultModel ? '，或清空使用默认模型' : ''}
+        </p>
       )}
     </div>
   )

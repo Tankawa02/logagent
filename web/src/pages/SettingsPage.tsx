@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, CircleAlert, Eye, EyeOff, KeyRound, Lock, PlugZap, RotateCcw, Save } from 'lucide-react'
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { ModelCombobox } from '../components/ModelCombobox'
+import { isUnknownModel, ModelCombobox } from '../components/ModelCombobox'
 import { Select } from '../components/Select'
 import { Badge, Button, Card, CardHeader, ErrorBox, FormSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
@@ -83,6 +83,10 @@ function SettingsForm({
   const dirty = changed.length > 0 || keyChanged
 
   const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: 300_000, enabled: settings.can_chat })
+  // 模型列表是按已保存的接口地址拉的；正在改地址或 Key 时列表可能对不上，先不拦
+  const validateModel = !changed.includes('base_url') && !keyChanged
+  const modelUnknown =
+    validateModel && changed.includes('model') && !models.isFetching && isUnknownModel(draft.model, models.data?.models ?? [])
 
   const save = useMutation({
     mutationFn: () => {
@@ -105,7 +109,7 @@ function SettingsForm({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (dirty && !save.isPending) save.mutate()
+    if (dirty && !modelUnknown && !save.isPending) save.mutate()
   }
 
   function reset() {
@@ -181,6 +185,7 @@ function SettingsForm({
                   options={models.data?.models ?? []}
                   defaultModel={text(fields.model.default)}
                   loading={models.isFetching}
+                  validate={validateModel && changed.includes('model')}
                   className={`${FIELD} font-mono`}
                 />
               )
@@ -278,6 +283,8 @@ function SettingsForm({
               <Check className="h-4 w-4" aria-hidden />
               已保存，立即生效
             </span>
+          ) : modelUnknown ? (
+            <span className="text-red-600 dark:text-red-400">默认模型不在可用列表里，请重新选择</span>
           ) : dirty ? (
             <span className="text-zinc-500">有未保存的修改</span>
           ) : null}
@@ -286,7 +293,7 @@ function SettingsForm({
           <RotateCcw className="h-4 w-4" aria-hidden />
           撤销修改
         </Button>
-        <Button type="submit" variant="primary" disabled={!dirty || save.isPending}>
+        <Button type="submit" variant="primary" disabled={!dirty || modelUnknown || save.isPending}>
           {save.isPending ? <Spinner className="border-white/40 border-t-white" /> : <Save className="h-4 w-4" aria-hidden />}
           保存
         </Button>

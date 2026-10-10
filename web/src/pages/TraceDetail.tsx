@@ -216,7 +216,7 @@ export function TraceDetail({
             <Metric
               label="tokens"
               value={formatTokens(data.usage?.total)}
-              hint={`输入 ${formatTokens(data.usage?.input)} · ���出 ${formatTokens(data.usage?.output)}`}
+              hint={`输入 ${formatTokens(data.usage?.input)} · 输出 ${formatTokens(data.usage?.output)}`}
             />
             <Metric
               label="工具调用"

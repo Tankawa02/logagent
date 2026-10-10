@@ -470,7 +470,7 @@ def test_stop_before_run_registers_is_applied(monkeypatch) -> None:
 
     monkeypatch.setattr(runner, "_LIVE_RUNS", {})
     monkeypatch.setattr(runner, "_EARLY_STOPS", {})
-    # 停止请求先到��记下，不影响别的 run
+    # 停止请求先到就记下，不影响别的 run
     assert runner.request_stop("s", "run-early") == {"stopped": True, "pending": True}
     other = runner.LiveRun("s", "q", "run-other")
     runner.register_live_run(other)
@@ -546,6 +546,50 @@ def test_fs_filter_applies_before_truncation(tmp_path, monkeypatch, demo) -> Non
     assert [e["name"] for e in found["entries"]] == ["zz-target.log"] and not found["truncated"]
     dirs = client.get("/api/fs/list", params={"path": str(big), "dirs": "true"}, headers=OWNER).json()
     assert [e["name"] for e in dirs["entries"]] == ["zz-sub"]
+
+
+def test_fs_list_sorts_by_mtime_before_truncation(tmp_path, monkeypatch, demo) -> None:
+    import os
+
+    from log_agent.web import workspace
+
+    db, _, _ = demo
+    monkeypatch.setattr(workspace, "MAX_ENTRIES", 3)
+    folder = tmp_path / "downloads"
+    folder.mkdir()
+    for i, name in enumerate(["b.log", "a.log", "c.log", "z-newest.log"]):
+        path = folder / name
+        path.write_text("x")
+        os.utime(path, (1_700_000_000 + i * 60, 1_700_000_000 + i * 60))
+    (folder / "sub").mkdir()
+    os.utime(folder / "sub", (1_600_000_000, 1_600_000_000))
+    client = client_for(db)
+
+    def names(**params):
+        body = client.get("/api/fs/list", params={"path": str(folder), **params}, headers=OWNER).json()
+        return [e["name"] for e in body["entries"]]
+
+    assert names() == ["sub", "a.log", "b.log"]
+    # 目录仍在前，文件按时间从新到旧，截断后最新的仍在
+    assert names(sort="mtime") == ["sub", "z-newest.log", "c.log"]
+    assert client.get("/api/fs/list", params={"path": str(folder), "sort": "size"}, headers=OWNER).status_code == 422
+
+
+def test_create_session_rejects_unknown_model(demo, monkeypatch) -> None:
+    from log_agent.web import workspace
+
+    db, log, _ = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory, default_model="openai:gpt-test")
+    monkeypatch.setattr(workspace, "list_models", lambda base_url, default: {"default": default, "models": ["openai:gpt-a"]})
+    bad = client.post("/api/sessions", json={"logs": [str(log)], "model": "asdasd"}, headers=WRITE)
+    assert bad.status_code == 400 and "asdasd" in bad.json()["detail"]
+    ok = client.post("/api/sessions", json={"logs": [str(log)], "model": "gpt-a"}, headers=WRITE)
+    assert ok.status_code == 200 and ok.json()["model"] == "openai:gpt-a"
+    # 不填模型时用默认模型，不受列表限制
+    assert client.post("/api/sessions", json={"logs": [str(log)]}, headers=WRITE).status_code == 200
+    # 拿不到列表时无从校验，照常放行
+    monkeypatch.setattr(workspace, "list_models", lambda base_url, default: {"default": default, "models": []})
+    assert client.post("/api/sessions", json={"logs": [str(log)], "model": "asdasd"}, headers=WRITE).status_code == 200
 
 
 def test_fs_glob_expands_patterns(tmp_path, demo) -> None:

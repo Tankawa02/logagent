@@ -150,7 +150,7 @@ class LiveRun:
 
 _LIVE_LOCK = threading.Lock()
 _LIVE_RUNS: dict[str, LiveRun] = {}
-# 停止请求比提问请求先到（刚发出就点停止）时先记下 run_id，这一轮一登记���立刻按中断处理
+# 停止请求比提问请求先到（刚发出就点停止）时先记下 run_id，这一轮一登记就立刻按中断处理
 _EARLY_STOPS: dict[str, float] = {}
 EARLY_STOP_TTL_SECONDS = 300
 

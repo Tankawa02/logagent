@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowRight, ArrowUp, Check, ChevronDown, Settings2, Sparkles } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ModelCombobox } from '../components/ModelCombobox'
+import { isUnknownModel, ModelCombobox } from '../components/ModelCombobox'
 import { SourcePicker, type SourceValidity } from '../components/SourcePicker'
 import { ErrorBox, Spinner } from '../components/ui'
 import { api } from '../lib/api'
@@ -99,6 +99,8 @@ export function NewSession({ from }: { from?: string }) {
   const baselineCheck = checkRange(baseline)
   const timeInvalid = [sinceCheck, untilCheck, timezoneCheck, baselineCheck].some((c) => c && !c.ok)
 
+  const modelUnknown = !models.isFetching && isUnknownModel(model, models.data?.models ?? [])
+
   const canChat = !!meta.data?.can_chat
   const blocker = !canChat
     ? '还没有配置 API Key，暂时不能提问'
@@ -112,7 +114,9 @@ export function NewSession({ from }: { from?: string }) {
             ? '正在检查路径…'
             : timeInvalid
               ? '时间设置有误，展开「模型与时间范围」查看'
-              : null
+              : modelUnknown
+                ? '模型不在可用列表里，展开「模型与时间范围」重新选择'
+                : null
   const ready = !blocker && !create.isPending
 
   function onSubmit(event: FormEvent) {
