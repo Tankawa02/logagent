@@ -262,11 +262,13 @@ export function TraceDetail({
             {view.spans.length === 0 ? (
               <Empty>这一轮没有模型或工具调用记录</Empty>
             ) : (
-              <div className="grid md:h-[min(80vh,52rem)] md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-                <div className="max-h-[45vh] min-w-0 overflow-auto border-b md:max-h-none md:overflow-visible border-zinc-100 md:h-auto md:border-r md:border-b-0 dark:border-zinc-800">
+              <div className="grid md:h-[min(80vh,52rem)] md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] md:grid-rows-[minmax(0,1fr)]">
+                {/* 固定高度 + 单行 minmax(0,1fr)：左右两栏各自在内部滚动。之前左栏 overflow-visible，
+                    全部展开后内容超出被卡片 overflow-hidden 裁掉，滚动定位选中项时还会把整块内容顶上去 */}
+                <div className="flex h-[45vh] min-h-0 min-w-0 flex-col border-b border-zinc-100 md:h-auto md:border-r md:border-b-0 dark:border-zinc-800">
                   <TraceTree groups={groups} total={view.total} selectedKey={selected?.key ?? null} onSelect={(s) => onSpanChange(s.key)} />
                 </div>
-                <div ref={detailRef} className="min-w-0 bg-zinc-50/60 md:overflow-auto dark:bg-zinc-900/60">
+                <div ref={detailRef} className="min-h-0 min-w-0 bg-zinc-50/60 md:overflow-auto dark:bg-zinc-900/60">
                   <div className="p-4">
                     {selected && (
                       <TraceSpanDetail
