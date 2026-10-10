@@ -163,10 +163,31 @@ class RunSpec:
     base_url: str | None = None
     max_steps: int = 80
     budget: str | None = None
+    # 单个案例的墙钟上限（秒）：某个模型卡住时记为超时，不拖住整批评测；0 表示不限
+    timeout: int = 900
 
 
 def run_case(spec: RunSpec) -> dict[str, Any]:
     """在当前进程里跑一个案例（eval 用独立进程并行调用它：时区 / 时间窗口等是进程级设置）。"""
+    import signal
+
+    use_alarm = bool(spec.timeout) and hasattr(signal, "SIGALRM")  # Windows 没有 SIGALRM：不限时
+    if not use_alarm:
+        return _run_case(spec)
+
+    def expire(*_: Any) -> None:
+        raise TimeoutError(f"超过 {spec.timeout}s 未完成")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.alarm(spec.timeout)
+    try:
+        return _run_case(spec)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _run_case(spec: RunSpec) -> dict[str, Any]:
     from . import redact
     from .budget import TokenBudget, parse_budget
     from .citations import CitationLinker

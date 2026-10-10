@@ -195,7 +195,7 @@ class TurnResult:
     summary: str = ""
     confidence: str = ""
     budget_hit: bool = False
-    # 主代理每次模型调用的时间与用量（��� StreamRenderer._on_message）
+    # 主代理每次模型调用的时间与用量（见 StreamRenderer._on_message）
     llm_calls: list[dict] = field(default_factory=list)
     # 按接口回报的模型名分别累计的用量（主代理 / 子代理 / 备用模型 / 收尾调用），用于按模型计价
     usage_by_model: dict[str, dict[str, int]] = field(default_factory=dict)

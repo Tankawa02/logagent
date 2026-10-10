@@ -29,6 +29,7 @@ def run(
     repeat: int = typer.Option(1, "--repeat", "-r", min=1, max=10, help="每个组合重复次数（模型输出有随机性）"),
     jobs: int = typer.Option(4, "--jobs", "-j", min=1, max=32, help="并行进程数"),
     max_steps: int = typer.Option(80, "--max-steps", min=10, help="单个案例的最大推理步数"),
+    timeout: int = typer.Option(900, "--timeout", min=0, help="单个案例的墙钟上限（秒），超时记为失败；0 表示不限"),
     budget: str = typer.Option(None, "--budget", help="单个案例的 tokens 预算，例如 200k"),
     out: Path = typer.Option(None, "--out", "-o", help="结果目录；默认 .log-agent-eval/<时间>"),
     base_url: str = typer.Option(None, "--base-url", envvar="OPENAI_BASE_URL", help="OpenAI 兼容接口地址"),
@@ -50,15 +51,22 @@ def run(
         console.print(Text(f"{glyphs.fail} {cases} 下没有找到案例（每个案例目录需要一个 case.toml）", style="err"))
         raise typer.Exit(2)
 
-    specs = [RunSpec(case=c, model=m, structured=s, base_url=base_url, max_steps=max_steps, budget=budget)
+    specs = [RunSpec(case=c, model=m, structured=s, base_url=base_url, max_steps=max_steps, budget=budget,
+                     timeout=timeout)
              for _ in range(repeat) for m in models for s in modes for c in loaded]
     console.print(Text(f"共 {len(specs)} 次运行：{len(loaded)} 个案例 × {len(models)} 个模型 × {len(modes)} 种结构化方式"
                        + (f" × {repeat} 次" if repeat > 1 else "") + f"，并行 {jobs}", style="muted"))
     done = 0
+    target = out or Path(".log-agent-eval") / datetime.now().strftime("%Y%m%d-%H%M%S")
+    target.mkdir(parents=True, exist_ok=True)
+    partial = target / "runs.jsonl"  # 逐条追加：中途中断时已完成的结果不丢
+    partial.write_text("", encoding="utf-8")
 
     def progress(record: dict) -> None:
         nonlocal done
         done += 1
+        with partial.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         if "score" in record:
             line = (f"{glyphs.ok} [{done}/{len(specs)}] {record['case']} · {record['model']} · {record['structured']}"
                     f"  得分 {record['score']:.0f}  {record.get('seconds') or 0:.0f}s")
@@ -69,8 +77,6 @@ def run(
 
     results = run_eval(specs, jobs=jobs, on_result=progress)
     rows = summarize(results)
-    target = out or Path(".log-agent-eval") / datetime.now().strftime("%Y%m%d-%H%M%S")
-    target.mkdir(parents=True, exist_ok=True)
     (target / "results.json").write_text(
         json.dumps({"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                     "summary": rows, "runs": results}, ensure_ascii=False, indent=2),

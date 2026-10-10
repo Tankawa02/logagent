@@ -453,6 +453,50 @@ function EvidenceCard({
   )
 }
 
+function RepairNote({ repair }: { repair: EvidenceRepair }) {
+  const parts: string[] = []
+  const lines = (repair.shifted_fixed ?? 0) + (repair.relocated ?? 0)
+  if (lines) parts.push(`校正行号 ${lines} 条`)
+  if (repair.model_fixed) parts.push(`对照原文修正摘录 ${repair.model_fixed} 条`)
+  if (repair.dropped) parts.push(`移除无法对应原文的证据 ${repair.dropped} 条`)
+  if (parts.length === 0) return null
+  return (
+    <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+      证据已自动修正：{parts.join('，')}。下方核对结果是修正后的状态。
+    </p>
+  )
+}
+
+function SimilarCases({ cases }: { cases: SimilarCase[] }) {
+  return (
+    <details className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+      <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        参考了 {cases.length} 个历史相似案例
+      </summary>
+      <ul className="mt-2 space-y-2">
+        {cases.map((c) => (
+          <li key={`${c.session}-${c.turn}`} className="space-y-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                to="/sessions/$name"
+                params={{ name: c.session }}
+                search={{ turn: c.turn, panel: 'report' }}
+                className="font-medium text-zinc-900 underline-offset-2 hover:underline dark:text-zinc-100"
+              >
+                {c.title || c.session}
+              </Link>
+              {c.confirmed && <Badge tone="green">已确认</Badge>}
+              {c.correction && <Badge tone="amber">有纠正</Badge>}
+              <span className="text-xs text-zinc-500">{c.matched.slice(0, 2).join(' · ')}</span>
+            </div>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">{c.correction ? `纠正：${c.correction}` : c.conclusion}</p>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
 function Section({ title, icon: Icon, children }: { title: string; icon?: LucideIcon; children: ReactNode }) {
   return (
     <section className="space-y-2.5">

@@ -311,3 +311,18 @@ def test_export_turn_as_case_round_trip(tmp_path):
                                         encoding="utf-8")
     case = load_case(case_dir)
     assert "assessment" not in case.expected and case.expected["notes"] == "是库存超时"
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGALRM"), reason="需要 SIGALRM")
+def test_eval_run_case_times_out_instead_of_hanging(monkeypatch):
+    import time as _time
+
+    from log_agent import agent as agent_mod
+    from log_agent.evals import EvalCase, RunSpec, run_case
+
+    monkeypatch.setattr(agent_mod, "build_agent", lambda **_: _time.sleep(5))
+    case = EvalCase(name="slow", directory=".", question="q", logs=[], code=[], expected={})
+    started = _time.perf_counter()
+    record = run_case(RunSpec(case=case, model="m", structured="inline", timeout=1))
+    assert _time.perf_counter() - started < 3
+    assert record["error"].startswith("TimeoutError")

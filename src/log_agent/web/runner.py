@@ -347,7 +347,7 @@ def _open_memory(memory_path: Path | None, mode: str, info: SessionInfo):
     """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
     from ..memory import MemorySession, MemoryStore, default_memory_path, normalize_mode, project_key
 
-    # serve 启动时���校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
+    # serve 启动时已校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
     mode = normalize_mode(mode) or "off"
     if mode == "off":
         return None

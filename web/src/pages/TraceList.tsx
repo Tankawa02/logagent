@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import { Select } from '../components/Select'
 import { Badge, Card, CardHeader, Empty, ErrorBox, StatsSkeleton } from '../components/ui'
 import { api } from '../lib/api'
-import { formatDuration, formatGenerated, formatTokens, shortModel, TURN_STATUS } from '../lib/format'
+import { formatDuration, formatGenerated, formatTokens, formatUsd, shortModel, TURN_STATUS } from '../lib/format'
 import type { TraceItem } from '../lib/types'
 
 const PAGE = 300
@@ -139,15 +139,19 @@ function ToolRanking({ items }: { items: TraceItem[] }) {
 
 function ModelBreakdown({ items }: { items: TraceItem[] }) {
   const rows = useMemo(() => {
-    const map = new Map<string, { turns: number; measured: number; seconds: number; tokens: number }>()
+    const map = new Map<string, { turns: number; measured: number; seconds: number; tokens: number; cost: number; priced: number }>()
     for (const item of items) {
       const key = shortModel(item.model)
-      const row = map.get(key) ?? { turns: 0, measured: 0, seconds: 0, tokens: 0 }
+      const row = map.get(key) ?? { turns: 0, measured: 0, seconds: 0, tokens: 0, cost: 0, priced: 0 }
       row.turns += 1
       if (isMeasured(item)) {
         row.measured += 1
         row.seconds += item.elapsed_seconds
         row.tokens += item.usage.total
+        if (item.cost_usd != null) {
+          row.priced += 1
+          row.cost += item.cost_usd
+        }
       }
       map.set(key, row)
     }
@@ -171,6 +175,7 @@ function ModelBreakdown({ items }: { items: TraceItem[] }) {
                   <>
                     <span>平均 {formatDuration(row.seconds / row.measured)}</span>
                     <span>平均 {formatTokens(row.tokens / row.measured)} tokens</span>
+                    {row.priced > 0 && <span>平均 {formatUsd(row.cost / row.priced)}/轮</span>}
                   </>
                 ) : (
                   <span>耗时与用量未记录</span>
@@ -271,10 +276,22 @@ export function TraceList({ session }: { session?: string }) {
     const measured = items.filter(isMeasured)
     const seconds = measured.reduce((sum, t) => sum + t.elapsed_seconds, 0)
     const tokens = measured.reduce((sum, t) => sum + t.usage.total, 0)
+    const priced = measured.filter((t) => t.cost_usd != null)
+    const cost = priced.reduce((sum, t) => sum + (t.cost_usd ?? 0), 0)
     const tools = items.reduce((sum, t) => sum + t.tool_count, 0)
     const failed = items.reduce((sum, t) => sum + t.failed_tools, 0)
     const errors = items.filter((t) => t.status !== 'ok').length
-    return { measured: measured.length, unmeasured: items.length - measured.length, seconds, tokens, tools, failed, errors }
+    return {
+      measured: measured.length,
+      unmeasured: items.length - measured.length,
+      seconds,
+      tokens,
+      cost,
+      priced: priced.length,
+      tools,
+      failed,
+      errors,
+    }
   }, [items])
   const maxSeconds = Math.max(1, ...items.map((t) => t.elapsed_seconds ?? 0))
   const unmeasuredHint = totals.unmeasured ? ` · ${totals.unmeasured} 轮旧记录未计入` : ''
@@ -341,7 +358,9 @@ export function TraceList({ session }: { session?: string }) {
                 empty={!totals.measured}
                 label="tokens"
                 value={formatTokens(totals.tokens)}
-                hint={`平均每轮 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}${unmeasuredHint}`}
+                hint={`平均每轮 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}${
+                  totals.priced ? ` · 费用 ${formatUsd(totals.cost)}${totals.priced < totals.measured ? '+' : ''}` : ''
+                }${unmeasuredHint}`}
               />
               <Stat
                 icon={totals.failed ? AlertTriangle : Wrench}

@@ -458,7 +458,7 @@ export interface SkillSummary {
   shadowed_by: string | null
   files: number
   updated_at: string | null
-  /** 符号链接��� skill：只能查看，需在链接目标处编辑 */
+  /** 符号链接的 skill：只能查看，需在链接目标处编辑 */
   readonly: boolean
 }
 

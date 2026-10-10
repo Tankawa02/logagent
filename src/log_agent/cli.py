@@ -741,7 +741,7 @@ def watch(
     question: str = typer.Option(
         "这批新出现的错误是什么原因？请定位根因并给出修复建议。", "--question", "-q", help="每次触发询问 agent 的问题",
     ),
-    debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错���停止出现多少秒后开始分析，把一波错误攒到一起"),
+    debounce: float = typer.Option(10.0, "--debounce", min=1, help="新错误停止出现多少秒后开始分析，把一波错误攒到一起"),
     cooldown: float = typer.Option(120.0, "--cooldown", min=0, help="两次分析之间至少间隔多少秒，避免持续报错时反复消耗"),
     once: bool = typer.Option(False, "--once", help="分析一次后退出：适合复现一次问题、看完结果就走"),
     model: str = _opt_model,
@@ -1069,7 +1069,7 @@ def sessions_list(
         console.print(Text(f"没有匹配 '{search}' 的会话。", style="muted"))
         return
     if not items:
-        console.print(Text("还没有任��会话。", style="muted"))
+        console.print(Text("还没有任何会话。", style="muted"))
         return
 
     from .render import shorten_path
@@ -1220,7 +1220,7 @@ def serve(
     ]
     if not (STATIC_DIR / "index.html").is_file():
         rows.append(("前端", Text("未找到构建产物：cd web && npm ci && npm run build", style="warn")))
-    footer = [Text("把地址里的令牌当作密码，不要发给别人��交接用页面里的「分享」生成只读链接。", style="muted")]
+    footer = [Text("把地址里的令牌当作密码，不要发给别人；交接用页面里的「分享」生成只读链接。", style="muted")]
     if host not in _LOOPBACK_HOSTS:
         footer.append(Text(f"{glyphs.notice} 正在监听 {host}，局域网内能访问到该端口的人都能看到登录页。", style="warn"))
     console.print(info_panel(rows, "log-agent serve", f"Web 界面 {glyphs.sep} v{__version__}", footer))
