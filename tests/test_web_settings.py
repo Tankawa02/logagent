@@ -22,7 +22,7 @@ OWNER = {"Authorization": f"Bearer {TOKEN}"}
 WRITE = {**OWNER, "X-Log-Agent-Request": "1"}
 KEY = "sk-test-0123456789abcdef"
 _ENV = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "LOG_AGENT_MODEL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES",
-        "LOG_AGENT_TIMEZONE")
+        "LOG_AGENT_TIMEZONE", "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_FALLBACK_MODELS")
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +96,39 @@ def test_save_key_and_config_applies_immediately(tmp_path: Path) -> None:
     assert config.base_url is None and config.can_chat is False
 
 
+def test_subagent_and_fallback_models_apply_to_new_agents(tmp_path: Path) -> None:
+    client, _ = make_client(tmp_path)
+    body = client.get("/api/settings", headers=OWNER).json()["fields"]
+    assert body["subagent_model"]["effective"] is None and body["fallback_models"]["effective"] is None
+
+    response = client.put("/api/settings", headers=WRITE, json={
+        "values": {"subagent_model": "openai:gpt-4.1-mini", "fallback_models": "openai:a,  openai:b, openai:a"},
+    })
+    assert response.status_code == 200, response.text
+    fields = response.json()["fields"]
+    assert fields["subagent_model"]["value"] == "openai:gpt-4.1-mini"
+    assert fields["fallback_models"]["value"] == "openai:a, openai:b"  # 去重，按逗号分隔显示
+
+    saved = user_config_path().read_text(encoding="utf-8")
+    assert 'subagent_model = "openai:gpt-4.1-mini"' in saved
+    assert 'fallback_models = ["openai:a", "openai:b"]' in saved
+    assert os.environ["LOG_AGENT_SUBAGENT_MODEL"] == "openai:gpt-4.1-mini"
+    assert os.environ["LOG_AGENT_FALLBACK_MODELS"] == "openai:a,openai:b"
+
+    client.put("/api/settings", headers=WRITE, json={"values": {"subagent_model": None, "fallback_models": ""}})
+    assert "LOG_AGENT_SUBAGENT_MODEL" not in os.environ and "LOG_AGENT_FALLBACK_MODELS" not in os.environ
+    assert "subagent_model" not in user_config_path().read_text(encoding="utf-8")
+
+
+def test_subagent_model_env_is_locked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_AGENT_SUBAGENT_MODEL", "openai:env-sub")
+    client, _ = make_client(tmp_path, env_locked=frozenset({"LOG_AGENT_SUBAGENT_MODEL"}))
+    client.put("/api/settings", headers=WRITE, json={"values": {"subagent_model": "openai:file-sub"}})
+    field = client.get("/api/settings", headers=OWNER).json()["fields"]["subagent_model"]
+    assert field["locked"] is True and field["effective"] == "openai:env-sub"
+    assert os.environ["LOG_AGENT_SUBAGENT_MODEL"] == "openai:env-sub"
+
+
 def test_env_values_are_locked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_BASE_URL", "https://user:secret@env.example.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", KEY)
@@ -115,6 +148,9 @@ def test_env_values_are_locked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     ({"timeout": 0}, "请求超时"),
     ({"max_retries": 2.5}, "重试次数"),
     ({"timezone": "Mars/Base"}, "默认时区"),
+    ({"subagent_model": "bad model"}, "子代理模型"),
+    ({"fallback_models": "a,b,c,d,e,f"}, "备用模型"),
+    ({"fallback_models": 3}, "备用模型"),
     ({"unknown": 1}, "不支持"),
 ])
 def test_invalid_values_are_rejected(tmp_path: Path, values: dict, message: str) -> None:

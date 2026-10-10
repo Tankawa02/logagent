@@ -276,7 +276,15 @@ export interface Meta {
   default_model: string | null
 }
 
-export type SettingKey = 'model' | 'base_url' | 'timeout' | 'max_retries' | 'timezone' | 'memory'
+export type SettingKey =
+  | 'model'
+  | 'subagent_model'
+  | 'fallback_models'
+  | 'base_url'
+  | 'timeout'
+  | 'max_retries'
+  | 'timezone'
+  | 'memory'
 export type SettingSource = 'default' | 'user' | 'user_section' | 'project' | 'env' | 'cli'
 export type SettingValue = string | number | null
 
