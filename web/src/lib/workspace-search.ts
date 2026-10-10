@@ -8,6 +8,8 @@ export interface WorkspaceSearch {
   end?: number
   ev?: string
   panel?: Panel
+  /** 时间线要定位到的时间点（`HH:MM:SS` 或 `YYYY-MM-DDTHH:MM:SS`） */
+  at?: string
 }
 
 export function validateWorkspaceSearch(search: Record<string, unknown>): WorkspaceSearch {
@@ -24,5 +26,6 @@ export function validateWorkspaceSearch(search: Record<string, unknown>): Worksp
     end: num(search.end),
     ev: str(search.ev),
     panel,
+    at: typeof search.at === 'string' && /^(\d{4}-\d{2}-\d{2}T)?\d{2}:\d{2}:\d{2}$/.test(search.at) ? search.at : undefined,
   }
 }
