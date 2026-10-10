@@ -186,7 +186,7 @@ export function NewSession({ from }: { from?: string }) {
         <div className="space-y-3 text-center">
           <h1 className="text-balance text-3xl font-medium tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">要排查什么问题？</h1>
           <p className="mx-auto max-w-xl text-pretty text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-            选好日志和源码，用自然语言提问。agent 会自己检索���志、对照代码，给出带证据行号的结论。
+            选好日志和源码，用自然语言提问。agent 会自己检索日志、对照代码，给出带证据行号的结论。
           </p>
         </div>
 

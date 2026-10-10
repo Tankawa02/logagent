@@ -424,7 +424,7 @@ export function Sidebar({
                       <span
                         className={`flex items-center gap-1 text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
                       >
-                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="��置顶" />}
+                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="已置顶" />}
                         <span className="truncate">{label}</span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
