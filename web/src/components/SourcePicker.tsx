@@ -1,5 +1,5 @@
 import { useQueries } from '@tanstack/react-query'
-import { AlertCircle, FileText, FolderCode, Plus, X } from 'lucide-react'
+import { AlertCircle, FileText, FolderCode, History, Plus, X } from 'lucide-react'
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { baseName } from '../lib/format'
@@ -43,13 +43,17 @@ export function SourcePicker({
   values,
   onChange,
   onValidity,
+  recent = [],
 }: {
   kind: 'log' | 'code'
   values: string[]
   onChange: (next: string[]) => void
   onValidity?: (validity: SourceValidity) => void
+  /** 之前会话里用过的路径，点一下就加进来 */
+  recent?: string[]
 }) {
   const [browsing, setBrowsing] = useState(false)
+  const suggestions = recent.filter((path) => !values.includes(path))
   const [typed, setTyped] = useState('')
   const isLog = kind === 'log'
   const Icon = isLog ? FileText : FolderCode
@@ -96,9 +100,9 @@ export function SourcePicker({
 
   return (
     <div className="space-y-2">
-      <div className="space-y-0.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <h3 className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
-          <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+          <Icon className="h-3.5 w-3.5 self-center text-zinc-400" aria-hidden />
           {isLog ? '日志文件' : '源码目录'}
           {isLog ? (
             <span className="rounded-full bg-brand-50 px-1.5 py-px text-[11px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
@@ -108,9 +112,10 @@ export function SourcePicker({
             <span className="font-normal text-zinc-500 dark:text-zinc-400">可选</span>
           )}
         </h3>
-        <p className="pl-5 text-xs text-zinc-500 dark:text-zinc-400">
-          {isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}
-        </p>
+        {/* 选好之后说明文字就没用了，收起来让来源区更紧凑 */}
+        {values.length === 0 && (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</p>
+        )}
       </div>
 
       {values.length > 0 && (
@@ -201,15 +206,36 @@ export function SourcePicker({
           className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
         />
       </div>
-      {values.length === 0 && (
-        <p className="flex flex-wrap gap-x-1.5 gap-y-0.5 px-0.5 text-xs text-zinc-400 dark:text-zinc-500">
-          <span>例如</span>
-          {(isLog ? ['~/logs/app.log', '/var/log/*.log'] : ['~/work/order-service']).map((example) => (
-            <code key={example} className="break-all font-mono">
-              {example}
-            </code>
+      {suggestions.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 px-0.5">
+          <span className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <History className="h-3 w-3" aria-hidden />
+            最近使用
+          </span>
+          {suggestions.map((path) => (
+            <button
+              key={path}
+              type="button"
+              onClick={() => add([path])}
+              title={`添加 ${path}`}
+              className="flex max-w-56 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-brand-800 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
+            >
+              <Plus className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="truncate">{baseName(path) || path}</span>
+            </button>
           ))}
-        </p>
+        </div>
+      ) : (
+        values.length === 0 && (
+          <p className="flex flex-wrap gap-x-1.5 gap-y-0.5 px-0.5 text-xs text-zinc-400 dark:text-zinc-500">
+            <span>例如</span>
+            {(isLog ? ['~/logs/app.log', '/var/log/*.log'] : ['~/work/order-service']).map((example) => (
+              <code key={example} className="break-all font-mono">
+                {example}
+              </code>
+            ))}
+          </p>
+        )
       )}
 
       {browsing && (

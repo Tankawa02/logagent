@@ -278,6 +278,8 @@ export function TraceList({ session }: { session?: string }) {
   }, [items])
   const maxSeconds = Math.max(1, ...items.map((t) => t.elapsed_seconds ?? 0))
   const unmeasuredHint = totals.unmeasured ? ` · ${totals.unmeasured} 轮旧记录未计入` : ''
+  const showModels = new Set(items.map((t) => shortModel(t.model))).size > 1
+  const showTools = items.some((t) => Object.keys(t.tools).length > 0)
 
   return (
     <main className="h-full overflow-auto">
@@ -350,7 +352,7 @@ export function TraceList({ session }: { session?: string }) {
               />
             </div>
 
-            <div className="grid gap-5 lg:grid-cols-[1fr_16rem]">
+            <div className={`grid gap-5 ${showModels || showTools ? 'lg:grid-cols-[1fr_16rem]' : ''}`}>
               <Card className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
                   <div className="relative min-w-40 flex-1">
@@ -401,10 +403,13 @@ export function TraceList({ session }: { session?: string }) {
                   </ul>
                 )}
               </Card>
-              <div className="space-y-5">
-                <ModelBreakdown items={items} />
-                <ToolRanking items={items} />
-              </div>
+              {/* 只用了一个模型、也没有工具调用时，右栏的两张卡片都只是重复或空白，干脆收起 */}
+              {(showModels || showTools) && (
+                <div className="space-y-5">
+                  {showModels && <ModelBreakdown items={items} />}
+                  {showTools && <ToolRanking items={items} />}
+                </div>
+              )}
             </div>
           </>
         )}

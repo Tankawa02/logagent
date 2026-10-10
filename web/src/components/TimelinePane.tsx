@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { MessageSquarePlus, X } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { api, scopeKey, type Scope } from '../lib/api'
 import { baseName, formatRange, stampParts } from '../lib/format'
+import { bucketAt } from '../lib/time-jump'
 import type { Bucket, SourceTarget, Timeline } from '../lib/types'
 import { Select } from './Select'
 import { TimelineChart } from './Timeline'
@@ -27,25 +28,45 @@ export function spikeQuestion(bucket: Bucket, data: Timeline): string {
   )
 }
 
+/** 错误最多的那一格；整段日志都没有错误时不默认选中 */
+export function peakBucket(data: Timeline): number | null {
+  let best: number | null = null
+  data.buckets.forEach((b, i) => {
+    if (b.error > 0 && (best === null || b.error > data.buckets[best].error)) best = i
+  })
+  return best
+}
+
 export function TimelinePane({
   scope,
   canAsk,
+  at,
   onOpen,
   onAsk,
 }: {
   scope: Scope
   canAsk: boolean
+  at?: string
   onOpen: (target: SourceTarget) => void
   onAsk: (question: string) => void
 }) {
   const [buckets, setBuckets] = useState(120)
-  const [selected, setSelected] = useState<number | null>(null)
+  /** undefined：还没手动选过，跟随回答里点的时间点或错误最多的时段；null：用户关掉了详情 */
+  const [picked, setPicked] = useState<number | null | undefined>(undefined)
+  const [pickedFor, setPickedFor] = useState(at)
+  if (pickedFor !== at) {
+    setPickedFor(at)
+    setPicked(undefined)
+  }
   const timeline = useQuery({
     queryKey: [...scopeKey(scope), 'timeline', buckets],
     queryFn: () => api.timeline(scope, buckets),
     staleTime: 60_000,
   })
   const data = timeline.data
+  const focused = useMemo(() => (data && at ? bucketAt(data.buckets, at) : null), [data, at])
+  const selected = picked !== undefined ? picked : (focused ?? (data ? peakBucket(data) : null))
+  const setSelected = setPicked
   const bucket = selected !== null ? data?.buckets[selected] : undefined
 
   return (

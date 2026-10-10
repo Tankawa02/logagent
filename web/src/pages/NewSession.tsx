@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowRight, ArrowUp, ChevronDown, Settings2, Sparkles } from 'lucide-react'
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { isUnknownModel, ModelCombobox } from '../components/ModelCombobox'
 import { SourcePicker, type SourceValidity } from '../components/SourcePicker'
 import { browserTimezone, FIELD, FIELD_OK, TimeField, TimePresets } from '../components/TimeField'
@@ -11,6 +11,7 @@ import { clearDraft, EMPTY_DRAFT, readDraft, writeDraft } from '../lib/draft'
 import { setPendingQuestion } from '../lib/pending'
 import { PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
 import { checkBound, checkRange, checkTimezone, type BoundCheck } from '../lib/time-input'
+import type { SessionSummary } from '../lib/types'
 
 const SUGGESTIONS = [
   { tag: '错误汇总', text: '这段时间有哪些错误？按影响大小排序，并给出根因' },
@@ -20,6 +21,24 @@ const SUGGESTIONS = [
 ]
 
 const NO_ISSUES: SourceValidity = { invalid: 0, checking: 0 }
+const RECENT_LIMIT = 4
+
+/** 按最近更新的会话排列，取各自用过、仍然存在的日志和源码路径（去重） */
+export function recentSources(sessions: SessionSummary[]): { logs: string[]; code: string[] } {
+  const sorted = [...sessions].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  const pick = (refs: (s: SessionSummary) => { path: string; exists?: boolean }[]) => {
+    const seen = new Set<string>()
+    for (const s of sorted) {
+      for (const ref of refs(s)) {
+        if (ref.exists === false || seen.has(ref.path)) continue
+        seen.add(ref.path)
+        if (seen.size >= RECENT_LIMIT) return [...seen]
+      }
+    }
+    return [...seen]
+  }
+  return { logs: pick((s) => s.logs), code: pick((s) => s.code) }
+}
 
 export function NewSession({ from }: { from?: string }) {
   const navigate = useNavigate()
@@ -42,6 +61,9 @@ export function NewSession({ from }: { from?: string }) {
 
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta })
   const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: 300_000, enabled: !!meta.data?.can_chat })
+  // 和侧边栏同一个查询（搜索词为空），共用缓存
+  const history = useQuery({ queryKey: ['sessions', ''], queryFn: () => api.sessions('') })
+  const recent = useMemo(() => recentSources(history.data ?? []), [history.data])
   const source = useQuery({
     queryKey: ['owner', from, 'session'],
     queryFn: () => api.session({ kind: 'owner', name: from! }),
@@ -164,7 +186,7 @@ export function NewSession({ from }: { from?: string }) {
         <div className="space-y-3 text-center">
           <h1 className="text-balance text-3xl font-medium tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">要排查什么问题？</h1>
           <p className="mx-auto max-w-xl text-pretty text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-            选好日志和源码，用自然语言提问。agent 会自己检索日志、对照代码，给出带证据行号的结论。
+            选好日志和源码，用自然语言提问。agent 会自己检索���志、对照代码，给出带证据行号的结论。
           </p>
         </div>
 
@@ -314,8 +336,8 @@ export function NewSession({ from }: { from?: string }) {
           )}
 
           <div className="space-y-4 border-t border-zinc-100 bg-zinc-50/70 px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950/40">
-            <SourcePicker kind="log" values={logs} onChange={setLogs} onValidity={setLogValidity} />
-            <SourcePicker kind="code" values={code} onChange={setCode} onValidity={setCodeValidity} />
+            <SourcePicker kind="log" values={logs} onChange={setLogs} onValidity={setLogValidity} recent={recent.logs} />
+            <SourcePicker kind="code" values={code} onChange={setCode} onValidity={setCodeValidity} recent={recent.code} />
           </div>
         </section>
 

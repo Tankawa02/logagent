@@ -6,13 +6,16 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
+  Cpu,
   Download,
   FileCode2,
   FileSearch,
   FileText,
   FolderCode,
   GanttChart,
+  Globe,
   MoreHorizontal,
   Pencil,
   Share2,
@@ -38,9 +41,10 @@ import { TimelinePane } from '../components/TimelinePane'
 import { useToast } from '../components/Feedback'
 import { Badge, Empty, ErrorBox, PageSkeleton } from '../components/ui'
 import { api, scopeKey, type Scope } from '../lib/api'
-import { ASSESSMENT, formatGenerated } from '../lib/format'
+import { ASSESSMENT, formatGenerated, shortModel } from '../lib/format'
 import { useClickOutside, useMediaQuery, useModal } from '../lib/hooks'
 import { discardPendingQuestion, holdPendingQuestion } from '../lib/pending'
+import { TimeJumpContext } from '../lib/time-jump'
 import type { Meta, SessionDetail, SourceTarget } from '../lib/types'
 import type { Panel, WorkspaceSearch } from '../lib/workspace-search'
 
@@ -96,8 +100,11 @@ export function Workspace({
   // 会话还在加载时一直保留；离开这个会话页（卸载或切到别的会话）时作废
   useEffect(() => (handoffName ? holdPendingQuestion(handoffName) : undefined), [handoffName])
 
-  const target: SourceTarget | null =
+  // 直接点「原文」没有指定位置时，默认打开本轮第一条证据，而不是一块空面板
+  const explicitTarget: SourceTarget | null =
     search.src && search.start ? { source: search.src, start: search.start, end: search.end ?? search.start } : null
+  const target = explicitTarget ?? evidence[0] ?? null
+  const activeEvidence = explicitTarget ? search.ev : evidence[0]?.evidenceKey
   const owner = scope.kind === 'owner'
   const canChat = owner && !!meta.data?.can_chat
   // 能提问时主区是对话；只读（分享链接 / 未配置模型）时主区直接是报告
@@ -112,6 +119,7 @@ export function Workspace({
   const aside = useRef<HTMLElement>(null)
   const overlayPanel = !useMediaQuery('(min-width: 1024px)')
   const closePanel = useCallback(() => setSearch({ ...search, panel: undefined }), [search, setSearch])
+  const jumpToTime = useCallback((at: string) => setSearch({ ...search, panel: 'timeline', at }), [search, setSearch])
   const onAsideKey = useModal(aside, closePanel, { trap: overlayPanel, enabled: !!panel && overlayPanel })
   const row = useRef<HTMLDivElement>(null)
   const [panelWidth, startResize, onResizeKey, resetWidth] = usePanelWidth(row)
@@ -159,148 +167,151 @@ export function Workspace({
   )
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SessionHeader
-        info={info}
-        scope={scope}
-        meta={meta.data}
-        turnNumber={turnNumber}
-        panel={panel}
-        panels={panels}
-        onPanel={(p) => openPanel(panel === p ? undefined : p)}
-        onShare={owner ? () => setSharing(true) : undefined}
-        onEditSources={canChat ? () => setEditingSources(true) : undefined}
-      />
+    <TimeJumpContext.Provider value={jumpToTime}>
+      <div className="flex h-full min-h-0 flex-col">
+        <SessionHeader
+          info={info}
+          scope={scope}
+          meta={meta.data}
+          turnNumber={turnNumber}
+          panel={panel}
+          panels={panels}
+          onPanel={(p) => openPanel(panel === p ? undefined : p)}
+          onShare={owner ? () => setSharing(true) : undefined}
+          onEditSources={canChat ? () => setEditingSources(true) : undefined}
+        />
 
-      <div ref={row} className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
-          {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
+        <div ref={row} className="flex min-h-0 flex-1">
+          <div className="min-w-0 flex-1">
+            {/* 聊天面板只用挂载时的历史初始化：等进行中的那一轮和这次重新拉到的会话历史都到了再挂载，
               否则离开期间刚跑完的一轮会缺失 */}
-          {canChat && scope.kind === 'owner' && ((live.isPending && !live.isError) || !session.isFetchedAfterMount) ? (
-            <PageSkeleton label="加载对话" />
-          ) : canChat && scope.kind === 'owner' ? (
-            <ChatPanel
-              key={scope.name}
-              session={scope.name}
-              turns={info.turn_list}
-              live={live.data ?? null}
-              ask={ask}
-              onOpen={openSource}
-              onShowTurn={(n) => setSearch({ ...search, turn: n, panel: 'report', ev: undefined })}
-              onTurnSaved={(n) => {
-                void client.invalidateQueries({ queryKey: [...scopeKey(scope), 'session'] })
-                void client.invalidateQueries({ queryKey: ['sessions'] })
-                setSearch({ ...search, turn: n, ev: undefined })
-              }}
-            />
-          ) : (
-            <div className="h-full overflow-auto">
-              {scope.kind === 'share' && (
-                <div className="border-b border-brand-200 bg-brand-50 px-4 py-2 text-xs text-brand-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300">
-                  只读分享视图 · 日志内容已脱敏 · 由 log-agent {meta.data?.version} 提供
+            {canChat && scope.kind === 'owner' && ((live.isPending && !live.isError) || !session.isFetchedAfterMount) ? (
+              <PageSkeleton label="加载对话" />
+            ) : canChat && scope.kind === 'owner' ? (
+              <ChatPanel
+                key={scope.name}
+                session={scope.name}
+                turns={info.turn_list}
+                live={live.data ?? null}
+                ask={ask}
+                onOpen={openSource}
+                onShowTurn={(n) => setSearch({ ...search, turn: n, panel: 'report', ev: undefined })}
+                onTurnSaved={(n) => {
+                  void client.invalidateQueries({ queryKey: [...scopeKey(scope), 'session'] })
+                  void client.invalidateQueries({ queryKey: ['sessions'] })
+                  setSearch({ ...search, turn: n, ev: undefined })
+                }}
+              />
+            ) : (
+              <div className="h-full overflow-auto">
+                {scope.kind === 'share' && (
+                  <div className="border-b border-brand-200 bg-brand-50 px-4 py-2 text-xs text-brand-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300">
+                    只读分享视图 · 日志内容已脱敏 · 由 log-agent {meta.data?.version} 提供
+                  </div>
+                )}
+                {owner && meta.data && !meta.data.can_chat && (
+                  <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                    网页提问不可用：服务未配置 OPENAI_API_KEY 或为只读模式，仅可查看报告。
+                  </div>
+                )}
+                <div className="mx-auto max-w-4xl">{report}</div>
+              </div>
+            )}
+          </div>
+
+          {panel && (
+            <aside
+              ref={aside}
+              aria-label="详情面板"
+              tabIndex={-1}
+              onKeyDown={onAsideKey}
+              {...(overlayPanel ? { role: 'dialog', 'aria-modal': true } : {})}
+              style={
+                !overlayPanel && panelWidth ? { width: `clamp(${PANEL_MIN}px, ${panelWidth}px, calc(100% - ${CHAT_MIN}px))` } : undefined
+              }
+              className="fixed inset-0 z-30 flex animate-panel-in flex-col bg-paper lg:relative lg:inset-auto lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
+            >
+              {!overlayPanel && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="拖动调整面板宽度"
+                  aria-valuemin={PANEL_MIN}
+                  aria-valuenow={panelWidth ? Math.round(panelWidth) : undefined}
+                  tabIndex={0}
+                  title="拖动调整宽度，双击恢复默认"
+                  onPointerDown={startResize}
+                  onKeyDown={onResizeKey}
+                  onDoubleClick={resetWidth}
+                  className="group absolute inset-y-0 -left-1.5 z-10 flex w-3 cursor-col-resize justify-center outline-none"
+                >
+                  <span className="h-full w-0.5 rounded-full bg-transparent transition-colors group-hover:bg-brand-400 group-focus-visible:bg-brand-500 group-active:bg-brand-500" />
                 </div>
               )}
-              {owner && meta.data && !meta.data.can_chat && (
-                <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-                  网页提问不可用：服务未配置 OPENAI_API_KEY 或为只读模式，仅可查看报告。
-                </div>
-              )}
-              <div className="mx-auto max-w-4xl">{report}</div>
-            </div>
+              <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
+                {/* 大屏上标题栏的分段按钮一直可见，这里只放面板名；小屏覆盖层盖住了标题栏，才需要自己的切换 */}
+                {overlayPanel ? (
+                  <PanelSwitch panels={panels} panel={panel} onPanel={openPanel} />
+                ) : (
+                  <h2 className="flex items-center gap-1.5 px-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    {(() => {
+                      const { label, icon: Icon } = PANEL_META[panel]
+                      return (
+                        <>
+                          <Icon className="h-4 w-4 text-zinc-400" aria-hidden />
+                          {label}
+                        </>
+                      )
+                    })()}
+                  </h2>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openPanel(undefined)}
+                  aria-label="关闭面板"
+                  className="ml-auto rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">
+                {panel === 'report' && <div className="h-full overflow-auto">{report}</div>}
+                {panel === 'source' && (
+                  <div className="flex h-full flex-col gap-2 p-3">
+                    {(panels.includes('report') || evidence.length > 0) && (
+                      <EvidenceNav
+                        evidence={evidence}
+                        active={activeEvidence}
+                        onBack={panels.includes('report') ? () => openPanel('report') : undefined}
+                        onOpen={openSource}
+                      />
+                    )}
+                    <div className="min-h-0 flex-1">
+                      <SourceViewer scope={scope} target={target} />
+                    </div>
+                  </div>
+                )}
+                {panel === 'timeline' && (
+                  <TimelinePane
+                    scope={scope}
+                    canAsk={canChat}
+                    at={search.at}
+                    onOpen={openSource}
+                    onAsk={(text) => {
+                      setAsk({ text, nonce: Date.now() })
+                      openPanel(undefined)
+                    }}
+                  />
+                )}
+              </div>
+            </aside>
           )}
         </div>
 
-        {panel && (
-          <aside
-            ref={aside}
-            aria-label="详情面板"
-            tabIndex={-1}
-            onKeyDown={onAsideKey}
-            {...(overlayPanel ? { role: 'dialog', 'aria-modal': true } : {})}
-            style={
-              !overlayPanel && panelWidth ? { width: `clamp(${PANEL_MIN}px, ${panelWidth}px, calc(100% - ${CHAT_MIN}px))` } : undefined
-            }
-            className="fixed inset-0 z-30 flex animate-panel-in flex-col bg-paper lg:relative lg:inset-auto lg:z-auto lg:w-[min(52%,820px)] lg:shrink-0 lg:border-l lg:border-zinc-200/70 dark:bg-paper-dark lg:dark:border-zinc-800"
-          >
-            {!overlayPanel && (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="拖动调整面板宽度"
-                aria-valuemin={PANEL_MIN}
-                aria-valuenow={panelWidth ? Math.round(panelWidth) : undefined}
-                tabIndex={0}
-                title="拖动调整宽度，双击恢复默认"
-                onPointerDown={startResize}
-                onKeyDown={onResizeKey}
-                onDoubleClick={resetWidth}
-                className="group absolute inset-y-0 -left-1.5 z-10 flex w-3 cursor-col-resize justify-center outline-none"
-              >
-                <span className="h-full w-0.5 rounded-full bg-transparent transition-colors group-hover:bg-brand-400 group-focus-visible:bg-brand-500 group-active:bg-brand-500" />
-              </div>
-            )}
-            <div className="flex items-center gap-1 border-b border-zinc-200/70 px-3 py-2 dark:border-zinc-800">
-              {/* 大屏上标题栏的分段按钮一直可见，这里只放面板名；小屏覆盖层盖住了标题栏，才需要自己的切换 */}
-              {overlayPanel ? (
-                <PanelSwitch panels={panels} panel={panel} onPanel={openPanel} />
-              ) : (
-                <h2 className="flex items-center gap-1.5 px-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  {(() => {
-                    const { label, icon: Icon } = PANEL_META[panel]
-                    return (
-                      <>
-                        <Icon className="h-4 w-4 text-zinc-400" aria-hidden />
-                        {label}
-                      </>
-                    )
-                  })()}
-                </h2>
-              )}
-              <button
-                type="button"
-                onClick={() => openPanel(undefined)}
-                aria-label="关闭面板"
-                className="ml-auto rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1">
-              {panel === 'report' && <div className="h-full overflow-auto">{report}</div>}
-              {panel === 'source' && (
-                <div className="flex h-full flex-col gap-2 p-3">
-                  {(panels.includes('report') || evidence.length > 0) && (
-                    <EvidenceNav
-                      evidence={evidence}
-                      active={search.ev}
-                      onBack={panels.includes('report') ? () => openPanel('report') : undefined}
-                      onOpen={openSource}
-                    />
-                  )}
-                  <div className="min-h-0 flex-1">
-                    <SourceViewer scope={scope} target={target} />
-                  </div>
-                </div>
-              )}
-              {panel === 'timeline' && (
-                <TimelinePane
-                  scope={scope}
-                  canAsk={canChat}
-                  onOpen={openSource}
-                  onAsk={(text) => {
-                    setAsk({ text, nonce: Date.now() })
-                    openPanel(undefined)
-                  }}
-                />
-              )}
-            </div>
-          </aside>
-        )}
+        {sharing && owner && meta.data && <SharePanel session={scope.name} meta={meta.data} onClose={() => setSharing(false)} />}
+        {editingSources && canChat && <SessionSourcesDialog info={info} onClose={() => setEditingSources(false)} />}
       </div>
-
-      {sharing && owner && meta.data && <SharePanel session={scope.name} meta={meta.data} onClose={() => setSharing(false)} />}
-      {editingSources && canChat && <SessionSourcesDialog info={info} onClose={() => setEditingSources(false)} />}
-    </div>
+    </TimeJumpContext.Provider>
   )
 }
 
@@ -804,7 +815,16 @@ function SessionHeader({
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const settings = info.settings as Record<string, string | number | null>
   const range = settings.since || settings.until ? `${settings.since || '开头'} → ${settings.until || '结尾'}` : null
-  const metaText = [info.model, range, settings.timezone ? String(settings.timezone) : null].filter(Boolean).join(' · ')
+  const metaChips = [
+    info.model && { key: 'model', icon: Cpu, label: shortModel(info.model), title: `模型：${info.model}` },
+    range && { key: 'range', icon: Clock, label: range, title: `时间窗口：${range}` },
+    settings.timezone && {
+      key: 'tz',
+      icon: Globe,
+      label: String(settings.timezone),
+      title: `时区：${settings.timezone}（日志里没写时区的时间按它解释）`,
+    },
+  ].filter((chip): chip is { key: string; icon: typeof Cpu; label: string; title: string } => !!chip)
   const sourceCount = info.logs.length + info.code.length
   const missing = info.logs.some((log) => log.exists === false)
 
@@ -874,10 +894,19 @@ function SessionHeader({
             设置已改，下一次提问生效
           </span>
         )}
-        {metaText && (
-          <span title={metaText} className="hidden min-w-0 max-w-full truncate font-mono text-zinc-500 sm:inline dark:text-zinc-400">
-            {metaText}
-          </span>
+        {metaChips.length > 0 && (
+          <ul aria-label="分析设置" className="hidden min-w-0 flex-wrap items-center gap-1.5 sm:flex">
+            {metaChips.map(({ key, icon: Icon, label, title }) => (
+              <li
+                key={key}
+                title={title}
+                className="flex min-w-0 max-w-64 items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-300"
+              >
+                <Icon className="h-3 w-3 shrink-0 text-zinc-400" aria-hidden />
+                <span className="truncate font-mono text-[11px]">{label}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </header>

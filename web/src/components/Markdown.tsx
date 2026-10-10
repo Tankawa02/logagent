@@ -1,7 +1,8 @@
-import { memo, useDeferredValue, useMemo } from 'react'
+import { memo, useDeferredValue, useMemo, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CITATION } from '../lib/format'
+import { TIME_HREF, findTimes, remarkTimePoints, useTimeJump } from '../lib/time-jump'
 import type { SourceTarget } from '../lib/types'
 
 /** 深层路径只保留最后两级，完整路径放在 title 里 */
@@ -19,10 +20,13 @@ function shortCitation(source: string, full: string): string {
 export const Markdown = memo(function Markdown({ text, onOpen }: { text: string; onOpen?: (target: SourceTarget) => void }) {
   // 流式输出时每个字都会更新 text：解析让位给输入与滚动，跟不上时合并成下一帧再渲染，而不是逐字卡住主线程
   const deferred = useDeferredValue(text)
-  const components = useMemo(() => buildComponents(onOpen), [onOpen])
+  // 只有能跳到原文的地方（工作区里的回答 / 报告）才把时间点变成跳转
+  const onTime = useTimeJump()
+  const jump = onOpen ? onTime : null
+  const components = useMemo(() => buildComponents(onOpen, jump), [onOpen, jump])
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      <ReactMarkdown remarkPlugins={jump ? TIME_PLUGINS : REMARK_PLUGINS} components={components}>
         {deferred}
       </ReactMarkdown>
     </div>
@@ -30,11 +34,45 @@ export const Markdown = memo(function Markdown({ text, onOpen }: { text: string;
 })
 
 const REMARK_PLUGINS = [remarkGfm]
+const TIME_PLUGINS = [remarkGfm, remarkTimePoints]
 
-function buildComponents(onOpen?: (target: SourceTarget) => void): Components {
+const TIME_CLASS =
+  'cursor-pointer rounded-sm text-inherit underline decoration-dotted decoration-brand-400 underline-offset-[3px] hover:bg-brand-50 hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-brand-500 dark:hover:bg-brand-950/50 dark:hover:text-brand-300'
+
+function TimeLink({ at, onTime, children, mono }: { at: string; onTime: (at: string) => void; children: ReactNode; mono?: boolean }) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={() => onTime(at)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onTime(at)
+        }
+      }}
+      className={`${TIME_CLASS} ${mono ? 'font-mono text-[0.85em]' : ''}`}
+      title={`在时间线中定位 ${at.replace('T', ' ')}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+function buildComponents(onOpen?: (target: SourceTarget) => void, onTime?: ((at: string) => void) | null): Components {
   return {
     code({ children, className }) {
       const value = String(children ?? '')
+      if (!className && onTime) {
+        const times = findTimes(value.trim())
+        if (times.length === 1 && times[0].text === value.trim()) {
+          return (
+            <TimeLink at={times[0].value} onTime={onTime} mono>
+              {value}
+            </TimeLink>
+          )
+        }
+      }
       const match = !className && onOpen ? CITATION.exec(value.trim()) : null
       if (match) {
         const start = Number(match[2])
@@ -62,6 +100,16 @@ function buildComponents(onOpen?: (target: SourceTarget) => void): Components {
       return <code className={className}>{children}</code>
     },
     a({ href, children }) {
+      if (href?.startsWith(TIME_HREF)) {
+        const at = href.slice(TIME_HREF.length)
+        return onTime ? (
+          <TimeLink at={at} onTime={onTime}>
+            {children}
+          </TimeLink>
+        ) : (
+          <>{children}</>
+        )
+      }
       return (
         <a href={href} target="_blank" rel="noreferrer noopener">
           {children}

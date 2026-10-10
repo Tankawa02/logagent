@@ -66,6 +66,21 @@ export function formatGenerated(value: string | null | undefined): string {
   return value.replace('T', ' ').replace(/(\.\d+)?([+-]\d{2}:\d{2}|Z)$/, '')
 }
 
+/** 侧边栏里的「刚刚 / 5 分钟前 / 3 小时前 / 2 天前」，超过一周显示月-日 */
+export function relativeTime(iso: string, now: number = Date.now()): string {
+  const at = Date.parse(iso)
+  if (Number.isNaN(at)) return ''
+  const minutes = Math.floor((now - at) / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} 天前`
+  const d = new Date(at)
+  return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path
 }

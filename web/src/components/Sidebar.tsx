@@ -19,7 +19,7 @@ import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { dismissDeleteError, scheduleDelete, undoDelete, useDeferredDelete } from '../lib/deferred-delete'
-import { ASSESSMENT } from '../lib/format'
+import { ASSESSMENT, relativeTime } from '../lib/format'
 import { MOD } from '../lib/shortcuts'
 import { useToast } from './Feedback'
 import { openShortcuts } from './ShortcutsDialog'
@@ -51,6 +51,14 @@ const DOT: Record<string, string> = {
   amber: 'bg-amber-500',
   gray: 'bg-zinc-300 dark:bg-zinc-600',
   blue: 'bg-brand-500',
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  red: 'font-medium text-red-600 dark:text-red-400',
+  green: 'text-emerald-700 dark:text-emerald-400',
+  amber: 'text-amber-700 dark:text-amber-400',
+  gray: 'text-zinc-500 dark:text-zinc-400',
+  blue: 'text-brand-700 dark:text-brand-300',
 }
 
 const NAV = [
@@ -420,16 +428,22 @@ export function Sidebar({
                         <span className="truncate">{label}</span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
-                        <span
-                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`}
-                          title={s.last?.assessment ? ASSESSMENT[s.last.assessment].label : '暂无结论'}
-                          aria-hidden
-                        />
-                        <span className="sr-only">{s.last?.assessment ? ASSESSMENT[s.last.assessment].label : '暂无结论'}，</span>
-                        <span className="truncate">
-                          {s.logs[0]?.name ?? '无日志'}
-                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''} · {s.turns} 轮{s.origin === 'analyze' ? ' · CLI' : ''}
+                        <span className={`flex shrink-0 items-center gap-1 ${STATUS_TEXT[tone]}`}>
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
+                          {s.last?.assessment ? ASSESSMENT[s.last.assessment].label : s.turns ? '暂无结论' : '未提问'}
                         </span>
+                        <span className="min-w-0 truncate" title={`${s.logs.map((l) => l.name).join('、') || '无日志'} · ${s.turns} 轮`}>
+                          {s.logs[0]?.name ?? '无日志'}
+                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''}
+                          {s.origin === 'analyze' ? ' · CLI' : ''}
+                        </span>
+                        <time
+                          dateTime={s.updated_at}
+                          title={s.updated_at.replace('T', ' ').slice(0, 19)}
+                          className="ml-auto shrink-0 tabular-nums"
+                        >
+                          {relativeTime(s.updated_at)}
+                        </time>
                       </span>
                       {/* 搜索时多给一行最近一轮的结论，方便认出要找的是哪个会话 */}
                       {q && s.last?.summary && (
