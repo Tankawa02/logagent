@@ -24,6 +24,7 @@ from .logfile import HIT_LINE_CHARS, MAX_LINE_CHARS, clip_line, open_log, read_t
 from .logformat import UNPARSED, is_stack_line, level_and_body, line_record, maybe_wrapped, unwrap
 from .redact import is_enabled as redact_enabled
 from .redact import redact_code, redact_code_lines, redact_log
+from .scope import code_denied, log_denied
 from .stacktrace import ChainCollector, stack_from_record, starts_block
 from .timefilter import (
     TimeWindow,
@@ -69,6 +70,10 @@ MAX_SEARCH_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_CHUNK_LINES = 1000
 MAX_CODE_LINES = 400
 MAX_CONTEXT_LINES = 10
+# 返回条数上限：模型偶尔会传几千，单次结果膨胀到 MB 级，转存后还要多轮分段读取，白白消耗步数
+MAX_SEARCH_RESULTS = 200
+MAX_GREP_RESULTS = 300
+MAX_LIST_FILES = 1000
 
 # Windows 保留设备名：os.walk 可能列出同名文件/junction，传给 relpath/abspath 会被解析成
 # \\.\nul 之类的设备路径并抛 ValueError，直接跳过。
@@ -108,6 +113,9 @@ def _compile(pattern: str, regex: bool, ignore_case: bool) -> tuple[re.Pattern[s
 
 
 def _open_log_or_error(path: str):
+    denied = log_denied(path)
+    if denied:
+        return None, _err(denied)
     try:
         return open_log(path), None
     except FileNotFoundError:
@@ -345,13 +353,26 @@ def log_overview(path: str, since: str = "", until: str = "") -> ToolOutput:
         return result
 
 
+def _stats_locked(log, window: TimeWindow) -> _OverviewStats:
+    """按窗口缓存扫描统计，log_overview 与 compare_windows 共用（调用方须持有 log.scan_lock）。
+
+    统计本身不含脱敏，脱敏在渲染时做，所以缓存键不需要带脱敏开关。
+    """
+    key = ("stats", window, default_timezone())
+    stats = log.scan_cache.get(key)
+    if stats is None:
+        stats = _scan_overview(log, window)
+        log.scan_cache[key] = stats
+    return stats
+
+
 def _build_overview(log, path: str, window: TimeWindow) -> ToolOutput:
     note = ""
     try:
-        stats = _scan_overview(log, window)
+        stats = _stats_locked(log, window)
         if window and not stats.saw_timestamp:
             window, note = TimeWindow(), NO_TIMESTAMP_NOTE
-            stats = _scan_overview(log, window)
+            stats = _stats_locked(log, window)
     except OSError as exc:
         return _err(f"读取失败: {exc}")
 
@@ -450,8 +471,10 @@ def compare_windows(
     if error:
         return error
     try:
-        base = _scan_overview(log, base_window)
-        target = _scan_overview(log, target_window)
+        # 目标时段通常就是本轮的时间窗口，log_overview 已经扫过一遍；基线反复对比时也只扫一次
+        with log.scan_lock:
+            base = _stats_locked(log, base_window)
+            target = _stats_locked(log, target_window)
     except OSError as exc:
         return _err(f"读取失败: {exc}")
     if not base.saw_timestamp:
@@ -590,7 +613,7 @@ def search_logs(
         since: 可选，只搜索该时间及之后的日志，如 `2026-06-09 14:00`、`14:00`。
             没有时间戳的行（如堆栈）沿用上一条日志的时间。
         until: 可选，只搜索到该时间为止（按给出的精度包含整段）。
-        max_results: 最多返回的命中数。
+        max_results: 最多返回的命中数，默认 50，上限 200。
     """
     log, error = _open_log_or_error(path)
     if error:
@@ -600,7 +623,7 @@ def search_logs(
         return error
     compiled, note = _compile(pattern, regex, ignore_case)
     context = max(0, min(int(context), MAX_CONTEXT_LINES))
-    max_results = max(1, int(max_results))
+    max_results = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
     start_line = max(1, int(start_line))
     end_line = int(end_line or 0)
 
@@ -744,12 +767,22 @@ def trace_request(
     compiled, note = _compile(key, regex, ignore_case)
     max_lines = max(1, min(int(max_lines), MAX_TRACE_LINES))
 
+    # 一份打不开（路径写错、被轮转删掉、不在登记范围）不拖累其它日志：跳过并在结果里说明
     logs = []
+    opened: list[str] = []
+    skipped: list[str] = []
     for path in paths:
         log, error = _open_log_or_error(path)
         if error:
-            return error
+            skipped.append(f"{path}（{str(error).removeprefix('[错误]').strip()}）")
+            continue
         logs.append(log)
+        opened.append(path)
+    if not logs:
+        return _err("所有日志都无法打开：" + "；".join(skipped))
+    if skipped:
+        note += "（已跳过无法打开的日志：" + "；".join(skipped) + "）"
+    paths = opened
 
     labels = _trace_labels(paths)
     entries: list[_TraceEntry] = []
@@ -760,7 +793,7 @@ def trace_request(
         for index, (log, label) in enumerate(zip(logs, labels, strict=True)):
             found, cut, saw = _scan_trace(log, index, label, compiled, window, max_lines)
             if window and not saw:
-                # 这份日志没有时间戳：时间窗口对它无意义，按全文追踪
+                # 这份日志没有时间戳：时间��口对它无意义，按全文追踪
                 found, cut, saw = _scan_trace(log, index, label, compiled, TimeWindow(), max_lines)
                 note += f"（{label} 中没有识别到时间戳，已忽略时间窗口）"
             entries.extend(found)
@@ -795,6 +828,7 @@ def trace_request(
         hits=len(entries),
         files=matched_files,
         total_files=len(paths),
+        skipped_files=len(skipped),
         truncated=truncated,
         window=window.describe() if window else None,
     )
@@ -835,11 +869,15 @@ def list_code_files(code_dir: str, path_glob: str = "", max_files: int = 300) ->
     Args:
         code_dir: 源码目录路径。
         path_glob: 可选的路径过滤，如 `*.java`、`src/order/*`。
-        max_files: 最多列出的文件数量。
+        max_files: 最多列出的文件数量，默认 300，上限 1000。
     """
+    denied = code_denied(code_dir)
+    if denied:
+        return _err(denied)
     base = Path(code_dir).expanduser()
     if not base.is_dir():
         return _err(f"代码目录不存在: {code_dir}")
+    max_files = max(1, min(int(max_files), MAX_LIST_FILES))
     files = _code_files(base)
     if path_glob:
         files = [f for f in files if _glob_match(f, path_glob)]
@@ -867,6 +905,9 @@ def read_code_file(code_dir: str, rel_path: str, start_line: int = 1, end_line: 
         start_line: 起始行号（从 1 开始）。
         end_line: 结束行号（含），0 表示从 start_line 起读 400 行。
     """
+    denied = code_denied(code_dir)
+    if denied:
+        return _err(denied)
     base = Path(code_dir).expanduser().resolve()
     target = (base / rel_path).resolve()
     if not target.is_relative_to(base):
@@ -981,11 +1022,15 @@ def grep_code(
         regex: 为 False 时按普通文本搜索（搜索含括号、点号的原文时建议 False）。
         ignore_case: 是否忽略大小写。
         path_glob: 可选的路径过滤，如 `*.java`、`src/order/*`。
-        max_results: 最多返回的命中条数。
+        max_results: 最多返回的命中条数，默认 80，上限 300。
     """
+    denied = code_denied(code_dir)
+    if denied:
+        return _err(denied)
     base = Path(code_dir).expanduser()
     if not base.is_dir():
         return _err(f"代码目录不存在: {code_dir}")
+    max_results = max(1, min(int(max_results), MAX_GREP_RESULTS))
     compiled, note = _compile(pattern, regex, ignore_case)
     literal = not regex or bool(note)
 

@@ -191,6 +191,9 @@ def _prepare(
     except LogInputError as exc:
         _fail(str(exc))
     code_paths = [str(c.expanduser().resolve()) for c in (code or [])]
+    from .scope import set_scope
+
+    set_scope(log_paths, code_paths)
     return log_paths, code_paths
 
 

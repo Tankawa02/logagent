@@ -1,0 +1,14 @@
+2026-06-09 14:01:58.102 INFO  [gw-http-3] request_id=req-6b21 POST /api/orders client=10.2.0.17 upstream=order-svc
+2026-06-09 14:01:58.231 INFO  [gw-http-3] request_id=req-6b21 status=201 upstream_ms=129
+2026-06-09 14:02:03.477 INFO  [gw-http-1] request_id=req-6b40 GET /api/orders/88120 client=10.2.0.31 upstream=order-svc
+2026-06-09 14:02:03.509 INFO  [gw-http-1] request_id=req-6b40 status=200 upstream_ms=32
+2026-06-09 14:02:10.014 INFO  [gw-http-4] request_id=req-7f3a POST /api/orders client=10.2.0.17 upstream=order-svc
+2026-06-09 14:02:12.880 INFO  [gw-http-2] request_id=req-7f51 GET /api/health client=10.2.0.2 upstream=order-svc
+2026-06-09 14:02:12.884 INFO  [gw-http-2] request_id=req-7f51 status=200 upstream_ms=4
+2026-06-09 14:02:15.016 WARN  [gw-http-4] request_id=req-7f3a upstream order-svc read timeout after 5000ms
+2026-06-09 14:02:15.017 ERROR [gw-http-4] request_id=req-7f3a status=504 msg="Gateway Timeout" upstream=order-svc
+2026-06-09 14:02:21.330 INFO  [gw-http-1] request_id=req-7f88 POST /api/orders client=10.2.0.44 upstream=order-svc
+2026-06-09 14:02:26.332 WARN  [gw-http-1] request_id=req-7f88 upstream order-svc read timeout after 5000ms
+2026-06-09 14:02:26.333 ERROR [gw-http-1] request_id=req-7f88 status=504 msg="Gateway Timeout" upstream=order-svc
+2026-06-09 14:03:40.901 INFO  [gw-http-3] request_id=req-8a02 POST /api/orders client=10.2.0.17 upstream=order-svc
+2026-06-09 14:03:41.044 INFO  [gw-http-3] request_id=req-8a02 status=201 upstream_ms=143

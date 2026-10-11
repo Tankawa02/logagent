@@ -40,6 +40,7 @@ _HINT_SUMMARIES = {
     "empty": "内容为空",
     "empty_window": "时间窗口内无日志",
     "no_timestamp": "无时间戳",
+    "duplicate": "与之前的调用相同，未重复执行",
 }
 
 

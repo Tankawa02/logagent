@@ -1,0 +1,12 @@
+question = "price-api 15 点之后偶发 500（ZeroDivisionError），之前一直正常，是最近哪次改动引起的？"
+logs = ["logs/price-api.log"]
+# 需要提交历史：源码以 git bundle 保存，评测时克隆到临时目录
+code_bundle = "repo.bundle"
+timezone = "+08:00"
+
+[expected]
+assessment = "finding"
+# 5f510f2 删掉了 quantity <= 0 的保护分支；赠品行 quantity=0（0652b55 引入）
+root_cause = ["pricing.py:5", "price.py:14"]
+keywords = ["5f510f2", "quantity"]
+notes = "15:05 部署 5f510f2（refactor 删掉了 unit_price 的 quantity<=0 分支），赠品行 quantity=0 时除零；只有 gift_lines>0 的购物车失败"

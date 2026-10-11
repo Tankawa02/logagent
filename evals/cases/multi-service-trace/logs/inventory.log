@@ -1,0 +1,21 @@
+2026-06-09 14:00:00.003 INFO  [scheduler] job=nightly-stock-sync started batch_size=500 source=warehouse-feed
+2026-06-09 14:00:00.010 INFO  [stock-sync] job=nightly-stock-sync acquired lock stock:SKU-889 (holding for batch)
+2026-06-09 14:00:00.011 INFO  [stock-sync] job=nightly-stock-sync acquired lock stock:SKU-890 (holding for batch)
+2026-06-09 14:01:58.120 INFO  [inv-http-5] request_id=req-6b21 reserve sku=SKU-120 qty=1
+2026-06-09 14:01:58.200 INFO  [inv-http-5] request_id=req-6b21 reserved rsv-55012 lock_wait_ms=2
+2026-06-09 14:02:10.029 INFO  [inv-http-2] request_id=req-7f3a reserve sku=SKU-889 qty=2
+2026-06-09 14:02:10.030 INFO  [inv-http-2] request_id=req-7f3a waiting for lock stock:SKU-889 holder=nightly-stock-sync timeout=30s
+2026-06-09 14:02:18.131 INFO  [stock-sync] job=nightly-stock-sync batch 1/1 committed rows=500 elapsed_ms=138120
+2026-06-09 14:02:18.132 INFO  [stock-sync] job=nightly-stock-sync released 500 locks
+2026-06-09 14:02:18.135 INFO  [inv-http-2] request_id=req-7f3a reserved rsv-55013 lock_wait_ms=8105
+2026-06-09 14:02:18.150 INFO  [inv-http-2] request_id=req-7f3a release rsv-55013 reason=caller_cancelled
+2026-06-09 14:02:20.000 INFO  [scheduler] job=nightly-stock-sync started batch_size=500 source=warehouse-feed
+2026-06-09 14:02:20.004 INFO  [stock-sync] job=nightly-stock-sync acquired lock stock:SKU-889 (holding for batch)
+2026-06-09 14:02:21.344 INFO  [inv-http-3] request_id=req-7f88 reserve sku=SKU-889 qty=1
+2026-06-09 14:02:21.345 INFO  [inv-http-3] request_id=req-7f88 waiting for lock stock:SKU-889 holder=nightly-stock-sync timeout=30s
+2026-06-09 14:02:29.390 INFO  [stock-sync] job=nightly-stock-sync batch 1/1 committed rows=500 elapsed_ms=9386
+2026-06-09 14:02:29.391 INFO  [stock-sync] job=nightly-stock-sync released 500 locks
+2026-06-09 14:02:29.396 INFO  [inv-http-3] request_id=req-7f88 reserved rsv-55014 lock_wait_ms=8051
+2026-06-09 14:02:29.410 INFO  [inv-http-3] request_id=req-7f88 release rsv-55014 reason=caller_cancelled
+2026-06-09 14:03:40.918 INFO  [inv-http-5] request_id=req-8a02 reserve sku=SKU-120 qty=1
+2026-06-09 14:03:41.015 INFO  [inv-http-5] request_id=req-8a02 reserved rsv-55015 lock_wait_ms=1

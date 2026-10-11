@@ -1,0 +1,19 @@
+2026-06-09 14:01:58.110 INFO  [order-worker-2] request_id=req-6b21 create order user=u-1029 items=1
+2026-06-09 14:01:58.118 INFO  [order-worker-2] request_id=req-6b21 call inventory.reserve sku=SKU-120 qty=1
+2026-06-09 14:01:58.205 INFO  [order-worker-2] request_id=req-6b21 inventory.reserve ok reservation=rsv-55012 cost_ms=87
+2026-06-09 14:01:58.228 INFO  [order-worker-2] request_id=req-6b21 order created order_id=88119
+2026-06-09 14:02:03.481 INFO  [order-worker-1] request_id=req-6b40 load order order_id=88120
+2026-06-09 14:02:10.020 INFO  [order-worker-3] request_id=req-7f3a create order user=u-2231 items=2
+2026-06-09 14:02:10.026 INFO  [order-worker-3] request_id=req-7f3a call inventory.reserve sku=SKU-889 qty=2
+2026-06-09 14:02:15.018 WARN  [order-worker-3] request_id=req-7f3a client disconnected while waiting for inventory.reserve (elapsed 4992ms)
+2026-06-09 14:02:18.140 INFO  [order-worker-3] request_id=req-7f3a inventory.reserve ok reservation=rsv-55013 cost_ms=8114
+2026-06-09 14:02:18.142 WARN  [order-worker-3] request_id=req-7f3a response dropped: client already gone, releasing reservation rsv-55013
+2026-06-09 14:02:21.336 INFO  [order-worker-1] request_id=req-7f88 create order user=u-3150 items=1
+2026-06-09 14:02:21.341 INFO  [order-worker-1] request_id=req-7f88 call inventory.reserve sku=SKU-889 qty=1
+2026-06-09 14:02:26.334 WARN  [order-worker-1] request_id=req-7f88 client disconnected while waiting for inventory.reserve (elapsed 4993ms)
+2026-06-09 14:02:29.402 INFO  [order-worker-1] request_id=req-7f88 inventory.reserve ok reservation=rsv-55014 cost_ms=8061
+2026-06-09 14:02:29.404 WARN  [order-worker-1] request_id=req-7f88 response dropped: client already gone, releasing reservation rsv-55014
+2026-06-09 14:03:40.910 INFO  [order-worker-2] request_id=req-8a02 create order user=u-1029 items=1
+2026-06-09 14:03:40.915 INFO  [order-worker-2] request_id=req-8a02 call inventory.reserve sku=SKU-120 qty=1
+2026-06-09 14:03:41.020 INFO  [order-worker-2] request_id=req-8a02 inventory.reserve ok reservation=rsv-55015 cost_ms=105
+2026-06-09 14:03:41.040 INFO  [order-worker-2] request_id=req-8a02 order created order_id=88121

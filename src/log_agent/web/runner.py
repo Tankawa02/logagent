@@ -347,7 +347,7 @@ def _open_memory(memory_path: Path | None, mode: str, info: SessionInfo):
     """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
     from ..memory import MemorySession, MemoryStore, default_memory_path, normalize_mode, project_key
 
-    # serve 启动时已校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
+    # serve 启动时���校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
     mode = normalize_mode(mode) or "off"
     if mode == "off":
         return None
@@ -377,7 +377,7 @@ def run_turn(
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
 
-    from .. import logfile, redact, timefilter
+    from .. import logfile, redact, scope, timefilter
     from ..budget import TokenBudget, parse_budget
     from ..citations import CitationLinker
     from ..cli_context import _build_context_message, _run_config
@@ -394,6 +394,7 @@ def run_turn(
 
     saved_globals = (logfile._forced_encoding, timefilter._default_timezone,
                      timefilter._default_window, redact.is_enabled())
+    saved_scope = scope.current_scope()
     emit(_event("RUN_STARTED", threadId=thread_id, runId=run_id))
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     quiet = console.quiet
@@ -402,6 +403,7 @@ def run_turn(
         store = SessionStore(conn)
         no_redact = session_no_redact(store, info.name)
         _apply_session_settings(settings, no_redact)
+        scope.set_scope(info.logs, info.code)
         baseline = parse_range(settings["baseline"]) if settings.get("baseline") else None
         budget = TokenBudget(parse_budget(str(settings["budget"]))) if settings.get("budget") else None
         max_steps = int(settings.get("max_steps") or 120)
@@ -480,6 +482,7 @@ def run_turn(
         (logfile._forced_encoding, timefilter._default_timezone,
          timefilter._default_window, enabled) = saved_globals
         redact.set_enabled(enabled)
+        scope.restore_scope(saved_scope)
         console.quiet = quiet
         if memory is not None:
             memory.store.close()

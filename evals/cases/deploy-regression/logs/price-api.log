@@ -1,0 +1,28 @@
+2026-06-09 14:55:01,204 INFO  [worker-1] POST /api/price cart=c-870 lines=2 gift_lines=0
+2026-06-09 14:55:01,219 INFO  [worker-1] POST /api/price cart=c-870 status=200 amount=318.00 cost_ms=15
+2026-06-09 14:58:44,610 INFO  [worker-2] POST /api/price cart=c-871 lines=3 gift_lines=1
+2026-06-09 14:58:44,628 INFO  [worker-2] POST /api/price cart=c-871 status=200 amount=129.90 cost_ms=18
+2026-06-09 15:05:12,002 INFO  [deploy] rolling restart: version=2026.06.09-2 commit=5f510f2 previous=ce55df1
+2026-06-09 15:05:20,447 INFO  [main] price-api started, workers=4
+2026-06-09 15:07:31,105 INFO  [worker-3] POST /api/price cart=c-880 lines=1 gift_lines=0
+2026-06-09 15:07:31,117 INFO  [worker-3] POST /api/price cart=c-880 status=200 amount=59.00 cost_ms=12
+2026-06-09 15:10:03,512 INFO  [worker-1] POST /api/price cart=c-881 lines=3 gift_lines=1
+2026-06-09 15:10:03,519 ERROR [worker-1] POST /api/price cart=c-881 status=500 unhandled exception
+Traceback (most recent call last):
+  File "/srv/price-api/api/price.py", line 14, in quote
+    "unit_price": unit_price(total, line.quantity),
+  File "/srv/price-api/pricing.py", line 5, in unit_price
+    return round(total / quantity, 2)
+ZeroDivisionError: float division by zero
+2026-06-09 15:12:47,030 INFO  [worker-4] POST /api/price cart=c-884 lines=2 gift_lines=0
+2026-06-09 15:12:47,044 INFO  [worker-4] POST /api/price cart=c-884 status=200 amount=240.50 cost_ms=14
+2026-06-09 15:16:20,881 INFO  [worker-2] POST /api/price cart=c-886 lines=4 gift_lines=2
+2026-06-09 15:16:20,889 ERROR [worker-2] POST /api/price cart=c-886 status=500 unhandled exception
+Traceback (most recent call last):
+  File "/srv/price-api/api/price.py", line 14, in quote
+    "unit_price": unit_price(total, line.quantity),
+  File "/srv/price-api/pricing.py", line 5, in unit_price
+    return round(total / quantity, 2)
+ZeroDivisionError: float division by zero
+2026-06-09 15:21:09,300 INFO  [worker-3] POST /api/price cart=c-890 lines=1 gift_lines=0
+2026-06-09 15:21:09,311 INFO  [worker-3] POST /api/price cart=c-890 status=200 amount=88.00 cost_ms=11

@@ -16,7 +16,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 for _name in ("FORCE_COLOR", "TTY_COMPATIBLE", "CLICOLOR_FORCE"):
     os.environ.pop(_name, None)
 
-from log_agent import config, logfile, logformat, redact, stacktrace, timefilter, tools  # noqa: E402
+from log_agent import config, logfile, logformat, redact, scope, stacktrace, timefilter, tools  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +25,7 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     for name in ("LOG_AGENT_CONFIG", "LOG_AGENT_MODEL", "OPENAI_BASE_URL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES",
-                 "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_FALLBACK_MODELS"):
+                 "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_POST_MODEL", "LOG_AGENT_FALLBACK_MODELS"):
         monkeypatch.delenv(name, raising=False)
     # 脚本化模型的剧本里没有为结构化抽取 / 证据修正准备回复：默认只用模型手写的附录，
     # 抽取与修正的行为在 test_postprocess.py 里单独覆盖
@@ -40,7 +40,9 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     tools._file_list_cache.clear()
     logformat.set_custom_formats(None)
     stacktrace.set_app_packages(None)
+    scope.clear_scope()
     yield
+    scope.clear_scope()
     logformat.set_custom_formats(None)
     stacktrace.set_app_packages(None)
     timefilter.set_default_timezone()
