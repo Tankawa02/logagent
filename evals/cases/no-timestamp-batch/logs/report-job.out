@@ -1,0 +1,18 @@
+report-job v3.4.1
+loading settings from /etc/report-job/settings.toml
+settings: output_dir=/data/reports format=xlsx
+settings: region source = REPORT_JOB_REGION (env)
+connecting to warehouse db=analytics host=wh-replica-2
+connected, server version 15.4
+fetching orders for period 2026-06
+fetched 48211 orders
+aggregating by region
+Traceback (most recent call last):
+  File "/opt/report-job/job.py", line 41, in <module>
+    main()
+  File "/opt/report-job/job.py", line 36, in main
+    rows = aggregate(orders, settings)
+  File "/opt/report-job/aggregate.py", line 18, in aggregate
+    regions = REGION_GROUPS[settings["region"]]
+KeyError: 'region'
+report-job exited with code 1

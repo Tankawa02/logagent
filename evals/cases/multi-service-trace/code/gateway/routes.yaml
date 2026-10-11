@@ -1,0 +1,8 @@
+routes:
+  - path: /api/orders
+    upstream: order-svc
+    read_timeout_ms: 5000
+    retries: 0
+  - path: /api/health
+    upstream: order-svc
+    read_timeout_ms: 1000

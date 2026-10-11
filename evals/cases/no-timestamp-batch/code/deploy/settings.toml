@@ -1,0 +1,3 @@
+output_dir = "/data/reports"
+format = "xlsx"
+# region 由调度平台的环境变量 REPORT_JOB_REGION 注入，这里不写

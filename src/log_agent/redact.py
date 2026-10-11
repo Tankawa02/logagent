@@ -4,7 +4,8 @@
 - 宁可漏打码也不要误伤排障线索。订单号、trace id 这类长数字不能被当成身份证抹掉，
   所以身份证走校验位校验，手机号要求两侧不是数字。
 - 同一个 IP 始终映射成同一个代号，模型仍能分辨"是不是同一台机器"。
-- 日志走全量规则；源码只打高置信度的密钥（sk- / AKIA / JWT / Bearer），
+- 日志走全量规则；源码只打高置信度的密钥（sk- / AKIA / JWT / Bearer / 连接串密码）
+  和凭据键名后面的字面量（`.env` 的 `DB_PASSWORD=xxx`、`api_key = "xxx"`），
   避免把 `password = os.environ[...]` 这类代码本身改掉。
 """
 
@@ -40,17 +41,41 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"), "sk-[已脱敏]"),
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[AccessKey已脱敏]"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}"), r"\1 [已脱敏]"),
+    # 连接串里的密码：postgresql://app:secret@host。代码里拼接的 `{os.environ[...]}` 不算字面量，不动
+    (re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s/:@]+:)([^\s/@{}\[\]'\"()$]{3,})@", re.IGNORECASE), r"\1[已脱敏]@"),
 ]
+
+# 凭据类键名：允许带前缀（DB_PASSWORD、aws_secret_access_key、client.secret），但必须以凭据词结尾，
+# 避免误伤 tokenizer、password_policy 这类普通名字
+_SECRET_KEY_NAME = r"""
+    (?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*
+    (?:password|passwd|pwd|secret|token|access[_-]?token|refresh[_-]?token|
+       api[_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|credential)s?
+    (?![A-Za-z0-9])
+"""
+
+# 源码 / 配置文件里的字面量凭据：`.env` 的 `DB_PASSWORD=xxx`、`api_key = "xxx"`、YAML 的 `token: xxx`。
+# 值必须是字面量：`password = os.environ[...]`、`token: ${TOKEN}` 这类引用不动
+_CODE_SECRET_QUOTED = re.compile(
+    rf"""(?ix)({_SECRET_KEY_NAME}\s*[:=]\s*)(["'])([^"'\s]{{4,}})\2"""
+)
+_CODE_SECRET_BARE = re.compile(
+    rf"""(?imx)^(\s*(?:export\s+)?{_SECRET_KEY_NAME}(?:=|:\s+))(?![$"'])([^\s(\[{{#]{{4,}})\s*$"""
+)
+
+
+def _mask_code_secrets(text: str) -> str:
+    text = _CODE_SECRET_QUOTED.sub(lambda m: f"{m.group(1)}{m.group(2)}[已脱敏]{m.group(2)}", text)
+    return _CODE_SECRET_BARE.sub(lambda m: f"{m.group(1)}[已脱敏]", text)
 
 # ---- 日志专用规则 -----------------------------------------------------------
 
 # key=value / "key": "value" 形式的凭据。只替换值，保留键名，模型仍知道"这里有个 token"
 _KV_SECRET = re.compile(
-    r"""(?ix)
-    (\b(?:password|passwd|pwd|secret|token|access[_-]?token|refresh[_-]?token|
-        api[_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|credential)s?\b)
+    rf"""(?ix)
+    ({_SECRET_KEY_NAME})
     (\s*["']?\s*[:=]\s*["']?)
-    ([^\s"',;&}]{3,})
+    ([^\s"',;&}}]{{3,}})
     """
 )
 
@@ -153,7 +178,7 @@ def mask_private_keys(text: str) -> str:
     i = 0
     while i < len(lines):
         line = lines[i]
-        # 起止标记在整行里找：`-----BEGIN` 本身以 `-` 开头，不能先当 diff 前缀剥掉
+        # 起止标记在整���里找：`-----BEGIN` 本身以 `-` 开头，不能先当 diff 前缀剥掉
         begin, end = _KEY_BEGIN.search(line), _KEY_END.search(line)
         if begin:
             if end and end.start() > begin.start():
@@ -276,7 +301,7 @@ def redact_code(text: str, *, preserve_lines: bool = False) -> str:
     """源码脱敏。preserve_lines=True 时私钥逐行遮盖、保持行数（带行号的输出必须用它）。"""
     if not _enabled or not text:
         return text
-    return _apply_secrets(text, preserve_lines=preserve_lines)
+    return _mask_code_secrets(_apply_secrets(text, preserve_lines=preserve_lines))
 
 
 def redact_code_lines(lines: list[str], *, enabled: bool | None = None) -> list[str]:
@@ -287,5 +312,7 @@ def redact_code_lines(lines: list[str], *, enabled: bool | None = None) -> list[
     """
     if not (_enabled if enabled is None else enabled) or not lines:
         return list(lines)
-    masked = _apply_secrets("\n".join(lines)).split("\n")
-    return masked if len(masked) == len(lines) else [_apply_secrets(line) for line in lines]
+    masked = _mask_code_secrets(_apply_secrets("\n".join(lines))).split("\n")
+    if len(masked) == len(lines):
+        return masked
+    return [_mask_code_secrets(_apply_secrets(line)) for line in lines]

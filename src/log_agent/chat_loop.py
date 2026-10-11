@@ -14,6 +14,7 @@ from .cli_context import _build_context_message, _run_config
 from .export import build_payload
 from .memory_cli import after_turn
 from .render import StreamRenderer
+from .scope import set_scope
 from .term import console, glyphs
 
 
@@ -68,6 +69,8 @@ def run_chat_loop(
         state.suggestions = []
         state.last_question = user_input
         payload = {"messages": [{"role": "user", "content": message}]}
+        # /log、/code 等命令会改动日志和源码列表，每轮按当前列表重新登记工具可访问的范围
+        set_scope(state.log_paths, state.code_paths)
         result = StreamRenderer(verbose=verbose, linker=state.linker, budget=token_budget).run(
             agent, payload, config=_run_config(max_steps, state.session)
         )

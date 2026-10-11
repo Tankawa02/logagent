@@ -1,0 +1,10 @@
+question = "月度报表任务 report-job 这次跑失败了（日志是容器 stdout，没有时间戳），帮我看看为什么失败、怎么修？"
+logs = ["logs/report-job.out"]
+code = ["code"]
+
+[expected]
+assessment = "finding"
+# 调度平台环境变量名拼错（REGOIN），配置文件又没写 region；settings.py 的打印误导成"来自环境变量"
+root_cause = ["report-job.cron.env:4", "aggregate.py:18"]
+keywords = ["REPORT_JOB_REGOIN", "KeyError"]
+notes = "cron env 里写成 REPORT_JOB_REGOIN，settings.toml 不含 region，aggregate 取 settings['region'] 时 KeyError"

@@ -128,4 +128,7 @@ verbose = true
 - 优先级：命令行参数 > 环境变量（`LOG_AGENT_MODEL`、`OPENAI_BASE_URL` 等）> 配置文件 > 内置默认值。
 - 支持的键：`model`、`base_url`、`code`、`encoding`、`timezone`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
   以及 analyze / chat 使用的 `db`、analyze 专用的 `no_save`。写错的键会给出提示并忽略。
+- 只能用环境变量设置的模型分层：`LOG_AGENT_SUBAGENT_MODEL`（子代理用的便宜模型）、`LOG_AGENT_POST_MODEL`
+  （收尾的结构化抽取和证据修正，缺省沿用子代理模型，都没设就用主模型）、`LOG_AGENT_FALLBACK_MODELS`（逗号分隔的备用模型）。
+  收尾用了便宜模型时，失败会依次退到主模型、备用模型。
 - **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -104,39 +105,60 @@ def _call_record(purpose: str, method: str, raw: Any, started: float, error: str
     }
 
 
+def _model_label(model: Any) -> str:
+    return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
+
+
 def invoke_structured(model: Any, schema: type[BaseModel], messages: list[dict[str, str]],
                       purpose: str) -> tuple[BaseModel | None, list[dict[str, Any]]]:
-    """依次尝试 json_schema / function_calling，返回（解析结果, 每次尝试的调用记录）。"""
+    """依次尝试 json_schema / function_calling，返回（解析结果, 每次尝试的调用记录）。
+
+    model 可以是一个模型，也可以是按优先级排列的模型列表：前一个两种方式都失败
+    （限流 / 5xx / 超时，或拿不到可解析的结果）时换下一个。
+    """
+    models = list(model) if isinstance(model, (list, tuple)) else [model]
     calls: list[dict[str, Any]] = []
-    for method in ("json_schema", "function_calling"):
-        started = time.perf_counter()
-        try:
-            runnable = model.with_structured_output(schema, method=method, include_raw=True)
-            out = runnable.invoke(messages)
-        except Exception as exc:  # noqa: BLE001 — 接口不支持某种方式时换下一种
-            calls.append(_call_record(purpose, method, None, started, f"{type(exc).__name__}: {exc}"[:300]))
-            continue
-        raw, parsed = out.get("raw"), out.get("parsed")
-        if parsed is None:
-            parsed = _loose_parse(schema, raw)
-        error = "" if parsed is not None else str(out.get("parsing_error") or "未返回可解析的结构化结果")[:300]
-        calls.append(_call_record(purpose, method, raw, started, error))
-        if parsed is not None:
-            return parsed, calls
+    for position, candidate in enumerate(models):
+        for method in ("json_schema", "function_calling"):
+            started = time.perf_counter()
+            try:
+                runnable = candidate.with_structured_output(schema, method=method, include_raw=True)
+                out = runnable.invoke(messages)
+            except Exception as exc:  # noqa: BLE001 — 接口不支持某种方式时换下一种
+                record = _call_record(purpose, method, None, started, f"{type(exc).__name__}: {exc}"[:300])
+                record["model"] = record["model"] or _model_label(candidate)
+                record["fallback"] = position > 0
+                calls.append(record)
+                continue
+            raw, parsed = out.get("raw"), out.get("parsed")
+            if parsed is None:
+                parsed = _loose_parse(schema, raw)
+            error = "" if parsed is not None else str(out.get("parsing_error") or "未返回可解析的结构化结果")[:300]
+            record = _call_record(purpose, method, raw, started, error)
+            record["model"] = record["model"] or _model_label(candidate)
+            record["fallback"] = position > 0
+            calls.append(record)
+            if parsed is not None:
+                return parsed, calls
     return None, calls
 
 
 class PostProcessor:
     """挂在 build_agent 返回的图上（`agent.log_agent_post`），StreamRenderer.run 收尾时调用。"""
 
-    def __init__(self, model: Any, mode: str = "auto", repair: bool = True) -> None:
+    """结构化抽取和证据修正都是窄范围的格式化任务：build_agent 默认交给子代理模型（更便宜更快），
+    并把主模型和备用模型排在后面兜底，主模型限流时收尾也不会直接失败。
+    """
+
+    def __init__(self, model: Any, mode: str = "auto", repair: bool = True, fallbacks: Sequence[Any] = ()) -> None:
         self.model = model
+        self.models = [m for m in (model, *fallbacks) if hasattr(m, "with_structured_output")]
         self.mode = normalize_mode(mode)
         self.repairs = repair
 
     @property
     def usable(self) -> bool:
-        return hasattr(self.model, "with_structured_output")
+        return bool(self.models)
 
     @property
     def extracts(self) -> bool:
@@ -144,7 +166,7 @@ class PostProcessor:
 
     def structure(self, report: str) -> tuple[dict | None, list[dict[str, Any]]]:
         text = report if len(report) <= _REPORT_CHARS else report[:_REPORT_CHARS] + "\n…（正文过长，已截断）"
-        parsed, calls = invoke_structured(self.model, Analysis, [
+        parsed, calls = invoke_structured(self.models, Analysis, [
             {"role": "system", "content": _STRUCTURE_PROMPT},
             {"role": "user", "content": f"排查报告正文如下：\n\n{text}"},
         ], "structure")
@@ -157,7 +179,7 @@ class PostProcessor:
             return None, calls
 
     def repair(self, analysis: dict, check: dict, log_paths, code_dirs) -> tuple[dict, dict | None, dict, list[dict]]:
-        return repair_evidence(analysis, check, log_paths, code_dirs, self.model if self.usable else None)
+        return repair_evidence(analysis, check, log_paths, code_dirs, self.models if self.usable else None)
 
 
 def _evidence(analysis: dict, issue: int, index: int) -> dict | None:

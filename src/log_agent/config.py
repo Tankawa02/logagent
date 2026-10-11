@@ -49,6 +49,8 @@ _KEYS: dict[str, str | None] = {
     "max_retries": None,
     # 模型分层与结构化输出：经环境变量生效，build_agent 读取（见 agent.py）
     "subagent_model": None,
+    # 结构化抽取 / 证据修正用的模型，缺省沿用 subagent_model
+    "post_model": None,
     "fallback_models": None,
     "structured": None,
     "evidence_repair": None,
@@ -67,11 +69,13 @@ _ENV_OVERRIDES = {
     "timeout": "LOG_AGENT_TIMEOUT",
     "max_retries": "LOG_AGENT_MAX_RETRIES",
     "subagent_model": "LOG_AGENT_SUBAGENT_MODEL",
+    "post_model": "LOG_AGENT_POST_MODEL",
     "fallback_models": "LOG_AGENT_FALLBACK_MODELS",
     "structured": "LOG_AGENT_STRUCTURED",
     "evidence_repair": "LOG_AGENT_EVIDENCE_REPAIR",
 }
-_ENV_ONLY_KEYS = ("timeout", "max_retries", "subagent_model", "fallback_models", "structured", "evidence_repair")
+_ENV_ONLY_KEYS = ("timeout", "max_retries", "subagent_model", "post_model", "fallback_models", "structured",
+                  "evidence_repair")
 _ONLY_FOR = {"db": ("chat", "analyze"), "no_save": ("analyze",)}
 _PATH_KEYS = {"code", "skills", "db"}
 _PATH_LIST_KEYS = {"code", "skills"}
