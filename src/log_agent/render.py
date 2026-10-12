@@ -443,6 +443,8 @@ class StreamRenderer:
 
         final_state: Any = None
         error = ""
+        # 运行中 agent 可能就地改写输入消息，复盘要用的问题得在开跑前取出来
+        question = _payload_question(payload)
         config = self._with_tracker(config)
         if self.budget is not None:
             self.budget.reset()
@@ -586,18 +588,16 @@ class StreamRenderer:
         if experience is not None:
             self._absorb_post_calls(result, [c for c in experience.drain_calls() if c.get("usage") or c.get("model")])
         if experience is not None and post is not None and post.usable and experience.should_reflect(result):
-            self._reflect(experience, post, payload, result)
+            self._reflect(experience, post, question, result)
         result.usage_by_model = self._usage_by_model(result)
         if post is not None:
             result.elapsed = round(time.perf_counter() - self.start, 3)  # 收尾调用也算进本轮耗时
         return result
 
-    def _reflect(self, experience: Any, post: Any, payload: dict[str, Any], result: TurnResult) -> None:
+    def _reflect(self, experience: Any, post: Any, question: str, result: TurnResult) -> None:
         """在线经验复盘（默认关闭）：失败只记录，不影响本轮报告。"""
         from .experience import summary_text
 
-        messages = payload.get("messages") or []
-        question = str(messages[-1].get("content", "")) if messages and isinstance(messages[-1], dict) else ""
         self._on_phase("reflecting")
         try:
             summary, calls = experience.reflect_turn(post.models, question, result)
@@ -633,6 +633,18 @@ class StreamRenderer:
         if any(missing.values()):
             add_usage(by_model.setdefault("", empty_usage()), missing)
         return by_model
+
+
+def _payload_question(payload: Any) -> str:
+    """本轮用户消息的文本（消息可以是 dict 或 LangChain 消息对象，内容可以是字符串或分段列表）。"""
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not messages:
+        return ""
+    last = messages[-1]
+    content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+    if isinstance(content, list):
+        content = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content)
+    return str(content or "")
 
 
 def print_repair_note(repair: dict) -> None:

@@ -247,14 +247,19 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
             })}
           </ol>
         ) : (
-          votes.length === 0 && <p className="text-xs text-zinc-400">没有提炼新经验。</p>
+          votes.length === 0 && (
+            <p className="text-xs text-zinc-400">
+              {summary.confirmed?.length ? '没有提炼新经验，已有经验覆盖了这次的做法。' : '没有提炼新经验。'}
+            </p>
+          )
         )}
-        {(summary.added?.length || summary.merged?.length || summary.rejected?.length) ? (
+        {(summary.added?.length || summary.merged?.length || summary.confirmed?.length || summary.rejected?.length) ? (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             落库：
             {[
               summary.added?.length ? `新增 ${summary.added.map((i) => `E${i}`).join('、')}` : '',
               summary.merged?.length ? `合并到 ${summary.merged.map((i) => `E${i}`).join('、')}` : '',
+              summary.confirmed?.length ? `印证了 ${summary.confirmed.map((i) => `E${i}`).join('、')}` : '',
               summary.rejected?.length ? `安全检查拒绝 ${summary.rejected.length} 条（${summary.rejected.join('；')}）` : '',
             ]
               .filter(Boolean)
@@ -349,6 +354,17 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
           </>
         ),
       }
+    case 'confirmed':
+      return {
+        icon: <CircleCheck className="h-3.5 w-3.5" />,
+        tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+        text: (
+          <>
+            另一次排查印证了这条经验{event.detail.counted_helpful ? '，记一张有用票' : ''}
+            {origin && <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {origin}</span>}
+          </>
+        ),
+      }
     case 'helpful':
     case 'harmful':
       return {
@@ -425,7 +441,7 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
       </div>
     )
   }
-  if (event.kind === 'helpful' || event.kind === 'harmful') {
+  if (event.kind === 'helpful' || event.kind === 'harmful' || event.kind === 'confirmed') {
     return run ? <Collapsible label="查看这次排查的过程"><RunDetail run={run} entry={entry} /></Collapsible> : null
   }
   if (event.kind === 'gate') {

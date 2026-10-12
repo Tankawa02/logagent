@@ -64,6 +64,12 @@ function ProposalCard({
         <span className="text-xs font-medium text-zinc-400">建议 {position}</span>
         <span className="text-sm text-zinc-700 dark:text-zinc-200">{proposal.reason}</span>
       </div>
+      {proposal.shared_step && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="font-medium text-zinc-600 dark:text-zinc-300">共同的排查动作：</span>
+          {proposal.shared_step}
+        </p>
+      )}
       <ul className="space-y-1.5" aria-label="将被合并的经验">
         {proposal.members.map((member) => (
           <li

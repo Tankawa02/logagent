@@ -602,7 +602,7 @@ export interface ExperienceRun {
   injected: { id: number; title: string }[]
   route: string
   reflection: { votes?: { id: number; verdict: 'helpful' | 'harmful' | 'unused' }[]; new?: ExperienceDraftOut[] }
-  summary: { added?: number[]; merged?: number[]; rejected?: string[]; retired?: number[] }
+  summary: { added?: number[]; merged?: number[]; confirmed?: number[]; rejected?: string[]; retired?: number[] }
   model: string
   created_at: string
 }
@@ -619,6 +619,7 @@ export type ExperienceEvent = {
 } & (
   | { kind: 'created'; detail: { origin: string; source: string; status: string; batch: string; scope?: string } }
   | { kind: 'merged'; detail: { origin: string; source: string; counted_helpful: boolean; draft: Omit<ExperienceDraftOut, 'scope'> } }
+  | { kind: 'confirmed'; detail: { origin: string; source: string; counted_helpful: boolean } }
   | { kind: 'helpful' | 'harmful'; detail: { source: string } }
   | { kind: 'status'; detail: { from: ExperienceStatus; to: ExperienceStatus; by: string; into?: number } }
   | {
@@ -653,6 +654,7 @@ export interface ConsolidationProposal {
   trigger: string
   strategy: string
   reason: string
+  shared_step: string
   status: 'candidate' | 'active'
   members: ExperienceItem[]
 }
