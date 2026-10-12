@@ -30,6 +30,7 @@ from ..config import ConfigError, LoadedConfig, _read, find_project_config, load
 FIELDS: dict[str, str | None] = {
     "model": "LOG_AGENT_MODEL",
     "subagent_model": "LOG_AGENT_SUBAGENT_MODEL",
+    "post_model": "LOG_AGENT_POST_MODEL",
     "fallback_models": "LOG_AGENT_FALLBACK_MODELS",
     "base_url": "OPENAI_BASE_URL",
     "timeout": "LOG_AGENT_TIMEOUT",
@@ -41,6 +42,7 @@ FIELDS: dict[str, str | None] = {
 LABELS = {
     "model": "默认模型",
     "subagent_model": "子代理模型",
+    "post_model": "收尾模型",
     "fallback_models": "备用模型",
     "base_url": "接口地址",
     "timeout": "请求超时",
@@ -51,7 +53,8 @@ LABELS = {
 }
 ENV_VARS = frozenset(env for env in FIELDS.values() if env)
 # 只经环境变量作用于 build_agent 的项：保存后改写进程环境变量即可生效（每次新建 agent 时读取）
-_ENV_APPLIED = ("timeout", "max_retries", "timezone", "subagent_model", "fallback_models", "experience_reflection")
+_ENV_APPLIED = ("timeout", "max_retries", "timezone", "subagent_model", "post_model", "fallback_models",
+                "experience_reflection")
 MEMORY_MODES = ("suggest", "explicit", "off")
 MAX_FALLBACK_MODELS = 5
 _HIDDEN_URL = "（地址含凭据，已隐藏）"
@@ -138,9 +141,9 @@ def validate_value(key: str, raw: Any) -> Any:
         return _switch(raw)
     if key == "fallback_models":
         return _model_list(raw)
-    if key in ("model", "subagent_model", "base_url", "timezone", "memory") and not isinstance(raw, str):
+    if key in ("model", "subagent_model", "post_model", "base_url", "timezone", "memory") and not isinstance(raw, str):
         raise ValueError("需要文本")
-    if key in ("model", "subagent_model"):
+    if key in ("model", "subagent_model", "post_model"):
         return _model_name(raw)
     if key == "base_url":
         from ..onboarding import unsafe_url_reason
@@ -204,7 +207,7 @@ def update_toml_text(text: str, updates: dict[str, Any]) -> str:
     try:
         before = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"用户级配置文件格式错误��请先手动修正：{exc}") from exc
+        raise ConfigError(f"用���级配置文件格式错误��请先手动修正：{exc}") from exc
 
     lines = text.splitlines()
     boundary = next((i for i, line in enumerate(lines) if _HEADER.match(line)), len(lines))
@@ -285,7 +288,8 @@ def _layer(path: Path | None) -> LoadedConfig:
 def _defaults(ctx: SettingsContext) -> dict[str, Any]:
     from ..netguard import DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 
-    return {"model": ctx.default_model, "subagent_model": None, "fallback_models": None, "base_url": None,
+    return {"model": ctx.default_model, "subagent_model": None, "post_model": None, "fallback_models": None,
+            "base_url": None,
             "timeout": DEFAULT_TIMEOUT, "max_retries": DEFAULT_MAX_RETRIES, "timezone": "UTC", "memory": "suggest",
             "experience_reflection": False}
 
@@ -392,7 +396,7 @@ def apply(ctx: SettingsContext, config: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 接口
+# ���口
 # ---------------------------------------------------------------------------
 
 

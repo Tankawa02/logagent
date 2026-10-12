@@ -22,7 +22,7 @@ OWNER = {"Authorization": f"Bearer {TOKEN}"}
 WRITE = {**OWNER, "X-Log-Agent-Request": "1"}
 KEY = "sk-test-0123456789abcdef"
 _ENV = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "LOG_AGENT_MODEL", "LOG_AGENT_TIMEOUT", "LOG_AGENT_MAX_RETRIES",
-        "LOG_AGENT_TIMEZONE", "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_FALLBACK_MODELS")
+        "LOG_AGENT_TIMEZONE", "LOG_AGENT_SUBAGENT_MODEL", "LOG_AGENT_POST_MODEL", "LOG_AGENT_FALLBACK_MODELS")
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +118,24 @@ def test_subagent_and_fallback_models_apply_to_new_agents(tmp_path: Path) -> Non
     client.put("/api/settings", headers=WRITE, json={"values": {"subagent_model": None, "fallback_models": ""}})
     assert "LOG_AGENT_SUBAGENT_MODEL" not in os.environ and "LOG_AGENT_FALLBACK_MODELS" not in os.environ
     assert "subagent_model" not in user_config_path().read_text(encoding="utf-8")
+
+
+def test_post_model_saves_and_applies_to_finishing_calls(tmp_path: Path) -> None:
+    client, _ = make_client(tmp_path)
+    assert client.get("/api/settings", headers=OWNER).json()["fields"]["post_model"]["effective"] is None
+
+    response = client.put("/api/settings", headers=WRITE, json={"values": {"post_model": "openai:flash"}})
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"]["post_model"]["value"] == "openai:flash"
+    assert 'post_model = "openai:flash"' in user_config_path().read_text(encoding="utf-8")
+    # build_agent / resolve_post_models 每次新建时读这个环境变量，所以之后的收尾调用立即换成这个模型
+    assert os.environ["LOG_AGENT_POST_MODEL"] == "openai:flash"
+
+    client.put("/api/settings", headers=WRITE, json={"values": {"post_model": ""}})
+    assert "LOG_AGENT_POST_MODEL" not in os.environ
+    assert "post_model" not in user_config_path().read_text(encoding="utf-8")
+    bad = client.put("/api/settings", headers=WRITE, json={"values": {"post_model": "bad model"}})
+    assert bad.status_code == 400 and "收尾模型" in bad.json()["detail"]
 
 
 def test_subagent_model_env_is_locked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
