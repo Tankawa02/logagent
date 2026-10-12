@@ -554,6 +554,27 @@ def eval_outcome(case: EvalCase, record: dict[str, Any]) -> str:
     return describe_turn(case.question, result, extra="\n".join(truth))
 
 
+def eval_context(case: EvalCase, record: dict[str, Any]) -> dict[str, Any]:
+    """评测运行的结构化摘要（见 experience.turn_context），附带标准答案与得分，网页上展示经验来历用。"""
+    from types import SimpleNamespace
+
+    from .experience import turn_context
+
+    expected = case.expected
+    truth = {
+        "assessment": expected.get("assessment") or "",
+        "root_cause": list(expected.get("root_cause") or []),
+        "keywords": list(expected.get("keywords") or []),
+        "score": record.get("score"),
+        "assessment_ok": record.get("assessment_ok"),
+        "root_cause_hit": record.get("root_cause_hit"),
+        "evidence_rate": record.get("evidence_rate"),
+    }
+    result = SimpleNamespace(analysis=record.get("analysis"), evidence_check=record.get("evidence_check"),
+                             tools=record.get("trail") or [], budget_hit=record.get("budget_hit"))
+    return turn_context(case.question, result, truth=truth)
+
+
 def reflect_on_eval(models: Any, store: Any, cases: list[EvalCase], results: list[dict[str, Any]],
                     batch: str) -> dict[str, Any]:
     """对训练集的每次运行复盘：给注入过的经验投票，提炼的新经验以候选身份记进这一批。"""
@@ -575,8 +596,17 @@ def reflect_on_eval(models: Any, store: Any, cases: list[EvalCase], results: lis
         if reflection is None:
             totals["errors"] += 1
             continue
-        summary = apply_reflection(store, reflection, injected, project=None, source=f"eval:{case.name}:{batch}",
-                                   origin="eval", allow_new=True, status="candidate", batch=batch)
+        source = f"eval:{case.name}:{batch}"
+        outcome = eval_outcome(case, record)
+        run_id = store.record_run(
+            origin="eval", source=source, project=None, context=eval_context(case, record), outcome=outcome,
+            injected=injected, route=record.get("experience_route") or "", reflection=reflection.model_dump(),
+            model=next((c["model"] for c in reversed(calls) if c.get("model")), ""),
+            link={"case": case.name, "batch": batch},
+        )
+        summary = apply_reflection(store, reflection, injected, project=None, source=source,
+                                   origin="eval", allow_new=True, status="candidate", batch=batch, run_id=run_id)
+        store.finish_run(run_id, summary)
         for key in ("added", "merged", "rejected", "retired"):
             totals[key] += summary[key]
         for verdict, count in summary["votes"].items():

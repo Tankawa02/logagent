@@ -179,11 +179,16 @@ def learn(
         gated = run_eval(second, jobs=jobs, on_result=_progress_printer(len(second), target / "gated.jsonl"))
         decision = gate_decision(baseline, gated, train_names, held_names, tolerance)
         decision["candidates"] = include
+        gate_detail = {"batch": batch, "accepted": decision["accepted"], "dry_run": dry_run,
+                       "tolerance": decision["tolerance"], "groups": decision["groups"], "cases": decision["cases"],
+                       "candidates": include, "model": name}
+        for experience_id in include:
+            store.log_event(experience_id, "gate", gate_detail)
         if dry_run:
             verdict = "（--dry-run：不改变经验状态）"
         elif decision["accepted"]:
             for experience_id in include:
-                store.set_status(experience_id, "active")
+                store.set_status(experience_id, "active", by="gate")
             verdict = f"{glyphs.ok} 通过门控：{len(include)} 条候选已生效"
         else:
             # 这一批新提炼的没通过就删掉；--with-pending 带进来的候选保持原状，留给用户自己决定

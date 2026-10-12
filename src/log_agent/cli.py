@@ -338,6 +338,8 @@ def analyze(
     try:
         mem = open_session(memory.value, code_paths, session_name)
         exp = open_experience(code_paths, session_name or "analyze")
+        if exp is not None and saved_session:
+            exp.turn = 1  # analyze 每次都新开会话（同名已存在时直接报错），只有一轮
         reset_cursor_line()
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         _extra_rows(rows, token_budget, baseline_window)

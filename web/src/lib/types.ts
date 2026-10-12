@@ -556,6 +556,93 @@ export interface ExperienceItem {
   promotable: boolean
 }
 
+export interface ExperienceStep {
+  name: string
+  args: string
+  failed: boolean
+  subagent: boolean
+}
+
+export interface ExperienceTurnContext {
+  question?: string
+  assessment?: string
+  confidence?: string
+  conclusion?: string
+  issues?: string[]
+  evidence?: { total: number; verified: number; shifted: number; mismatch: number; unresolved: number }
+  step_count?: number
+  steps?: ExperienceStep[]
+  budget_hit?: boolean
+  truth?: {
+    assessment: string
+    root_cause: string[]
+    keywords: string[]
+    score: number | null
+    assessment_ok: boolean | null
+    root_cause_hit: boolean | null
+    evidence_rate: number | null
+  } | null
+}
+
+export interface ExperienceDraftOut {
+  title: string
+  trigger: string
+  strategy: string
+  scope: 'global' | 'project'
+}
+
+export interface ExperienceRun {
+  id: number
+  origin: 'eval' | 'online'
+  source: string
+  project: string | null
+  link: { session?: string; turn?: number; case?: string; batch?: string } | null
+  context: ExperienceTurnContext
+  outcome: string
+  injected: { id: number; title: string }[]
+  route: string
+  reflection: { votes?: { id: number; verdict: 'helpful' | 'harmful' | 'unused' }[]; new?: ExperienceDraftOut[] }
+  summary: { added?: number[]; merged?: number[]; rejected?: string[]; retired?: number[] }
+  model: string
+  created_at: string
+}
+
+export interface GateGroup {
+  before: number | null
+  after: number | null
+}
+
+export type ExperienceEvent = {
+  id: number
+  run_id: number | null
+  created_at: string
+} & (
+  | { kind: 'created'; detail: { origin: string; source: string; status: string; batch: string; scope?: string } }
+  | { kind: 'merged'; detail: { origin: string; source: string; counted_helpful: boolean; draft: Omit<ExperienceDraftOut, 'scope'> } }
+  | { kind: 'helpful' | 'harmful'; detail: { source: string } }
+  | { kind: 'status'; detail: { from: ExperienceStatus; to: ExperienceStatus; by: string } }
+  | {
+      kind: 'gate'
+      detail: {
+        batch: string
+        accepted: boolean
+        dry_run: boolean
+        tolerance: number
+        model?: string
+        groups: { train: GateGroup; holdout: GateGroup; all: GateGroup }
+        cases: { case: string; split: 'train' | 'holdout'; before: number | null; after: number | null }[]
+        candidates: number[]
+      }
+    }
+  | { kind: 'edited'; detail: { before: { title: string; trigger: string; strategy: string } } }
+)
+
+export interface ExperienceHistory {
+  entry: ExperienceItem
+  events: ExperienceEvent[]
+  runs: ExperienceRun[]
+}
+
 export interface ExperienceIndex {
   path: string
   enabled: boolean

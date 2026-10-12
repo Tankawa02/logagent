@@ -72,6 +72,15 @@ def register(app: FastAPI, *, require_owner: Callable[..., None], experience_pat
             "entries": [e.to_dict() for e in entries],
         }
 
+    @app.get("/api/experience/{experience_id}/history", dependencies=owner)
+    def experience_history(experience_id: int) -> dict[str, Any]:
+        with store() as s:
+            entry = s.get(experience_id)
+            if entry is None:
+                raise HTTPException(404, f"没有编号为 E{experience_id} 的经验")
+            history = s.history(experience_id)
+        return {"entry": entry.to_dict(), "events": history["events"], "runs": list(history["runs"].values())}
+
     @app.post("/api/experience", dependencies=owner)
     def experience_create(body: ExperienceCreate) -> dict[str, Any]:
         with store() as s:

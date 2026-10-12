@@ -237,6 +237,51 @@ def test_online_reflection_adds_candidates_only_when_evidence_passed(store: Expe
     assert store.get(entry.id).helpful == 1
 
 
+def test_online_reflection_records_provenance(store: ExperienceStore) -> None:
+    session = ExperienceSession(store=store, project=None, reflect=True, source="s1", turn=3)
+    tools = [{"name": "grep_logs", "args": {"pattern": "token=sk-abcdefghijklmnopqrstuvwx"}, "failed": False},
+             {"name": "read_code", "args": {"path": "pool.py"}, "failed": True, "subagent": True}]
+    summary, _ = session.reflect_turn([FakeModel(_reflection())], "连接池耗尽告警", _result(PASSED, tools))
+    new_id = summary["added"][0]
+
+    history = store.history(new_id)
+    (created,) = history["events"]
+    assert created["kind"] == "created" and created["detail"]["origin"] == "online"
+    run = history["runs"][created["run_id"]]
+    assert run["link"] == {"session": "s1", "turn": 3}
+    assert run["context"]["question"] == "连接池耗尽告警" and run["context"]["step_count"] == 2
+    assert [s["name"] for s in run["context"]["steps"]] == ["grep_logs", "read_code"]
+    assert run["context"]["steps"][1]["failed"] and run["context"]["steps"][1]["subagent"]
+    assert "sk-abcdefghijklmnopqrstuvwx" not in run["context"]["steps"][0]["args"]
+    assert "连接池耗尽告警" in run["outcome"] and run["reflection"]["new"]
+    assert run["summary"]["added"] == summary["added"]
+
+    store.set_status(new_id, "active")
+    store.update(new_id, strategy="先按 SQL 指纹聚合耗时，再看执行计划")
+    kinds = [e["kind"] for e in store.history(new_id)["events"]]
+    assert kinds == ["created", "status", "edited"]
+    assert store.history(new_id)["events"][1]["detail"] == {"from": "candidate", "to": "active", "by": "manual"}
+
+    # 第二次相似复盘：合并进来并关联到新的复盘记录；之后被注入时投的票也带上记录
+    other = ExperienceSession(store=store, project=None, reflect=True, source="s2", turn=1)
+    other.injected = [store.get(new_id)]
+    other.reflect_turn([FakeModel(_reflection(new_id))], "接口超时", _result(PASSED))
+    events = store.history(new_id)["events"]
+    assert [e["kind"] for e in events][-2:] == ["helpful", "merged"]
+    assert events[-1]["run_id"] == events[-2]["run_id"] != created["run_id"]
+
+
+def test_history_cleans_up_with_entry_and_orphan_runs(store: ExperienceStore) -> None:
+    session = ExperienceSession(store=store, project=None, reflect=True, source="s1")
+    summary, _ = session.reflect_turn([FakeModel(_reflection())], "q", _result(PASSED))
+    new_id = summary["added"][0]
+    store.remove(new_id)
+    assert store.history(new_id) == {"events": [], "runs": {}}
+    # 下一次复盘时清理不再被引用的记录
+    store.record_run(origin="online", source="s", project=None, context={}, outcome="", injected=[])
+    assert store.conn.execute("SELECT COUNT(*) FROM experience_runs").fetchone()[0] == 1
+
+
 def test_online_reflection_skips_model_call_when_nothing_to_do(store: ExperienceStore) -> None:
     session = ExperienceSession(store=store, project=None, reflect=True)
     model = FakeModel(_reflection())
@@ -380,5 +425,10 @@ def test_experience_api_review_flow(tmp_path: Path) -> None:
     assert created["created"] and created["entry"]["status"] == "active"
     edited = client.patch(f"/api/experience/{candidate.id}", json={"strategy": "核对借出 / 归还是否配对"}, headers=write)
     assert edited.json()["strategy"] == "核对借出 / 归还是否配对"
+    assert client.get(f"/api/experience/{candidate.id}/history").status_code == 401
+    history = client.get(f"/api/experience/{candidate.id}/history", headers=owner).json()
+    assert history["entry"]["id"] == candidate.id
+    assert [e["kind"] for e in history["events"]] == ["created", "status", "edited"]
+    assert client.get("/api/experience/9999/history", headers=owner).status_code == 404
     assert client.delete(f"/api/experience/{candidate.id}", headers=write).json() == {"deleted": candidate.id}
     assert client.delete(f"/api/experience/{candidate.id}", headers=write).status_code == 404

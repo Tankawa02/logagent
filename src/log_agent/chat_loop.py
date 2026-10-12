@@ -71,6 +71,10 @@ def run_chat_loop(
         payload = {"messages": [{"role": "user", "content": message}]}
         # /log、/code 等命令会改动日志和源码列表，每轮按当前列表重新登记工具可访问的范围
         set_scope(state.log_paths, state.code_paths)
+        experience = getattr(agent, "log_agent_experience", None)
+        if experience is not None:
+            current = state.store.get(state.session)
+            experience.turn = (current.turns if current else 0) + 1
         result = StreamRenderer(verbose=verbose, linker=state.linker, budget=token_budget).run(
             agent, payload, config=_run_config(max_steps, state.session)
         )
