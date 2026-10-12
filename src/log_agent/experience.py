@@ -73,7 +73,37 @@ CREATE TABLE IF NOT EXISTS experiences (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS experiences_scope ON experiences(status, project);
+-- 一次复盘的完整上下文：排查过程、复盘模型收到的原文与输出、落库结果，供人工追溯经验的来历
+CREATE TABLE IF NOT EXISTS experience_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origin TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    project TEXT,
+    link TEXT NOT NULL DEFAULT '{}',
+    context TEXT NOT NULL DEFAULT '{}',
+    outcome TEXT NOT NULL DEFAULT '',
+    injected TEXT NOT NULL DEFAULT '[]',
+    route TEXT NOT NULL DEFAULT '',
+    reflection TEXT NOT NULL DEFAULT '{}',
+    summary TEXT NOT NULL DEFAULT '{}',
+    model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+-- 每条经验的生命周期：提炼、合并、投票、门控、状态变化、人工编辑
+CREATE TABLE IF NOT EXISTS experience_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experience_id INTEGER NOT NULL,
+    run_id INTEGER,
+    kind TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS experience_events_entry ON experience_events(experience_id, id);
 """
+
+EVENT_KINDS = ("created", "merged", "helpful", "harmful", "status", "gate", "edited")
+# 每条经验最多保留的事件数（"created" 总是保留）；复盘记录不再被任何事件引用时清理
+MAX_EVENTS_PER_ENTRY = 200
 
 # 只和本次故障有关的细节（时间、ID、路径、行号）不该进经验；链接与"改写规则"的话术更可能来自注入
 _UNSAFE = re.compile(
@@ -212,10 +242,11 @@ class ExperienceStore:
     # ---- 写入（整理角色）---------------------------------------------------
 
     def add(self, title: str, trigger: str, strategy: str, project: str | None, *, status: str = "candidate",
-            origin: str = "manual", source: str = "", batch: str = "") -> tuple[Experience, bool]:
+            origin: str = "manual", source: str = "", batch: str = "", run_id: int | None = None,
+            scope: str = "") -> tuple[Experience, bool]:
         """新增一条经验；与同范围内未淘汰的经验相似时并入已有条目（生效条目记一张有用票）。
 
-        返回 (条目, 是否新建)。内容不安全时抛 ValueError。
+        返回 (条目, 是否新建)。内容不安全时抛 ValueError。run_id 是产生它的复盘记录（见 record_run）。
         """
         if status not in STATUSES or origin not in ORIGINS:
             raise ValueError("状态或来源不合法")
@@ -237,6 +268,15 @@ class ExperienceStore:
                     "UPDATE experiences SET helpful = helpful + ?, sources = ?, updated_at = ? WHERE id = ?",
                     (bump, json.dumps(sources, ensure_ascii=False), now, existing.id),
                 )
+                same_run = run_id is not None and self.conn.execute(
+                    "SELECT 1 FROM experience_events WHERE experience_id = ? AND run_id = ? "
+                    "AND kind IN ('created', 'merged')", (existing.id, run_id),
+                ).fetchone()
+                if not same_run:
+                    self._log(existing.id, "merged", {
+                        "origin": origin, "source": source, "counted_helpful": bool(bump),
+                        "draft": {"title": title, "trigger": trigger, "strategy": strategy},
+                    }, run_id)
                 return self.get(existing.id), False  # type: ignore[return-value]
             cur = self.conn.execute(
                 "INSERT INTO experiences (project, title, trigger, strategy, status, origin, batch, sources, "
@@ -245,6 +285,8 @@ class ExperienceStore:
                  json.dumps([source] if source else [], ensure_ascii=False), now, now),
             )
             new_id = int(cur.lastrowid)
+            self._log(new_id, "created", {"origin": origin, "source": source, "status": status, "batch": batch,
+                                          "scope": scope}, run_id)
             self._cap(project)
         return self.get(new_id), True  # type: ignore[return-value]
 
@@ -259,30 +301,36 @@ class ExperienceStore:
         reason = unsafe_reason(title, trigger, strategy)
         if reason:
             raise ValueError(reason)
+        before = {"title": current.title, "trigger": current.trigger, "strategy": current.strategy}
+        after = {"title": title, "trigger": trigger, "strategy": strategy}
         with self.conn:
             self.conn.execute(
                 "UPDATE experiences SET title = ?, trigger = ?, strategy = ?, updated_at = ? WHERE id = ?",
                 (title, trigger, strategy, _now(), experience_id),
             )
+            if before != after:
+                self._log(experience_id, "edited", {"before": before})
         return self.get(experience_id)
 
-    def set_status(self, experience_id: int, status: str) -> Experience | None:
+    def set_status(self, experience_id: int, status: str, *, by: str = "manual") -> Experience | None:
+        """改状态并记一条事件；by 说明是谁改的：manual（人工）/ gate（离线门控）/ cli 等。"""
         if status not in STATUSES:
             raise ValueError("状态不合法")
+        current = self.get(experience_id)
+        if current is None:
+            return None
         with self.conn:
-            cur = self.conn.execute(
+            self.conn.execute(
                 "UPDATE experiences SET status = ?, updated_at = ? WHERE id = ?", (status, _now(), experience_id)
             )
-        if not cur.rowcount:
-            return None
+            if current.status != status:
+                self._log(experience_id, "status", {"from": current.status, "to": status, "by": by})
         if status == "active":
-            entry = self.get(experience_id)
-            if entry is not None:
-                with self.conn:
-                    self._cap(entry.project)
+            with self.conn:
+                self._cap(current.project)
         return self.get(experience_id)
 
-    def vote(self, experience_id: int, verdict: str, source: str = "") -> Experience | None:
+    def vote(self, experience_id: int, verdict: str, source: str = "", run_id: int | None = None) -> Experience | None:
         """给生效经验投票；有害票达到门槛时自动淘汰。同一来源（会话 / 案例）对同一条只计一次。"""
         if verdict not in ("helpful", "harmful"):
             return self.get(experience_id)
@@ -298,10 +346,13 @@ class ExperienceStore:
                 f"UPDATE experiences SET {verdict} = {verdict} + 1, sources = ?, updated_at = ? WHERE id = ?",
                 (json.dumps(sources, ensure_ascii=False), _now(), experience_id),
             )
-            self.conn.execute(
+            self._log(experience_id, verdict, {"source": source}, run_id)
+            cur = self.conn.execute(
                 "UPDATE experiences SET status = 'retired' WHERE id = ? AND harmful >= ? AND harmful > helpful",
                 (experience_id, RETIRE_HARMFUL),
             )
+            if cur.rowcount:
+                self._log(experience_id, "status", {"from": "active", "to": "retired", "by": "harmful"}, run_id)
         return self.get(experience_id)
 
     def remove(self, experience_id: int) -> Experience | None:
@@ -310,7 +361,85 @@ class ExperienceStore:
             return None
         with self.conn:
             self.conn.execute("DELETE FROM experiences WHERE id = ?", (experience_id,))
+            self.conn.execute("DELETE FROM experience_events WHERE experience_id = ?", (experience_id,))
         return entry
+
+    # ---- 来历：复盘记录与事件 ------------------------------------------------
+
+    def log_event(self, experience_id: int, kind: str, detail: dict[str, Any] | None = None,
+                  run_id: int | None = None) -> None:
+        with self.conn:
+            self._log(experience_id, kind, detail or {}, run_id)
+
+    def _log(self, experience_id: int, kind: str, detail: dict[str, Any], run_id: int | None = None) -> None:
+        """在调用方的事务里写一条事件（不单独提交）。"""
+        if kind not in EVENT_KINDS:
+            raise ValueError(f"未知的事件类型：{kind}")
+        self.conn.execute(
+            "INSERT INTO experience_events (experience_id, run_id, kind, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (experience_id, run_id, kind, json.dumps(detail, ensure_ascii=False, default=str), _now()),
+        )
+        self.conn.execute(
+            "DELETE FROM experience_events WHERE experience_id = ? AND kind != 'created' AND id NOT IN ("
+            "SELECT id FROM experience_events WHERE experience_id = ? ORDER BY id DESC LIMIT ?)",
+            (experience_id, experience_id, MAX_EVENTS_PER_ENTRY),
+        )
+
+    def record_run(self, *, origin: str, source: str, project: str | None, context: dict[str, Any], outcome: str,
+                   injected: list[Experience], route: str = "", reflection: dict[str, Any] | None = None,
+                   model: str = "", link: dict[str, Any] | None = None) -> int:
+        """保存一次复盘的上下文，返回编号；之后的事件用它关联到"是哪次排查、怎么得出的"。
+
+        同时清理不再被任何事件引用的旧记录（只投了"没用上"、或提炼的内容全被拒绝的复盘）。
+        """
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO experience_runs (origin, source, project, link, context, outcome, injected, route, "
+                "reflection, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (origin, source, project, json.dumps(link or {}, ensure_ascii=False),
+                 json.dumps(context, ensure_ascii=False, default=str), outcome,
+                 json.dumps([{"id": e.id, "title": e.title} for e in injected], ensure_ascii=False), route,
+                 json.dumps(reflection or {}, ensure_ascii=False, default=str), model, _now()),
+            )
+            run_id = int(cur.lastrowid)
+            self.conn.execute(
+                "DELETE FROM experience_runs WHERE id != ? AND id NOT IN ("
+                "SELECT run_id FROM experience_events WHERE run_id IS NOT NULL)", (run_id,),
+            )
+        return run_id
+
+    def finish_run(self, run_id: int, summary: dict[str, Any]) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE experience_runs SET summary = ? WHERE id = ?",
+                              (json.dumps(summary, ensure_ascii=False, default=str), run_id))
+
+    def history(self, experience_id: int) -> dict[str, Any]:
+        """一条经验的来历：按时间排列的事件，以及事件引用到的复盘记录。"""
+        events = [
+            {"id": r[0], "run_id": r[1], "kind": r[2], "detail": json.loads(r[3] or "{}"), "created_at": r[4]}
+            for r in self.conn.execute(
+                "SELECT id, run_id, kind, detail, created_at FROM experience_events WHERE experience_id = ? "
+                "ORDER BY id", (experience_id,),
+            )
+        ]
+        run_ids = sorted({e["run_id"] for e in events if e["run_id"] is not None})
+        runs: dict[int, dict[str, Any]] = {}
+        if run_ids:
+            rows = self.conn.execute(
+                "SELECT id, origin, source, project, link, context, outcome, injected, route, reflection, summary, "
+                f"model, created_at FROM experience_runs WHERE id IN ({', '.join('?' for _ in run_ids)})", run_ids,
+            ).fetchall()
+            for row in rows:
+                (run_id, origin, source, project, link, context, outcome, injected, route, reflection, summary,
+                 model, created) = row
+                runs[run_id] = {
+                    "id": run_id, "origin": origin, "source": source, "project": project,
+                    "link": json.loads(link or "{}") or None, "context": json.loads(context or "{}"),
+                    "outcome": outcome, "injected": json.loads(injected or "[]"), "route": route,
+                    "reflection": json.loads(reflection or "{}"), "summary": json.loads(summary or "{}"),
+                    "model": model, "created_at": created,
+                }
+        return {"events": events, "runs": runs}
 
     def _same_scope(self, project: str | None, statuses: tuple[str, ...]) -> list[Experience]:
         return [e for e in self.list(project, status=statuses) if e.project == project]
@@ -321,10 +450,17 @@ class ExperienceStore:
         if len(actives) > MAX_ACTIVE_PER_SCOPE:
             weakest = sorted(actives, key=lambda e: (e.net, e.updated_at, e.id))[: len(actives) - MAX_ACTIVE_PER_SCOPE]
             self.conn.executemany("UPDATE experiences SET status = 'retired' WHERE id = ?", [(e.id,) for e in weakest])
+            for entry in weakest:
+                self._log(entry.id, "status", {"from": "active", "to": "retired", "by": "cap"})
+        keep = ("SELECT id FROM experiences WHERE status = 'candidate' AND project IS ? "
+                "ORDER BY updated_at DESC, id DESC LIMIT ?")
         self.conn.execute(
-            "DELETE FROM experiences WHERE status = 'candidate' AND project IS ? AND id NOT IN ("
-            "SELECT id FROM experiences WHERE status = 'candidate' AND project IS ? ORDER BY updated_at DESC, id DESC "
-            "LIMIT ?)",
+            "DELETE FROM experience_events WHERE experience_id IN (SELECT id FROM experiences WHERE "
+            f"status = 'candidate' AND project IS ? AND id NOT IN ({keep}))",
+            (project, project, MAX_CANDIDATES_PER_SCOPE),
+        )
+        self.conn.execute(
+            f"DELETE FROM experiences WHERE status = 'candidate' AND project IS ? AND id NOT IN ({keep})",
             (project, project, MAX_CANDIDATES_PER_SCOPE),
         )
 
@@ -472,6 +608,8 @@ class ExperienceSession:
     project: str | None
     reflect: bool = False
     source: str = ""
+    # 网页会话里本轮的轮次号：复盘记录据此链接到该轮的 trace；CLI 下为 None
+    turn: int | None = None
     # 离线门控时额外注入的候选条目
     include: frozenset[int] = frozenset()
     # 按语义挑选经验用的模型（build_agent 填入收尾模型）；None 时只做字面匹配
@@ -536,10 +674,18 @@ class ExperienceSession:
         reflection, calls = run_reflection(models, outcome, self.injected, allow_new=passed)
         if reflection is None:
             return {"error": "复盘未返回可用结果", "added": [], "votes": {}}, calls
-        summary = apply_reflection(
-            self.store, reflection, self.injected, project=self.project, source=self.source or "online",
-            origin="online", allow_new=passed,
+        source = self.source or "online"
+        link = {"session": self.source, "turn": self.turn} if self.source and self.turn else None
+        run_id = self.store.record_run(
+            origin="online", source=source, project=self.project, context=turn_context(question, result),
+            outcome=outcome, injected=self.injected, route=self.route, reflection=reflection.model_dump(),
+            model=_reflection_model(calls), link=link,
         )
+        summary = apply_reflection(
+            self.store, reflection, self.injected, project=self.project, source=source,
+            origin="online", allow_new=passed, run_id=run_id,
+        )
+        self.store.finish_run(run_id, summary)
         return summary, calls
 
 
@@ -610,6 +756,56 @@ def _trail(tools: list[Any], limit: int = 40) -> list[str]:
     return lines
 
 
+def _redact_tree(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact.redact_log(value)
+    if isinstance(value, list):
+        return [_redact_tree(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _redact_tree(v) for k, v in value.items()}
+    return value
+
+
+def _field(record: Any, name: str, default: Any = None) -> Any:
+    return record.get(name, default) if isinstance(record, dict) else getattr(record, name, default)
+
+
+def turn_context(question: str, result: Any, *, truth: dict[str, Any] | None = None,
+                 max_steps: int = 200) -> dict[str, Any]:
+    """一轮排查的结构化摘要（脱敏），和复盘输入一起存进复盘记录，网页上据此还原"这条经验是怎么来的"。"""
+    analysis = getattr(result, "analysis", None) or {}
+    check = getattr(result, "evidence_check", None) or {}
+    tools = list(getattr(result, "tools", None) or [])
+    steps = [
+        {
+            "name": str(_field(record, "name", "") or ""),
+            "args": json.dumps(_field(record, "args") or {}, ensure_ascii=False)[:300],
+            "failed": bool(_field(record, "failed")),
+            "subagent": bool(_field(record, "subagent")),
+        }
+        for record in tools[:max_steps]
+    ]
+    return _redact_tree({
+        "question": question[:1500],
+        "assessment": analysis.get("assessment") or "",
+        "confidence": analysis.get("confidence") or "",
+        "conclusion": (analysis.get("conclusion") or "")[:1200],
+        "issues": [str(i.get("title", "")) for i in (analysis.get("issues") or [])[:8]],
+        "evidence": {k: int(check.get(k) or 0) for k in ("total", "verified", "shifted", "mismatch", "unresolved")},
+        "step_count": len(tools),
+        "steps": steps,
+        "budget_hit": bool(getattr(result, "budget_hit", False)),
+        "truth": truth,
+    })
+
+
+def _reflection_model(calls: list[dict]) -> str:
+    for call in reversed(calls):
+        if call.get("model"):
+            return str(call["model"])
+    return ""
+
+
 def describe_turn(question: str, result: Any, *, extra: str = "") -> str:
     """把一轮的过程和结果压缩成复盘输入（统一脱敏、截断）。"""
     analysis = getattr(result, "analysis", None) or {}
@@ -649,7 +845,7 @@ def run_reflection(models: Any, outcome: str, injected: list[Experience], *, all
 
 def apply_reflection(store: ExperienceStore, reflection: Reflection, injected: list[Experience], *,
                      project: str | None, source: str, origin: str, allow_new: bool,
-                     status: str = "candidate", batch: str = "") -> dict[str, Any]:
+                     status: str = "candidate", batch: str = "", run_id: int | None = None) -> dict[str, Any]:
     """整理角色：只接受对注入条目的投票；新条目经安全检查、去重后按给定状态入库。"""
     allowed = {e.id for e in injected}
     votes = {"helpful": 0, "harmful": 0}
@@ -657,7 +853,7 @@ def apply_reflection(store: ExperienceStore, reflection: Reflection, injected: l
     for vote in reflection.votes:
         if vote.id not in allowed or vote.verdict == "unused":
             continue
-        entry = store.vote(vote.id, vote.verdict, source)
+        entry = store.vote(vote.id, vote.verdict, source, run_id)
         if entry is not None:
             votes[vote.verdict] += 1
             if entry.status == "retired":
@@ -670,7 +866,8 @@ def apply_reflection(store: ExperienceStore, reflection: Reflection, injected: l
             scope = project if draft.scope == "project" else None
             try:
                 entry, created = store.add(draft.title, draft.trigger, draft.strategy, scope, status=status,
-                                           origin=origin, source=source, batch=batch)
+                                           origin=origin, source=source, batch=batch, run_id=run_id,
+                                           scope=draft.scope)
             except ValueError as exc:
                 rejected.append(str(exc))
                 continue

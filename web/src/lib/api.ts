@@ -1,5 +1,6 @@
 import type {
   ConnectionTestResult,
+  ExperienceHistory,
   ExperienceIndex,
   ExperienceItem,
   Settings,
@@ -191,6 +192,7 @@ export const api = {
       body: JSON.stringify({ permanent }),
     }),
   experience: () => request<ExperienceIndex>('/api/experience'),
+  experienceHistory: (id: number) => request<ExperienceHistory>(`/api/experience/${id}/history`),
   addExperience: (body: { title: string; trigger: string; strategy: string; project: string | null }) =>
     request<{ created: boolean; entry: ExperienceItem }>('/api/experience', {
       method: 'POST',

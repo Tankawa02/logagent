@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Archive, ArchiveRestore, Check, Lightbulb, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { Archive, ArchiveRestore, Check, ChevronDown, History, Lightbulb, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ExperienceHistory } from '../components/ExperienceHistory'
 import { useConfirm, useToast } from '../components/Feedback'
 import { MEMORY_FIELD } from '../components/MemoryCandidate'
 import { Select } from '../components/Select'
@@ -143,6 +144,8 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const historyId = useId()
   const [draft, setDraft] = useState<Draft>({ title: entry.title, trigger: entry.trigger, strategy: entry.strategy })
 
   const status = useMutation({
@@ -172,7 +175,7 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
   const error = status.error ?? update.error ?? remove.error
 
   return (
-    <li className="group flex items-start gap-3 px-4 py-3">
+    <li className="group flex flex-wrap items-start gap-3 px-4 py-3">
       <span className="w-9 shrink-0 pt-0.5 text-right font-mono text-xs text-zinc-400">E{entry.id}</span>
       <div className="min-w-0 flex-1 space-y-1.5">
         {editing ? (
@@ -224,6 +227,17 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
           </span>
           <span aria-hidden>·</span>
           <span>{entry.updated_at.slice(0, 16)}</span>
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            aria-expanded={showHistory}
+            aria-controls={historyId}
+            className="ml-1 inline-flex items-center gap-1 rounded px-1 font-medium text-brand-600 hover:underline dark:text-brand-400"
+          >
+            <History className="h-3.5 w-3.5" aria-hidden />
+            {showHistory ? '收起来历' : '查看来历'}
+            <ChevronDown className={`h-3 w-3 transition-transform ${showHistory ? 'rotate-180' : ''}`} aria-hidden />
+          </button>
         </div>
         {error && <ErrorBox error={error} />}
       </div>
@@ -274,6 +288,11 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
               </IconButton>
             </div>
           )}
+        </div>
+      )}
+      {showHistory && (
+        <div id={historyId} className="min-w-0 basis-full border-t border-zinc-100 pt-3 sm:pl-12 dark:border-zinc-800">
+          <ExperienceHistory entry={entry} />
         </div>
       )}
     </li>
