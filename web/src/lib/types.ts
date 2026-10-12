@@ -278,7 +278,7 @@ export interface Meta {
 }
 
 export type SettingKey =
-  'model' | 'subagent_model' | 'fallback_models' | 'base_url' | 'timeout' | 'max_retries' | 'timezone' | 'memory' | 'experience_reflection'
+  'model' | 'subagent_model' | 'post_model' | 'fallback_models' | 'base_url' | 'timeout' | 'max_retries' | 'timezone' | 'memory' | 'experience_reflection'
 export type SettingSource = 'default' | 'user' | 'user_section' | 'project' | 'env' | 'cli'
 export type SettingValue = string | number | boolean | null
 

@@ -13,6 +13,7 @@ const FIELD =
 const KEYS: SettingKey[] = [
   'model',
   'subagent_model',
+  'post_model',
   'fallback_models',
   'base_url',
   'timeout',
@@ -117,12 +118,16 @@ function SettingsForm({
   const checkModels = validateModel && !models.isFetching
   const modelUnknown = checkModels && changed.includes('model') && isUnknownModel(draft.model, modelOptions)
   const subagentUnknown = checkModels && changed.includes('subagent_model') && isUnknownModel(draft.subagent_model, modelOptions)
+  const postUnknown = checkModels && changed.includes('post_model') && isUnknownModel(draft.post_model, modelOptions)
   const unknownFallbacks =
     checkModels && changed.includes('fallback_models')
       ? splitModels(draft.fallback_models).filter((m) => isUnknownModel(m, modelOptions))
       : []
-  const invalidModel = modelUnknown || subagentUnknown || unknownFallbacks.length > 0
+  const invalidModel = modelUnknown || subagentUnknown || postUnknown || unknownFallbacks.length > 0
+  const invalidModelLabel = modelUnknown ? '默认模型' : subagentUnknown ? '子代理模型' : postUnknown ? '收尾模型' : '备用模型'
   const mainModel = draft.model.trim() || text(fields.model.effective)
+  // 收尾模型留空时沿用子代理模型，子代理也没配才用主模型（与 agent._post_models 一致）
+  const postDefault = draft.subagent_model.trim() || mainModel
 
   const save = useMutation({
     mutationFn: () => {
@@ -258,6 +263,28 @@ function SettingsForm({
             }
           </Row>
           <Row
+            label="收尾模型"
+            field={fields.post_model}
+            hint="每轮结束后的后处理调用：把报告整理成结构化结果、按证据回查修正结论，以及排查经验的挑选、复盘与合并。只做整理不做取证，适合配便宜、快、结构化输出稳定的模型。留空沿用子代理模型（未配置则用主模型）；它失败时依次退回主模型和备用模型。"
+          >
+            {(id) =>
+              fields.post_model.locked ? (
+                <input id={id} value={draft.post_model} disabled className={`${FIELD} font-mono`} />
+              ) : (
+                <ModelCombobox
+                  id={id}
+                  value={draft.post_model}
+                  onChange={set('post_model')}
+                  options={modelOptions}
+                  defaultModel={postDefault}
+                  loading={models.isFetching}
+                  validate={validateModel && changed.includes('post_model')}
+                  className={`${FIELD} font-mono`}
+                />
+              )
+            }
+          </Row>
+          <Row
             label="备用模型"
             field={fields.fallback_models}
             hint="主模型重试后仍失败（限流、5xx、超时）时按顺序切换，主代理和子代理都生效。多个用逗号分隔，最多 5 个。"
@@ -360,7 +387,7 @@ function SettingsForm({
           <Row
             label="在线经验复盘"
             field={fields.experience_reflection}
-            hint="每轮结束后多一次收尾模型调用，复盘本轮做法：给用到的经验投票，证据回查通过时提炼候选经验（需在「经验」页确认后才生效）。影响之后新开始的提问。"
+            hint="每轮结束后多一次收尾模型（见「模型分层」）调用，复盘本轮做法：给用到的经验投票，证据回查通过时提炼候选经验（需在「经验」页确认后才生效）。影响之后新开始的提问。"
           >
             {(id) => {
               const field = fields.experience_reflection
@@ -412,7 +439,7 @@ function SettingsForm({
             </span>
           ) : invalidModel ? (
             <span className="text-red-600 dark:text-red-400">
-              {modelUnknown ? '默认模型' : subagentUnknown ? '子代理模型' : '备用模型'}不在可用列表里，请重新选择
+              {invalidModelLabel}不在可用列表里，请重新选择
             </span>
           ) : dirty ? (
             <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
