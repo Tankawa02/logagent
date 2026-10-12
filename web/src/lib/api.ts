@@ -1,5 +1,6 @@
 import type {
   ConnectionTestResult,
+  ConsolidationResult,
   ExperienceHistory,
   ExperienceIndex,
   ExperienceItem,
@@ -208,6 +209,21 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
   deleteExperience: (id: number) => request<{ deleted: number }>(`/api/experience/${id}`, { method: 'DELETE', headers: CSRF_HEADERS }),
+  consolidateExperience: (project: string | null) =>
+    request<ConsolidationResult>('/api/experience/consolidate', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ project }),
+    }),
+  mergeExperience: (body: {
+    keep: number
+    ids: number[]
+    title: string
+    trigger: string
+    strategy: string
+    reason: string
+    model: string
+  }) => request<ExperienceItem>('/api/experience/merge', { method: 'POST', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
 }
 
 function skillUrl(source: string, name: string): string {

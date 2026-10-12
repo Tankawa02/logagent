@@ -12,17 +12,22 @@ import pytest
 from log_agent.evals import EvalCase, gate_decision, split_cases
 from log_agent.experience import (
     MAX_NEW_PER_RUN,
+    Consolidation,
+    ConsolidationGroup,
     ExperienceDraft,
     ExperiencePick,
     ExperienceSession,
     ExperienceStore,
     ExperienceVote,
     Reflection,
+    _unpack_draft,
     evidence_passed,
     open_session,
     promote_to_skill,
     prompt_section,
+    propose_consolidation,
     select_relevant,
+    summary_text,
     unsafe_reason,
 )
 
@@ -271,6 +276,106 @@ def test_online_reflection_records_provenance(store: ExperienceStore) -> None:
     assert events[-1]["run_id"] == events[-2]["run_id"] != created["run_id"]
 
 
+def test_online_reflection_sees_uninjected_candidates(store: ExperienceStore) -> None:
+    candidate, _ = store.add("慢查询导致超时", "接口超时且数据库耗时升高", "先按 SQL 指纹聚合耗时", None, origin="online")
+    session = ExperienceSession(store=store, project=None, reflect=True, source="s1")
+    model = FakeModel(Reflection(votes=[], new=[]))
+    session.reflect_turn([model], "接口超时", _result(PASSED))
+    assert f"[E{candidate.id}]" in model.calls[-1][1]["content"].split("## 已有经验")[1]
+
+
+def test_repeated_question_confirms_instead_of_adding(store: ExperienceStore) -> None:
+    draft = ExperienceDraft(title="慢查询先聚合 SQL 指纹", trigger="接口超时且数据库耗时升高",
+                            strategy="按 SQL 指纹聚合耗时，找出最慢的语句", scope="global")
+    first = ExperienceSession(store=store, project=None, reflect=True, source="s1")
+    summary, _ = first.reflect_turn([FakeModel(Reflection(votes=[], new=[draft]))], "接口为什么超时", _result(PASSED))
+    (eid,) = summary["added"]
+    assert store.prior_reflections(None, "接口为什么超时") == (1, [eid])
+    assert store.prior_reflections(None, "别的问题") == (0, [])
+
+    second = ExperienceSession(store=store, project=None, reflect=True, source="s2")
+    model = FakeModel(Reflection(votes=[], confirmed=[eid, 999], new=[]))
+    summary, _ = second.reflect_turn([model], "接口为什么超时", _result(PASSED))
+    prompt = model.calls[-1][1]["content"]
+    assert "之前已经复盘过 1 次" in prompt and f"E{eid}" in prompt.split("## 同一问题之前的复盘")[1]
+    assert summary["confirmed"] == [eid] and summary["added"] == []
+    assert "印证了 1 条已有经验" in summary_text(summary)
+    entry = store.get(eid)
+    assert entry.sources == ["s1", "s2"] and entry.helpful == 0  # 候选不记票
+    assert store.history(eid)["events"][-1]["kind"] == "confirmed"
+    # 同一来源不重复记
+    assert not store.confirm(eid, source="s2", origin="online")
+
+
+def test_unpack_draft_copied_catalog_format() -> None:
+    title, trigger, strategy = _unpack_draft(
+        "空值语义", "配置驱动的选择",
+        "决策输入里的空值：先确认分支语义｜适用：配置驱动的选择类故障｜做法：先读决策代码，看字段为空时落入哪个分支",
+    )
+    assert title == "决策输入里的空值：先确认分支语义"
+    assert trigger == "配置驱动的选择类故障"
+    assert strategy == "先读决策代码，看字段为空时落入哪个分支"
+    assert _unpack_draft("t", "g", "普通做法") == ("t", "g", "普通做法")
+
+
+# ---- 精简：合并同类经验 -------------------------------------------------------
+
+
+def _seed_similar(store: ExperienceStore) -> tuple[int, int, int]:
+    a, _ = store.add("连接池耗尽", "数据库连接池耗尽告警", "统计借出与归还日志是否配对", None, status="active")
+    b, _ = store.add("连接泄漏排查", "获取连接超时、活跃连接数打满", "沿未归还的调用路径找没有 close 的地方", None)
+    c, _ = store.add("先看第一条报错", "通用", "从时间最早的 ERROR 开始往后看", None, status="active")
+    store.vote(a.id, "helpful", "s1")
+    return a.id, b.id, c.id
+
+
+def test_merge_combines_votes_and_retires_absorbed(store: ExperienceStore) -> None:
+    a, b, c = _seed_similar(store)
+    store.vote(c, "helpful", "s2")
+    merged = store.merge(b, [a], title="连接池耗尽 / 连接泄漏", trigger="连接池耗尽或获取连接超时",
+                         strategy="先统计借出与归还是否配对，再沿未归还的调用路径找没有 close 的地方", reason="同一类故障")
+    assert merged.id == b and merged.status == "active" and merged.helpful == 1
+    assert store.get(a).status == "retired"
+    kinds = [e["kind"] for e in store.history(b)["events"]]
+    assert kinds[-2:] == ["consolidated", "status"]
+    consolidated = store.history(b)["events"][-2]["detail"]
+    assert consolidated["before"]["title"] == "连接泄漏排查" and consolidated["absorbed"][0]["id"] == a
+    assert store.history(a)["events"][-1]["detail"] == {"from": "active", "to": "retired", "by": "consolidated", "into": b}
+
+    with pytest.raises(ValueError, match="候选或生效"):
+        store.merge(c, [a], title="t", trigger="通用", strategy="s")
+    other, _ = store.add("项目专属", "通用", "只在本项目适用的做法", "/srv/app")
+    with pytest.raises(ValueError, match="同一范围"):
+        store.merge(c, [other.id], title="t", trigger="通用", strategy="s")
+    with pytest.raises(ValueError, match="行号"):
+        store.merge(c, [b], title="t", trigger="通用", strategy="看 pool.py:42")
+
+
+def test_propose_consolidation_validates_model_groups(store: ExperienceStore) -> None:
+    a, b, c = _seed_similar(store)
+    d, _ = store.add("磁盘写满", "磁盘空间告警", "先看哪个目录增长最快", None)
+    e, _ = store.add("日志轮转丢失", "日志文件突然变小", "先看轮转配置和保留天数", None)
+    model = FakeModel(Consolidation(groups=[
+        ConsolidationGroup(shared_step="核对借出与归还", ids=[b, a, a], title="连接池耗尽 / 泄漏", trigger="连接池耗尽或获取连接超时",
+                           strategy="先核对借出与归还是否配对，再找没有 close 的路径", reason="同一类故障"),
+        ConsolidationGroup(shared_step="核对借出与归还", ids=[a, c], title="重复使用", trigger="通用", strategy="随便", reason="r"),
+        ConsolidationGroup(shared_step="核对借出与归还", ids=[c, 999], title="不存在", trigger="通用", strategy="随便", reason="r"),
+        ConsolidationGroup(shared_step="看目录", ids=[c, d.id], title="通用混特定", trigger="通用", strategy="随便", reason="r"),
+        ConsolidationGroup(shared_step="", ids=[d.id, e.id], title="没有共同动作", trigger="磁盘", strategy="随便", reason="r"),
+        ConsolidationGroup(shared_step="看配置", ids=[d.id, e.id], title="带链接", trigger="磁盘", strategy="看 https://x.example", reason="r"),
+    ]))
+    proposals, rejected, calls = propose_consolidation([model], store.list(None))
+    assert calls and len(proposals) == 1 and len(rejected) == 5
+    assert any("通用经验" in r for r in rejected) and any("共同的排查动作" in r for r in rejected)
+    (proposal,) = proposals
+    assert proposal["shared_step"] == "核对借出与归还"
+    # 保留生效且净票更高的那条
+    assert proposal["keep"] == a and proposal["ids"] == [a, b] and proposal["status"] == "active"
+    assert [m["id"] for m in proposal["members"]] == [a, b]
+    assert "untrusted" in model.calls[-1][1]["content"]
+    assert propose_consolidation([model], store.list(None)[:1]) == ([], [], [])
+
+
 def test_history_cleans_up_with_entry_and_orphan_runs(store: ExperienceStore) -> None:
     session = ExperienceSession(store=store, project=None, reflect=True, source="s1")
     summary, _ = session.reflect_turn([FakeModel(_reflection())], "q", _result(PASSED))
@@ -323,7 +428,7 @@ def test_render_runs_reflection_phase_and_records_calls(store: ExperienceStore) 
     renderer = StreamRenderer(verbose=False)
     renderer._on_phase = phases.append
     post = SimpleNamespace(models=[FakeModel(_reflection())])
-    renderer._reflect(session, post, {"messages": [{"role": "user", "content": "接口超时"}]}, result)
+    renderer._reflect(session, post, "接口超时", result)
     assert phases == ["reflecting"]
     assert result.experience["added"] and any(c.get("purpose") == "reflect" for c in result.llm_calls)
 
@@ -432,3 +537,37 @@ def test_experience_api_review_flow(tmp_path: Path) -> None:
     assert client.get("/api/experience/9999/history", headers=owner).status_code == 404
     assert client.delete(f"/api/experience/{candidate.id}", headers=write).json() == {"deleted": candidate.id}
     assert client.delete(f"/api/experience/{candidate.id}", headers=write).status_code == 404
+
+
+def test_experience_api_consolidate_and_merge(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from log_agent.web.app import WebConfig, create_app
+
+    db = tmp_path / "experience.db"
+    seeded = ExperienceStore(db)
+    a, b, _ = _seed_similar(seeded)
+    seeded.close()
+    write = {"Authorization": "Bearer t", "X-Log-Agent-Request": "1"}
+    group = ConsolidationGroup(shared_step="核对借出与归还", ids=[a, b], title="连接池耗尽 / 泄漏", trigger="连接池耗尽或获取连接超时",
+                               strategy="先核对借出与归还是否配对，再找没有 close 的路径", reason="同一类故障")
+
+    offline = TestClient(create_app(WebConfig(db_path=tmp_path / "s.db", token="t", experience_path=db,
+                                              experience_models=lambda: [])))
+    assert offline.post("/api/experience/consolidate", json={"project": None}, headers=write).status_code == 503
+
+    client = TestClient(create_app(WebConfig(
+        db_path=tmp_path / "s.db", token="t", experience_path=db,
+        experience_models=lambda: [FakeModel(Consolidation(groups=[group]))],
+    )))
+    assert client.post("/api/experience/consolidate", json={}, headers={"Authorization": "Bearer t"}).status_code == 403
+    proposed = client.post("/api/experience/consolidate", json={"project": None}, headers=write).json()
+    assert proposed["scanned"] == 3 and len(proposed["proposals"]) == 1
+    proposal = proposed["proposals"][0]
+    body = {k: proposal[k] for k in ("keep", "ids", "title", "trigger", "strategy", "reason")}
+    assert client.post("/api/experience/merge", json={**body, "keep": 999}, headers=write).status_code == 422
+    merged = client.post("/api/experience/merge", json={**body, "title": "人工改过的标题"}, headers=write).json()
+    assert merged["id"] == a and merged["title"] == "人工改过的标题"
+    # 已经并入的条目不能再合并一次
+    assert client.post("/api/experience/merge", json=body, headers=write).status_code == 422
