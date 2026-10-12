@@ -110,6 +110,7 @@ export interface LlmCall {
   model: string
   finish_reason: string
   incomplete?: boolean
+  reasoning_tokens?: number | null
   /** 以下为 trace 明细，旧记录没有 */
   input_messages?: TraceMessage[]
   input_full?: boolean

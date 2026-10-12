@@ -339,7 +339,8 @@ class StreamRenderer:
             "input": None if incomplete else usage.get("input", 0),
             "output": None if incomplete else usage.get("output", 0),
             "cache_read": None if incomplete else usage.get("cache_read", 0),
-            "reasoning": None if incomplete else usage.get("reasoning", 0),
+            # 不能叫 reasoning：那个键是 detail 里的思考原文 {text, chars}，同名会被 token 数覆盖
+            "reasoning_tokens": None if incomplete else usage.get("reasoning", 0),
             "usage": None if incomplete else dict(usage),
             "tool_calls": None if incomplete else len(getattr(output, "tool_calls", None) or []),
             "model": str(metadata.get("model_name") or metadata.get("model") or ""),

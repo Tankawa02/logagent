@@ -2,7 +2,7 @@ import { ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronUp, Copy, Wrench }
 import type { ReactNode } from 'react'
 import { formatDuration } from '../lib/format'
 import { useCopy } from '../lib/hooks'
-import type { LlmCall, TraceMessage, ToolCall, ToolRequest } from '../lib/types'
+import type { ClippedText, LlmCall, TraceMessage, ToolCall, ToolRequest } from '../lib/types'
 
 export type Span =
   | { kind: 'llm'; key: string; label: string; start: number; seconds: number; call: LlmCall; index: number }
@@ -163,22 +163,31 @@ function LlmInput({ call, index }: { call: LlmCall; index: number }) {
   )
 }
 
+function clippedText(value: unknown): ClippedText | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { text, chars } = value as Partial<ClippedText>
+  if (typeof text !== 'string') return undefined
+  return { text, chars: typeof chars === 'number' ? chars : text.length }
+}
+
 function LlmOutput({ call, links }: { call: LlmCall; links?: SpanLinks }) {
   const hasText = Boolean(call.output_text?.text)
-  if (!call.output_text && !call.reasoning && !call.tool_requests) {
+  // 旧版本把思考 token 数（数字）写进了同名的 reasoning 字段，覆盖了思考原文
+  const reasoning = clippedText(call.reasoning)
+  if (!call.output_text && !reasoning && !call.tool_requests) {
     return <p className="text-zinc-500">这一轮由旧版本记录，没有保存模型输出。</p>
   }
   return (
     <div className="space-y-3">
-      {call.reasoning && (
+      {reasoning && (
         <details className="group">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 [&::-webkit-details-marker]:hidden">
             <Brain className="h-3.5 w-3.5 text-violet-500" aria-hidden />
             思考过程
-            <span className="font-normal text-zinc-400">{call.reasoning.chars.toLocaleString()} 字 · 点击展开</span>
+            <span className="font-normal text-zinc-400">{reasoning.chars.toLocaleString()} 字 · 点击展开</span>
           </summary>
           <div className="mt-1.5">
-            <TextBlock text={call.reasoning.text} chars={call.reasoning.chars} tone="muted" />
+            <TextBlock text={reasoning.text} chars={reasoning.chars} tone="muted" />
           </div>
         </details>
       )}

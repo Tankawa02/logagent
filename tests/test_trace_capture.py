@@ -34,6 +34,18 @@ def test_output_detail_keeps_text_reasoning_and_tool_requests() -> None:
     assert detail["tool_requests"] == [{"name": "search_logs", "args": {"pattern": "timeout"}, "id": "c2"}]
 
 
+def test_recorded_llm_call_keeps_reasoning_text_alongside_reasoning_tokens() -> None:
+    from log_agent.render import StreamRenderer
+
+    renderer = StreamRenderer(verbose=False)
+    message = AIMessage("结论", additional_kwargs={"reasoning_content": "先比对两个过滤器"})
+    usage = {"input": 100, "output": 40, "total": 140, "cache_read": 0, "cache_write": 0, "reasoning": 30}
+    renderer._record_llm_call(message, renderer.start, None, usage)
+    call = renderer.llm_calls[0]
+    assert call["reasoning"] == {"text": "先比对两个过滤器", "chars": len("先比对两个过滤器")}
+    assert call["reasoning_tokens"] == 30
+
+
 def test_tracker_queues_only_main_agent_inputs() -> None:
     tracker = SubagentTracker()
     tracker.on_chat_model_start({}, [[HumanMessage("主代理")]], run_id=uuid4(), parent_run_id=None)
