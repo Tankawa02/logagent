@@ -240,3 +240,31 @@ def test_invoke_structured_falls_back_to_next_model() -> None:
     assert parsed is not None and parsed.assessment == "clear"
     assert [c["model"] for c in calls] == ["cheap", "cheap", "main"]
     assert calls[-1]["fallback"] is True and calls[0]["fallback"] is False
+
+
+def test_invoke_structured_records_input_and_output_for_trace() -> None:
+    class _ToolCalling:
+        model_name = "flash"
+
+        def with_structured_output(self, schema, method, include_raw):
+            raw = AIMessage(content="", tool_calls=[{"name": "Analysis", "args": {"conclusion": "ok"}, "id": "c1"}],
+                            additional_kwargs={"reasoning_content": "先看结论"})
+            parsed = _Working().with_structured_output(schema, method, include_raw).invoke([])["parsed"]
+
+            class _Runnable:
+                def invoke(self, messages):
+                    return {"raw": raw, "parsed": parsed}
+
+            return _Runnable()
+
+    messages = [{"role": "system", "content": "你是结构化助手"}, {"role": "user", "content": "报告正文"}]
+    _, failed = invoke_structured([_Failing()], Analysis, messages, "structure")
+    assert [m["text"] for m in failed[0]["input_messages"]] == ["你是结构化助手", "报告正文"]
+    assert failed[0]["input_full"] is True and "output_text" not in failed[0]
+
+    _, calls = invoke_structured([_ToolCalling()], Analysis, messages, "structure")
+    call = calls[0]
+    assert [m["role"] for m in call["input_messages"]] == ["system", "user"]
+    assert call["tool_requests"][0]["args"] == {"conclusion": "ok"}
+    assert call["reasoning"] == {"text": "先看结论", "chars": 4}
+    assert "reasoning_tokens" in call
