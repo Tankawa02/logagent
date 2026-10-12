@@ -284,6 +284,7 @@ def _run_case(spec: RunSpec) -> dict[str, Any]:
     finally:
         if experience is not None:
             record["experience_ids"] = [e.id for e in experience.injected]
+            record["experience_route"] = experience.route
             experience.store.close()
     usage = payload.get("usage") or {}
     post_calls = [c for c in payload.get("llm_calls") or [] if c.get("purpose")]

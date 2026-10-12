@@ -13,6 +13,7 @@ from log_agent.evals import EvalCase, gate_decision, split_cases
 from log_agent.experience import (
     MAX_NEW_PER_RUN,
     ExperienceDraft,
+    ExperiencePick,
     ExperienceSession,
     ExperienceStore,
     ExperienceVote,
@@ -145,6 +146,64 @@ def test_session_keeps_selection_for_the_whole_conversation(store: ExperienceSto
     gated = ExperienceSession(store=store, project=None, include=frozenset({candidate.id}))
     gated.prompt_section([{"role": "user", "content": "短信发送失败"}])
     assert candidate.id in {e.id for e in gated.injected}
+
+
+def test_model_routing_bridges_abstract_triggers_and_concrete_questions(store: ExperienceStore) -> None:
+    fallback, _ = store.add("下线通道仍有流量查决策点", "已禁用或下线的下游仍出现在调用日志",
+                            "同时搜路由决策与回退关键词，核对默认链和禁用标记", None, status="active")
+    pool, _ = store.add(*POOL, None, status="active")
+    question = [{"role": "user", "content": "Twilio 8 月就停用了，为什么印尼号码还在走 Twilio？"}]
+    # 字面几乎没有交集，只靠二元组匹配挑不出来
+    assert select_relevant(store.list(None, status="active"), question[0]["content"]) == []
+    # 检索模型选中的编号里混进不存在的 999 和重复项，只保留经验库里真实的条目
+    router = FakeModel(ExperiencePick(ids=[fallback.id, 999, fallback.id]))  # type: ignore[arg-type]
+    session = ExperienceSession(store=store, project=None, selector=[router])
+    section = session.prompt_section(question)
+    assert session.injected == [fallback] and session.route == "model" and f"E{fallback.id}" in section
+    catalog = router.calls[0][1]["content"]
+    assert f"E{pool.id}｜" in catalog and 'untrusted="true"' in catalog
+    # 同一会话后续调用复用结果，不再调用检索模型；调用记录收尾时取走一次
+    session.prompt_section([*question, {"role": "assistant", "content": "…"}])
+    assert len(router.calls) == 1 and session.drain_calls() and session.drain_calls() == []
+
+
+def test_model_routing_does_not_inherit_the_running_agent_callbacks(store: ExperienceStore) -> None:
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    entry, _ = store.add(*POOL, None, status="active")
+    seen: list[object] = []
+
+    class Probe(FakeModel):
+        def with_structured_output(self, schema, method, include_raw):
+            inner = super().with_structured_output(schema, method, include_raw)
+
+            class Runnable:
+                def invoke(self, messages):
+                    seen.append(var_child_runnable_config.get())
+                    return inner.invoke(messages)
+
+            return Runnable()
+
+    session = ExperienceSession(store=store, project=None, selector=[Probe(ExperiencePick(ids=[entry.id]))])
+    token = var_child_runnable_config.set({"callbacks": ["agent-tracer"]})  # type: ignore[typeddict-item]
+    try:
+        session.prompt_section([{"role": "user", "content": "连接池耗尽"}])
+    finally:
+        var_child_runnable_config.reset(token)
+    assert seen == [None] and session.injected == [entry]
+
+
+def test_model_routing_failure_falls_back_to_lexical(store: ExperienceStore) -> None:
+    pool, _ = store.add(*POOL, None, status="active")
+    session = ExperienceSession(store=store, project=None, selector=[FakeModel(None)])
+    session.prompt_section([{"role": "user", "content": "数据库连接池耗尽告警"}])
+    assert session.injected == [pool] and session.route == "lexical"
+    # 经验库为空时不调用检索模型
+    empty = ExperienceStore(store.path.parent / "empty.db")
+    router = FakeModel(None)
+    idle = ExperienceSession(store=empty, project=None, selector=[router])
+    assert idle.prompt_section([{"role": "user", "content": "任意问题"}]) == "" and router.calls == []
+    empty.close()
 
 
 # ---- 在线复盘 ---------------------------------------------------------------

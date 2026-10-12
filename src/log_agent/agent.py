@@ -119,7 +119,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   "为什么突然变多""和平时比有什么不同""发布前后"这类问题优先用它拿前后对比，这是最有说服力的证据。
 - `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
   按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
-- `read_log_chunk`：按行区间读取日志（日志可能很大，不要��图一次读完）。
+- `read_log_chunk`：按行区间读取日志���日志可能很大，不要��图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
@@ -138,7 +138,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 而每委派一次，子代理都要从零重新熟悉日志和源码、再写一份长报告交回来，通常比你自己查慢好几倍。
 
 - 只有一份日志、一个源码仓库的问题（绝大多数情况）：**不要委派**，自己按下面的工作流查。
-  需要同时搜多个关键词、读多个文件时，在同一条消息里并行发起多个工具调用即可。
+  需要同时搜多个关键词、��多个文件时，在同一条消息里并行发起多个工具调用即可。
 - 只在这些情况下委派，且一次最多 2-3 个：
   - 有多份日志要各自梳理时间线（例如多个服务 / 多台机器的日志），每份交给一个 `log-investigator`；
   - 问题同时牵涉多个**彼此无关**的源码仓库或模块，而你已经知道各自要查什么。
@@ -220,7 +220,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 - **源码**：用代码块贴出做出决策的关键代码片段，并注明 `相对路径:起止行号`。
 
 ### 根因分析
-一步一步推导：输入是什么 → 走到了哪段代码 → 哪个条件成立 / 不成立 → 为什么会导致当前结果。
+一步一步推导：输入是什么 → 走到了哪段代码 → 哪个���件成立 / 不成立 → 为什么会导致当前结果。
 把日志��的具体字段值和代码里的具体判断对应起来。列出你考虑过但被证据排除的其他可能。
 
 ### 修复建议
@@ -437,8 +437,10 @@ def build_agent(
     repair = os.environ.get("LOG_AGENT_EVIDENCE_REPAIR", "on").strip().lower() not in ("off", "false", "0", "no")
     post_model, post_fallbacks = _post_models(model, resolved_model, sub_model, fallbacks, base_url)
     graph.log_agent_post = PostProcessor(post_model, mode, repair=repair, fallbacks=post_fallbacks)
-    # 收尾时的经验复盘用同一组收尾模型（见 StreamRenderer.run）
+    # 收尾时的经验复盘、开头的经验挑选都用同一组收尾模型（见 StreamRenderer.run、ExperienceSession._select）
     graph.log_agent_experience = experience
+    if experience is not None and experience.selector is None:
+        experience.selector = [m for m in (post_model, *post_fallbacks) if hasattr(m, "with_structured_output")] or None
     return graph
 
 

@@ -583,6 +583,8 @@ class StreamRenderer:
                 print_repair_note(repair)
             print_evidence_check(result.evidence_check)
         experience = getattr(agent, "log_agent_experience", None)
+        if experience is not None:
+            self._absorb_post_calls(result, [c for c in experience.drain_calls() if c.get("usage") or c.get("model")])
         if experience is not None and post is not None and post.usable and experience.should_reflect(result):
             self._reflect(experience, post, payload, result)
         result.usage_by_model = self._usage_by_model(result)
