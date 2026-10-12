@@ -78,6 +78,8 @@ def test_analyze_reads_config_defaults(sample_log: Path, code_repo: Path, tmp_pa
     assert result.exit_code == 0, result.output
     memory = seen.pop("memory")
     assert memory.mode == "suggest" and memory.project == str(code_repo)
+    experience = seen.pop("experience")
+    assert experience.project == str(code_repo) and experience.reflect is False
     assert seen.pop("budget") is None
     assert seen.pop("checkpointer") is not None  # analyze 默认存为会话
     assert seen == {"model": "openai:cfg-model", "base_url": "https://gw.example/v1", "skill_dirs": []}
@@ -92,6 +94,7 @@ def test_cli_and_env_beat_config(sample_log: Path, tmp_path: Path, monkeypatch: 
     result, seen = _run_analyze(monkeypatch, tmp_path, sample_log, "-m", "openai:cli-model")
     assert result.exit_code == 0, result.output
     assert seen.pop("memory").project is None
+    assert seen.pop("experience").project is None
     assert seen.pop("budget") is None
     assert seen.pop("checkpointer") is not None
     assert seen == {"model": "openai:cli-model", "base_url": "https://env/v1", "skill_dirs": []}

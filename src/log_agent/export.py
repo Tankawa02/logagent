@@ -31,6 +31,7 @@ def build_payload(
         "structured_source": result.structured_source or None,
         "evidence_check": deepcopy(result.evidence_check),
         "evidence_repair": deepcopy(result.evidence_repair),
+        "experience": deepcopy(result.experience),
         "cost": cost,
         "usage_by_model": deepcopy(result.usage_by_model),
         "tool": "log-agent",

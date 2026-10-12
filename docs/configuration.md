@@ -131,4 +131,6 @@ verbose = true
 - 只能用环境变量设置的模型分层：`LOG_AGENT_SUBAGENT_MODEL`（子代理用的便宜模型）、`LOG_AGENT_POST_MODEL`
   （收尾的结构化抽取和证据修正，缺省沿用子代理模型，都没设就用主模型）、`LOG_AGENT_FALLBACK_MODELS`（逗号分隔的备用模型）。
   收尾用了便宜模型时，失败会依次退到主模型、备用模型。
+- 排查经验（见[长期记忆与 Skills](memory-and-skills.md#排查经验自我进化)）：`experience = false` 关闭经验注入，
+  `experience_reflection = true` 开启每轮结束后的在线复盘（默认关闭，网页设置页也能切换）。
 - **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。

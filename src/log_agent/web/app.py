@@ -58,6 +58,8 @@ class WebConfig:
     skills_cwd: Path | None = None
     memory_path: Path | None = None
     memory_mode: str = "suggest"
+    # 经验库路径（None 时用 ~/.log-agent/experience.db）；是否注入 / 在线复盘由环境变量开关决定，设置页可改
+    experience_path: Path | None = None
     # serve 启动时的配置快照（web/settings.py 的 SettingsContext）；为 None 时不提供设置页
     settings: Any = None
 
@@ -681,6 +683,10 @@ def create_app(config: WebConfig) -> FastAPI:
         session_projects=lambda: manage.projects_from_sessions(config.db_path),
     )
 
+    from . import experience_api
+
+    experience_api.register(app, require_owner=require_owner, experience_path=config.experience_path)
+
     from . import settings as settings_routes
 
     settings_routes.register(app, require_owner=require_owner, config=config)
@@ -836,7 +842,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
         raise HTTPException(409, "已有一轮分析正在进行，请等它结束后再追问")
     thread_id = str(body.get("threadId") or info.name)
     run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")[:128]
-    # 重答：存档里的问题保持原样，只在发给模型的消息前加上「重新核实」和用户的补充要求
+    # ���答：存档里的问题保持原样，只在发给模型的消息前加上「重新核实」和用户的补充要求
     prefix = ""
     forwarded = body.get("forwardedProps")
     retry = body.get("retry") or (forwarded.get("retry") if isinstance(forwarded, dict) else None)
@@ -853,7 +859,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
                 redact_owner=config.redact_owner, memory_path=config.memory_path, memory_mode=config.memory_mode,
-                prefix=prefix,
+                prefix=prefix, experience_path=config.experience_path,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

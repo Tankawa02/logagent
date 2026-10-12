@@ -12,6 +12,7 @@ import { AuthRequired } from './pages/AuthRequired'
 import './styles.css'
 
 // 每个页面一个 chunk：分享页只加载只读 Workspace，管理页不拖慢首屏
+const ExperiencePage = lazy(() => import('./pages/ExperiencePage').then((m) => ({ default: m.ExperiencePage })))
 const MemoryPage = lazy(() => import('./pages/MemoryPage').then((m) => ({ default: m.MemoryPage })))
 const NewSession = lazy(() => import('./pages/NewSession').then((m) => ({ default: m.NewSession })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
@@ -41,7 +42,13 @@ const rootRoute = createRootRoute({
 })
 
 /** 常见的手误写法直接转到正确页面，而不是落到 404 */
-const ALIASES = { '/traces': '/trace', '/skill': '/skills', '/memories': '/memory', '/setting': '/settings' } as const
+const ALIASES = {
+  '/traces': '/trace',
+  '/skill': '/skills',
+  '/memories': '/memory',
+  '/experiences': '/experience',
+  '/setting': '/settings',
+} as const
 const aliasRoutes = Object.entries(ALIASES).map(([path, to]) =>
   createRoute({
     getParentRoute: () => rootRoute,
@@ -137,6 +144,8 @@ const skillsRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/skil
 
 const memoryRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/memory', component: MemoryPage })
 
+const experienceRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/experience', component: ExperiencePage })
+
 const settingsRoute = createRoute({ getParentRoute: () => ownerRoute, path: '/settings', component: SettingsPage })
 
 const shareRoute = createRoute({
@@ -164,7 +173,16 @@ const shareRoute = createRoute({
 
 const router = createRouter({
   routeTree: rootRoute.addChildren([
-    ownerRoute.addChildren([indexRoute, sessionRoute, traceRoute, traceDetailRoute, skillsRoute, memoryRoute, settingsRoute]),
+    ownerRoute.addChildren([
+      indexRoute,
+      sessionRoute,
+      traceRoute,
+      traceDetailRoute,
+      skillsRoute,
+      memoryRoute,
+      experienceRoute,
+      settingsRoute,
+    ]),
     shareRoute,
     ...aliasRoutes,
   ]),

@@ -54,6 +54,9 @@ _KEYS: dict[str, str | None] = {
     "fallback_models": None,
     "structured": None,
     "evidence_repair": None,
+    # 排查经验库（见 experience.py）：是否注入已生效的经验、是否在每轮结束后在线复盘（默认关闭）
+    "experience": None,
+    "experience_reflection": None,
     # 价格表：[pricing."模型名"] input / output / cache_read / cache_write（美元 / 百万 tokens），见 pricing.py
     "pricing": None,
     # 日志解析相关，不走命令行参数，由 apply_log_settings 生效
@@ -73,9 +76,11 @@ _ENV_OVERRIDES = {
     "fallback_models": "LOG_AGENT_FALLBACK_MODELS",
     "structured": "LOG_AGENT_STRUCTURED",
     "evidence_repair": "LOG_AGENT_EVIDENCE_REPAIR",
+    "experience": "LOG_AGENT_EXPERIENCE",
+    "experience_reflection": "LOG_AGENT_EXPERIENCE_REFLECTION",
 }
 _ENV_ONLY_KEYS = ("timeout", "max_retries", "subagent_model", "post_model", "fallback_models", "structured",
-                  "evidence_repair")
+                  "evidence_repair", "experience", "experience_reflection")
 _ONLY_FOR = {"db": ("chat", "analyze"), "no_save": ("analyze",)}
 _PATH_KEYS = {"code", "skills", "db"}
 _PATH_LIST_KEYS = {"code", "skills"}

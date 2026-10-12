@@ -12,6 +12,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelFallbackMiddleware
 
 from .budget import BudgetMiddleware, TokenBudget
 from .dedupe import DuplicateCallMiddleware
+from .experience import ExperiencePromptMiddleware, ExperienceSession
 from .memory import MemoryPromptMiddleware, MemorySession, build_suggest_tool
 from .report import EXTRACT_INSTRUCTIONS, REPORT_INSTRUCTIONS
 from .skills import build_skills, resolve_skill_sources
@@ -118,7 +119,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
   "为什么突然变多""和平时比有什么不同""发布前后"这类问题优先用它拿前后对比，这是最有说服力的证据。
 - `trace_request`：传入 traceId / requestId / 订单号 / 手机号等请求标识，跨一份或多份日志找出所有相关行，
   按时间合并排序，连带后面的堆栈一起返回。追"某个请求经历了什么"时优先用它，比多次 `search_logs` 自己拼时间线更快更准。
-- `read_log_chunk`：按行区间读取日志（日志可能很大，不要试图一次读完）。
+- `read_log_chunk`：按行区间读取日志（日志可能很大，不要��图一次读完）。
 - `list_code_files`：查看源码目录结构，可用 `path_glob` 过滤。
 - `grep_code`：在源码里搜索，把日志中的关键字关联回具体代码位置（返回 `文件:行号`）。
 - `read_code_file`：按行区间读取源码，每行带行号。
@@ -220,7 +221,7 @@ SYSTEM_PROMPT = """你是一名资深的 SRE / 后端工程师，专长是结合
 
 ### 根因分析
 一步一步推导：输入是什么 → 走到了哪段代码 → 哪个条件成立 / 不成立 → 为什么会导致当前结果。
-把日志里的具体字段值和代码里的具体判断对应起来。列出你考虑过但被证据排除的其他可能。
+把日志��的具体字段值和代码里的具体判断对应起来。列出你考虑过但被证据排除的其他可能。
 
 ### 修复建议
 给出具体、可操作的方案：改哪个文件的哪一段、怎么改（可以给出修改前后的代码或伪 diff）、
@@ -351,6 +352,7 @@ def build_agent(
     subagent_model: str | None = None,
     fallback_models: Sequence[str] | None = None,
     structured: str | None = None,
+    experience: ExperienceSession | None = None,
 ):
     """创建并返回一个配置好的日志分析 deep agent。
 
@@ -371,6 +373,8 @@ def build_agent(
             默认读 LOG_AGENT_FALLBACK_MODELS（逗号分隔）。
         structured: 结构化报告的产出方式 inline / extract / auto，默认读 LOG_AGENT_STRUCTURED，缺省 auto
             （见 postprocess.py）。
+        experience: 本次运行的经验上下文（见 experience.py）。传入后把相关的排查经验追加到系统提示词末尾，
+            开启在线复盘时每轮收尾还会复盘一次。传 None 时提示词保持原样。
     """
     from .postprocess import PostProcessor, normalize_mode
 
@@ -412,6 +416,9 @@ def build_agent(
         middleware.append(MemoryPromptMiddleware(memory))
         if memory.suggests:
             main_tools.append(build_suggest_tool(memory))
+    # 经验段放在记忆段之后：两者都是追加在系统提示词末尾、同一会话内不变的内容
+    if experience is not None:
+        middleware.append(ExperiencePromptMiddleware(experience))
     if budget is not None:
         middleware.append(BudgetMiddleware(budget))
     if fallbacks:
@@ -430,7 +437,20 @@ def build_agent(
     repair = os.environ.get("LOG_AGENT_EVIDENCE_REPAIR", "on").strip().lower() not in ("off", "false", "0", "no")
     post_model, post_fallbacks = _post_models(model, resolved_model, sub_model, fallbacks, base_url)
     graph.log_agent_post = PostProcessor(post_model, mode, repair=repair, fallbacks=post_fallbacks)
+    # 收尾时的经验复盘用同一组收尾模型（见 StreamRenderer.run）
+    graph.log_agent_experience = experience
     return graph
+
+
+def resolve_post_models(model: str, base_url: str | None = None) -> list[Any]:
+    """在 agent 之外取收尾模型（离线经验学习的复盘调用用），优先级与 build_agent 一致。"""
+    resolved = _resolve_chat_model(model, base_url)
+    sub_name = os.environ.get("LOG_AGENT_SUBAGENT_MODEL", "").strip()
+    sub_model = _resolve_chat_model(sub_name, base_url) if sub_name and sub_name != model else None
+    fallbacks = [_resolve_chat_model(name, base_url) for name in _env_models("LOG_AGENT_FALLBACK_MODELS")
+                 if name and name != model]
+    primary, rest = _post_models(model, resolved, sub_model, fallbacks, base_url)
+    return [m for m in (primary, *rest) if hasattr(m, "with_structured_output")]
 
 
 def _post_models(model: str, resolved_model: Any, sub_model: Any, fallbacks: list, base_url: str | None):

@@ -277,16 +277,9 @@ export interface Meta {
 }
 
 export type SettingKey =
-  | 'model'
-  | 'subagent_model'
-  | 'fallback_models'
-  | 'base_url'
-  | 'timeout'
-  | 'max_retries'
-  | 'timezone'
-  | 'memory'
+  'model' | 'subagent_model' | 'fallback_models' | 'base_url' | 'timeout' | 'max_retries' | 'timezone' | 'memory' | 'experience_reflection'
 export type SettingSource = 'default' | 'user' | 'user_section' | 'project' | 'env' | 'cli'
-export type SettingValue = string | number | null
+export type SettingValue = string | number | boolean | null
 
 export interface SettingField {
   /** 用户级 config.toml 顶层的值；网页保存的就是它 */
@@ -542,3 +535,33 @@ export interface SessionMemory {
 
 /** 发现相似记忆时不保存，返回相似项让用户选择新增还是替换 */
 export type MemorySaveResult = { saved: true; updated?: boolean; memory: MemoryItem } | { saved: false; similar: MemoryItem[] }
+
+export type ExperienceStatus = 'candidate' | 'active' | 'retired' | 'promoted'
+
+export interface ExperienceItem {
+  id: number
+  project: string | null
+  scope: string
+  title: string
+  trigger: string
+  strategy: string
+  status: ExperienceStatus
+  helpful: number
+  harmful: number
+  origin: 'eval' | 'online' | 'manual'
+  batch: string
+  sources: string[]
+  created_at: string
+  updated_at: string
+  promotable: boolean
+}
+
+export interface ExperienceIndex {
+  path: string
+  enabled: boolean
+  reflection: boolean
+  statuses: { key: ExperienceStatus; label: string }[]
+  origins: { key: string; label: string }[]
+  projects: { key: string; label: string }[]
+  entries: ExperienceItem[]
+}

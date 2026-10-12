@@ -9,7 +9,7 @@
 | [配置](configuration.md) | `init` 引导、API Key（网页设置 / macOS / Linux / Windows）、自定义网关、`.log-agent.toml` |
 | [使用](usage.md) | `inspect` / `doctor` / `analyze` / `watch` / `chat` 的用法和示例 |
 | [参数参考](options.md) | 全部命令行参数、超时重试、时区规则 |
-| [长期记忆与 Skills](memory-and-skills.md) | 跨会话记忆、排查手册 |
+| [长期记忆与 Skills](memory-and-skills.md) | 跨会话记忆、排查经验（离线学习 / 在线复盘）、排查手册 |
 | [分析能力](analysis.md) | 报告导出、证据回查、关联 git 变更、异常链聚类 |
 | [日志格式](log-formats.md) | 内置格式列表与 `[[log_formats]]` 自定义格式 |
 | [Web 界面](web.md) | `serve`：设置页、新建分析、错误时间线、报告证据对照、网页续问、分享链接与访问控制 |

@@ -36,6 +36,7 @@ FIELDS: dict[str, str | None] = {
     "max_retries": "LOG_AGENT_MAX_RETRIES",
     "timezone": "LOG_AGENT_TIMEZONE",
     "memory": None,
+    "experience_reflection": "LOG_AGENT_EXPERIENCE_REFLECTION",
 }
 LABELS = {
     "model": "默认模型",
@@ -46,10 +47,11 @@ LABELS = {
     "max_retries": "重试次数",
     "timezone": "默认时区",
     "memory": "长期记忆",
+    "experience_reflection": "在线经验复盘",
 }
 ENV_VARS = frozenset(env for env in FIELDS.values() if env)
 # 只经环境变量作用于 build_agent 的项：保存后改写进程环境变量即可生效（每次新建 agent 时读取）
-_ENV_APPLIED = ("timeout", "max_retries", "timezone", "subagent_model", "fallback_models")
+_ENV_APPLIED = ("timeout", "max_retries", "timezone", "subagent_model", "fallback_models", "experience_reflection")
 MEMORY_MODES = ("suggest", "explicit", "off")
 MAX_FALLBACK_MODELS = 5
 _HIDDEN_URL = "（地址含凭据，已隐藏）"
@@ -113,6 +115,16 @@ def _model_list(raw: Any) -> list[str] | None:
     return names or None
 
 
+def _switch(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str) and raw.strip().lower() in ("on", "true", "1", "yes"):
+        return True
+    if isinstance(raw, str) and raw.strip().lower() in ("off", "false", "0", "no"):
+        return False
+    raise ValueError("需要开关值 true / false")
+
+
 def _display(value: Any) -> Any:
     """列表型配置在页面上显示为逗号分隔的文本，和输入框的写法一致。"""
     return ", ".join(str(item) for item in value) if isinstance(value, list) else value
@@ -122,6 +134,8 @@ def validate_value(key: str, raw: Any) -> Any:
     """返回写进配置文件的值；None 表示删除该项（恢复默认）。"""
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None
+    if key == "experience_reflection":
+        return _switch(raw)
     if key == "fallback_models":
         return _model_list(raw)
     if key in ("model", "subagent_model", "base_url", "timezone", "memory") and not isinstance(raw, str):
@@ -171,6 +185,8 @@ def validate_value(key: str, raw: Any) -> Any:
 def _toml_value(value: Any) -> str:
     import json
 
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)  # JSON 字符串转义是 TOML 基本字符串的子集
     if isinstance(value, list):
@@ -188,7 +204,7 @@ def update_toml_text(text: str, updates: dict[str, Any]) -> str:
     try:
         before = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"用户级配置文件格式错误，请先手动修正：{exc}") from exc
+        raise ConfigError(f"用户级配置文件格式错误��请先手动修正：{exc}") from exc
 
     lines = text.splitlines()
     boundary = next((i for i, line in enumerate(lines) if _HEADER.match(line)), len(lines))
@@ -270,7 +286,8 @@ def _defaults(ctx: SettingsContext) -> dict[str, Any]:
     from ..netguard import DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 
     return {"model": ctx.default_model, "subagent_model": None, "fallback_models": None, "base_url": None,
-            "timeout": DEFAULT_TIMEOUT, "max_retries": DEFAULT_MAX_RETRIES, "timezone": "UTC", "memory": "suggest"}
+            "timeout": DEFAULT_TIMEOUT, "max_retries": DEFAULT_MAX_RETRIES, "timezone": "UTC", "memory": "suggest",
+            "experience_reflection": False}
 
 
 def _safe_url(value: Any) -> Any:
