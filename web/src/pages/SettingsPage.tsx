@@ -10,7 +10,29 @@ import type { ConnectionTestResult, SettingField, SettingKey, Settings, Settings
 const FIELD =
   'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:disabled:bg-zinc-900'
 
-const KEYS: SettingKey[] = ['model', 'subagent_model', 'fallback_models', 'base_url', 'timeout', 'max_retries', 'timezone', 'memory']
+const KEYS: SettingKey[] = [
+  'model',
+  'subagent_model',
+  'fallback_models',
+  'base_url',
+  'timeout',
+  'max_retries',
+  'timezone',
+  'memory',
+  'experience_reflection',
+]
+
+/** 开关类配置：页面上用 'true' / 'false' 表示，'' 表示沿用默认值 */
+const SWITCH_KEYS: ReadonlySet<SettingKey> = new Set(['experience_reflection'])
+
+function isOn(value: SettingValue): boolean {
+  if (typeof value === 'boolean') return value
+  return ['on', 'true', '1', 'yes'].includes(
+    String(value ?? '')
+      .trim()
+      .toLowerCase(),
+  )
+}
 
 function splitModels(value: string) {
   return value.split(/[\s,]+/).filter(Boolean)
@@ -32,7 +54,9 @@ function initialDraft(settings: Settings): Draft {
   return Object.fromEntries(
     KEYS.map((key) => {
       const field = settings.fields[key]
-      return [key, text(field.locked ? field.effective : field.value)]
+      const value = field.locked ? field.effective : field.value
+      if (SWITCH_KEYS.has(key)) return [key, value === null || value === undefined || value === '' ? '' : String(isOn(value))]
+      return [key, text(value)]
     }),
   ) as Draft
 }
@@ -92,11 +116,11 @@ function SettingsForm({
   const modelOptions = models.data?.models ?? []
   const checkModels = validateModel && !models.isFetching
   const modelUnknown = checkModels && changed.includes('model') && isUnknownModel(draft.model, modelOptions)
-  const subagentUnknown =
-    checkModels && changed.includes('subagent_model') && isUnknownModel(draft.subagent_model, modelOptions)
-  const unknownFallbacks = checkModels && changed.includes('fallback_models')
-    ? splitModels(draft.fallback_models).filter((m) => isUnknownModel(m, modelOptions))
-    : []
+  const subagentUnknown = checkModels && changed.includes('subagent_model') && isUnknownModel(draft.subagent_model, modelOptions)
+  const unknownFallbacks =
+    checkModels && changed.includes('fallback_models')
+      ? splitModels(draft.fallback_models).filter((m) => isUnknownModel(m, modelOptions))
+      : []
   const invalidModel = modelUnknown || subagentUnknown || unknownFallbacks.length > 0
   const mainModel = draft.model.trim() || text(fields.model.effective)
 
@@ -105,7 +129,8 @@ function SettingsForm({
       const body: SettingsUpdate = { values: {} }
       for (const key of changed) {
         const raw = draft[key].trim()
-        body.values[key] = raw === '' ? null : key === 'timeout' || key === 'max_retries' ? Number(raw) : raw
+        body.values[key] =
+          raw === '' ? null : SWITCH_KEYS.has(key) ? raw === 'true' : key === 'timeout' || key === 'max_retries' ? Number(raw) : raw
       }
       if (clearKey) body.clear_api_key = true
       else if (apiKey.trim()) body.api_key = apiKey.trim()
@@ -329,6 +354,36 @@ function SettingsForm({
         </div>
       </Card>
 
+      <Card>
+        <CardHeader title="排查经验" />
+        <div className="space-y-5 px-4 py-5">
+          <Row
+            label="在线经验复盘"
+            field={fields.experience_reflection}
+            hint="每轮结束后多一次收尾模型调用，复盘本轮做法：给用到的经验投票，证据回查通过时提炼候选经验（需在「经验」页确认后才生效）。影响之后新开始的提问。"
+          >
+            {(id) => {
+              const field = fields.experience_reflection
+              const checked =
+                draft.experience_reflection === '' ? isOn(field.effective ?? field.default) : draft.experience_reflection === 'true'
+              return (
+                <Switch
+                  id={id}
+                  checked={checked}
+                  disabled={field.locked}
+                  onChange={(next) =>
+                    set('experience_reflection')(
+                      next ? 'true' : initial.experience_reflection === '' && !isOn(field.default) ? '' : 'false',
+                    )
+                  }
+                  label={checked ? '已开启' : '已关闭'}
+                />
+              )
+            }}
+          </Row>
+        </div>
+      </Card>
+
       <p className="text-xs leading-relaxed text-zinc-400">
         配置写入 <code className="font-mono">{settings.config_path}</code>，API Key 单独保存在{' '}
         <code className="font-mono">{settings.credentials_path}</code>（仅本人可读写）。
@@ -412,6 +467,44 @@ function SourceNote({ field }: { field: SettingField }) {
     )
   }
   return null
+}
+
+function Switch({
+  id,
+  checked,
+  disabled,
+  onChange,
+  label,
+}: {
+  id: string
+  checked: boolean
+  disabled?: boolean
+  onChange: (next: boolean) => void
+  label: string
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        id={id}
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${
+          checked ? 'bg-brand-600 dark:bg-brand-500' : 'bg-zinc-300 dark:bg-zinc-700'
+        }`}
+      >
+        <span
+          aria-hidden
+          className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5.5' : 'translate-x-0.5'}`}
+        />
+      </button>
+      <span className="text-sm text-zinc-700 dark:text-zinc-300" aria-hidden>
+        {label}
+      </span>
+    </div>
+  )
 }
 
 function Row({ label, field, hint, children }: { label: string; field: SettingField; hint?: string; children: (id: string) => ReactNode }) {

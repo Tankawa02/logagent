@@ -37,6 +37,9 @@ def _register_memory_app() -> None:
     from .eval_cli import eval_app
 
     app.add_typer(eval_app, name="eval")
+    from .experience_cli import experience_app
+
+    app.add_typer(experience_app, name="experience")
 
 
 _register_memory_app()
@@ -320,6 +323,7 @@ def analyze(
     import sys
 
     from .agent import build_agent
+    from .experience import open_session as open_experience
     from .memory_cli import after_turn, end_session, open_session, status_row
 
     settings = {"since": since, "until": until, "timezone": timezone, "baseline": baseline,
@@ -328,10 +332,12 @@ def analyze(
     saved_session = None if no_save else _open_analyze_session(db, session)
     session_name = saved_session.name if saved_session else (session or _analyze_session_name())
     mem = None
+    exp = None
     # 管道运行或输出到文件时不弹确认，候选留到下次 chat / log-agent memory review 再处理
     can_ask = sys.stdin.isatty() and sys.stdout.isatty() and output is None and "-" not in log
     try:
         mem = open_session(memory.value, code_paths, session_name)
+        exp = open_experience(code_paths, session_name or "analyze")
         reset_cursor_line()
         rows = _base_rows(log_paths, code_paths, model, base_url, skill_sources)
         _extra_rows(rows, token_budget, baseline_window)
@@ -342,7 +348,7 @@ def analyze(
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
             agent = build_agent(
                 model=model, base_url=base_url, skill_dirs=skills or [], memory=mem, budget=token_budget,
-                checkpointer=saved_session.checkpointer if saved_session else None,
+                checkpointer=saved_session.checkpointer if saved_session else None, experience=exp,
             )
         if saved_session:
             saved_session.register(log_paths, code_paths, model, settings)
@@ -387,6 +393,8 @@ def analyze(
             saved_session.close()
         if mem is not None:
             mem.store.close()
+        if exp is not None:
+            exp.store.close()
 
     if result.interrupted:
         raise typer.Exit(code=130)
@@ -629,6 +637,7 @@ def chat(
     from .chat_input import ChatInput
     from .chat_loop import run_chat_loop
     from .citations import CitationLinker
+    from .experience import open_session as open_experience
     from .memory_cli import end_session, open_session, status_row
     from .sessions import SessionStore, describe_source_change
 
@@ -638,6 +647,7 @@ def chat(
     linker = CitationLinker(log_paths, code_paths)
 
     mem = open_session(memory.value, code_paths, session)
+    exp = open_experience(code_paths, session)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     try:
         store = SessionStore(conn)
@@ -680,7 +690,7 @@ def chat(
         with console.status(Text("正在加载模型与工具…", style="muted"), spinner=glyphs.spinner):
             agent = build_agent(
                 model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=skills or [], memory=mem,
-                budget=token_budget,
+                budget=token_budget, experience=exp,
             )
 
         def has_history(name: str) -> bool:
@@ -724,6 +734,8 @@ def chat(
         conn.close()
         if mem is not None:
             mem.store.close()
+        if exp is not None:
+            exp.store.close()
 
     console.print()
     if state.totals.turns:
@@ -1118,12 +1130,14 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 def _web_agent_factory(
     *, model: str, checkpointer, base_url: str | None, budget, skill_dirs: tuple[str, ...] = (), memory=None,
+    experience=None,
 ):
     # 调用时再取 build_agent，测试里替换 agent.build_agent 就能换成脚本化模型
     from . import agent as agent_module
 
     return agent_module.build_agent(
         model=model, checkpointer=checkpointer, base_url=base_url, skill_dirs=list(skill_dirs), memory=memory, budget=budget,
+        experience=experience,
     )
 
 

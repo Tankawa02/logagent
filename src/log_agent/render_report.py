@@ -208,6 +208,8 @@ class TurnResult:
     evidence_check: dict | None = field(default=None, init=False)
     # 回查不通过后的自动修正记录（见 postprocess.repair_evidence）；没有尝试时为 None
     evidence_repair: dict | None = field(default=None, init=False)
+    # 在线经验复盘的结果（见 experience.py）；没有开启或本轮未复盘时为 None
+    experience: dict | None = field(default=None, init=False)
 
     def __post_init__(self):
         self.report, analysis, self.structured_status = extract_analysis(self.report)

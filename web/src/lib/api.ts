@@ -1,5 +1,7 @@
 import type {
   ConnectionTestResult,
+  ExperienceIndex,
+  ExperienceItem,
   Settings,
   SettingsUpdate,
   CreateSessionBody,
@@ -188,6 +190,22 @@ export const api = {
       headers: CSRF_HEADERS,
       body: JSON.stringify({ permanent }),
     }),
+  experience: () => request<ExperienceIndex>('/api/experience'),
+  addExperience: (body: { title: string; trigger: string; strategy: string; project: string | null }) =>
+    request<{ created: boolean; entry: ExperienceItem }>('/api/experience', {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify(body),
+    }),
+  updateExperience: (id: number, body: { title?: string; trigger?: string; strategy?: string }) =>
+    request<ExperienceItem>(`/api/experience/${id}`, { method: 'PATCH', headers: CSRF_HEADERS, body: JSON.stringify(body) }),
+  setExperienceStatus: (id: number, status: 'candidate' | 'active' | 'retired') =>
+    request<ExperienceItem>(`/api/experience/${id}/status`, {
+      method: 'POST',
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ status }),
+    }),
+  deleteExperience: (id: number) => request<{ deleted: number }>(`/api/experience/${id}`, { method: 'DELETE', headers: CSRF_HEADERS }),
 }
 
 function skillUrl(source: string, name: string): string {

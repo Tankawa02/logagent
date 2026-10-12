@@ -347,7 +347,7 @@ def _open_memory(memory_path: Path | None, mode: str, info: SessionInfo):
     """和 CLI 共用同一个记忆库与项目归属；记忆库打不开时本轮不用记忆，不影响分析。"""
     from ..memory import MemorySession, MemoryStore, default_memory_path, normalize_mode, project_key
 
-    # serve 启动时���校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
+    # serve 启动时�����校验；这里兜底时宁可关闭，也不在用户想关掉记忆时悄悄打开
     mode = normalize_mode(mode) or "off"
     if mode == "off":
         return None
@@ -373,6 +373,7 @@ def run_turn(
     memory_path: Path | None = None,
     memory_mode: str = "suggest",
     prefix: str = "",
+    experience_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -382,6 +383,7 @@ def run_turn(
     from ..citations import CitationLinker
     from ..cli_context import _build_context_message, _run_config
     from ..compare import parse_range
+    from ..experience import open_session as open_experience
     from ..export import build_payload
     from ..term import console
     from .app import _redacted_copy
@@ -399,6 +401,7 @@ def run_turn(
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     quiet = console.quiet
     memory = None
+    experience = None
     try:
         store = SessionStore(conn)
         no_redact = session_no_redact(store, info.name)
@@ -410,9 +413,11 @@ def run_turn(
         config = _run_config(max_steps, info.name)
 
         memory = _open_memory(memory_path, memory_mode, info)
+        experience = open_experience(info.code, info.name, path=experience_path)
         checkpointer = SqliteSaver(conn)
         agent = agent_factory(model=info.model, checkpointer=checkpointer,
-                              base_url=settings.get("base_url") or base_url, budget=budget, memory=memory)
+                              base_url=settings.get("base_url") or base_url, budget=budget, memory=memory,
+                              experience=experience)
         try:
             first_turn = checkpointer.get(config) is None
         except Exception:
@@ -486,4 +491,6 @@ def run_turn(
         console.quiet = quiet
         if memory is not None:
             memory.store.close()
+        if experience is not None:
+            experience.store.close()
         conn.close()

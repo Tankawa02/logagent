@@ -209,6 +209,10 @@ class RunSpec:
     budget: str | None = None
     # 单个案例的墙钟上限（秒）：某个模型卡住时记为超时，不拖住整批评测；0 表示不限
     timeout: int = 900
+    # 经验库路径：设置后注入其中已生效的经验（评测默认不用经验，衡量模型本身）
+    experience_db: str | None = None
+    # 离线门控时额外注入的候选经验 ID
+    experience_include: list[int] = field(default_factory=list)
 
 
 def run_case(spec: RunSpec) -> dict[str, Any]:
@@ -248,8 +252,10 @@ def _run_case(spec: RunSpec) -> dict[str, Any]:
     case = spec.case
     started = time.perf_counter()
     record: dict[str, Any] = {"case": case.name, "model": spec.model, "structured": spec.structured}
+    experience = None
     try:
         from .agent import build_agent
+        from .experience import ExperienceSession, ExperienceStore
 
         set_default_timezone(case.settings.get("timezone") or "UTC")
         set_forced_encoding(case.settings.get("encoding") or None)
@@ -257,8 +263,12 @@ def _run_case(spec: RunSpec) -> dict[str, Any]:
         redact.set_enabled(True)
         set_scope(case.logs, case.code)
         budget = TokenBudget(parse_budget(spec.budget)) if spec.budget else None
+        if spec.experience_db:
+            # 评测里学到 / 用到的经验都是全局的：案例各自的代码库不代表用户的项目
+            experience = ExperienceSession(store=ExperienceStore(Path(spec.experience_db)), project=None,
+                                           source=f"eval:{case.name}", include=frozenset(spec.experience_include))
         agent = build_agent(model=spec.model, base_url=spec.base_url, skill_dirs=[], budget=budget,
-                            structured=spec.structured)
+                            structured=spec.structured, experience=experience)
         baseline = parse_range(case.settings["baseline"]) if case.settings.get("baseline") else None
         message = _build_context_message(case.logs, case.code, case.question, baseline)
         console.quiet = True
@@ -271,6 +281,11 @@ def _run_case(spec: RunSpec) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — 单个案例失败记成错误，不中断整批评测
         record.update(error=f"{type(exc).__name__}: {exc}"[:500], seconds=round(time.perf_counter() - started, 1))
         return record
+    finally:
+        if experience is not None:
+            record["experience_ids"] = [e.id for e in experience.injected]
+            record["experience_route"] = experience.route
+            experience.store.close()
     usage = payload.get("usage") or {}
     post_calls = [c for c in payload.get("llm_calls") or [] if c.get("purpose")]
     record.update(
@@ -282,6 +297,8 @@ def _run_case(spec: RunSpec) -> dict[str, Any]:
         summary=payload.get("summary"), analysis=payload.get("analysis"),
         evidence_check={k: v for k, v in (payload.get("evidence_check") or {}).items() if k != "items"} or None,
         report=payload.get("report"),
+        trail=[{k: t.get(k) for k in ("name", "args", "failed", "subagent")} for t in payload.get("tool_calls") or []],
+        budget_hit=payload.get("budget_hit"),
         **score_case(case, payload),
     )
     return record
@@ -461,3 +478,122 @@ def case_from_turn(payload: dict[str, Any], feedback: dict[str, str] | None = No
     if note:
         lines.append(f"notes = {_toml_str(str(note))}")
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# 离线经验学习：基线 → 复盘提炼候选 → 带候选重跑 → 不退化才整批生效
+# ---------------------------------------------------------------------------
+
+
+def split_cases(cases: list[EvalCase], holdout: Iterable[str] | None = None) -> tuple[list[EvalCase], list[EvalCase]]:
+    """划分训练集（用来复盘提炼经验）和留出集（只用来检验经验是否泛化，从不参与提炼）。
+
+    没有指定时按名字排序后每 3 个取 1 个做留出集，结果稳定可复现。
+    """
+    names = set(holdout or [])
+    ordered = sorted(cases, key=lambda c: c.name)
+    if names:
+        unknown = names - {c.name for c in cases}
+        if unknown:
+            raise ValueError(f"留出集里的案例不存在：{', '.join(sorted(unknown))}")
+        return [c for c in ordered if c.name not in names], [c for c in ordered if c.name in names]
+    return ([c for i, c in enumerate(ordered) if i % 3 != 2], [c for i, c in enumerate(ordered) if i % 3 == 2])
+
+
+def case_means(results: list[dict[str, Any]]) -> dict[str, float]:
+    """每个案例的平均分（重复多次时取均值）；运行出错记 0 分。"""
+    scores: dict[str, list[float]] = {}
+    for record in results:
+        scores.setdefault(record["case"], []).append(float(record.get("score") or 0.0))
+    return {name: sum(values) / len(values) for name, values in scores.items()}
+
+
+def _group_mean(means: dict[str, float], names: Iterable[str]) -> float | None:
+    values = [means[n] for n in names if n in means]
+    return sum(values) / len(values) if values else None
+
+
+def gate_decision(baseline: list[dict[str, Any]], gated: list[dict[str, Any]], train: list[str],
+                  holdout: list[str], tolerance: float = 0.0) -> dict[str, Any]:
+    """门控：留出集和全体的平均分都不低于基线（允许 tolerance 分的波动）才采用这批经验。"""
+    before, after = case_means(baseline), case_means(gated)
+    groups = {"train": train, "holdout": holdout, "all": [*train, *holdout]}
+    summary = {name: {"before": _group_mean(before, names), "after": _group_mean(after, names)}
+               for name, names in groups.items()}
+
+    def ok(group: str) -> bool:
+        values = summary[group]
+        if values["before"] is None or values["after"] is None:
+            return False
+        return values["after"] >= values["before"] - tolerance
+
+    accepted = ok("holdout") and ok("all")
+    per_case = [{"case": name, "before": before.get(name), "after": after.get(name),
+                 "split": "holdout" if name in holdout else "train"} for name in groups["all"]]
+    return {"accepted": accepted, "tolerance": tolerance, "groups": summary, "cases": per_case}
+
+
+def eval_outcome(case: EvalCase, record: dict[str, Any]) -> str:
+    """评测案例的复盘输入：除了过程和结果，还带上可信的标准答案与得分，失败的运行也能从中学到做法。"""
+    from types import SimpleNamespace
+
+    from .experience import describe_turn
+
+    expected = case.expected
+    truth = [
+        "## 标准答案（评测案例，可信）",
+        f"判定：{expected.get('assessment') or '未标注'}",
+        f"根因位置：{', '.join(expected.get('root_cause') or []) or '未标注'}（只用来判断方向对不对，不要写进经验）",
+        f"关键词：{', '.join(expected.get('keywords') or []) or '无'}",
+        f"本次得分 {record.get('score', 0):.0f}/100：判定{'正确' if record.get('assessment_ok') else '不对或缺失'}，"
+        f"根因{'命中' if record.get('root_cause_hit') else '未命中'}，"
+        f"证据通过率 {_pct(record.get('evidence_rate'))}，用了 {len(record.get('trail') or [])} 步",
+    ]
+    result = SimpleNamespace(analysis=record.get("analysis"), evidence_check=record.get("evidence_check"),
+                             tools=record.get("trail") or [], budget_hit=record.get("budget_hit"))
+    return describe_turn(case.question, result, extra="\n".join(truth))
+
+
+def reflect_on_eval(models: Any, store: Any, cases: list[EvalCase], results: list[dict[str, Any]],
+                    batch: str) -> dict[str, Any]:
+    """对训练集的每次运行复盘：给注入过的经验投票，提炼的新经验以候选身份记进这一批。"""
+    from .experience import apply_reflection, run_reflection
+
+    by_name = {c.name: c for c in cases}
+    totals: dict[str, Any] = {"runs": 0, "added": [], "merged": [], "rejected": [], "retired": [],
+                              "votes": {"helpful": 0, "harmful": 0}, "errors": 0, "calls": []}
+    for record in results:
+        case = by_name.get(record["case"])
+        if case is None or "score" not in record:
+            continue
+        totals["runs"] += 1
+        injected = [e for i in record.get("experience_ids") or [] if (e := store.get(i)) is not None]
+        existing = store.list(None, status=("active", "candidate"))
+        reflection, calls = run_reflection(models, eval_outcome(case, record), injected, allow_new=True,
+                                           existing=existing)
+        totals["calls"] += [{k: c.get(k) for k in ("method", "seconds", "error", "model", "usage")} for c in calls]
+        if reflection is None:
+            totals["errors"] += 1
+            continue
+        summary = apply_reflection(store, reflection, injected, project=None, source=f"eval:{case.name}:{batch}",
+                                   origin="eval", allow_new=True, status="candidate", batch=batch)
+        for key in ("added", "merged", "rejected", "retired"):
+            totals[key] += summary[key]
+        for verdict, count in summary["votes"].items():
+            totals["votes"][verdict] += count
+    return totals
+
+
+def gate_table(decision: dict[str, Any]) -> str:
+    names = {"train": "训练集", "holdout": "留出集", "all": "全体"}
+    lines = ["| 分组 | 基线 | 带上新经验 | 变化 |", "|---|---|---|---|"]
+    for key, label in names.items():
+        values = decision["groups"][key]
+        before, after = values["before"], values["after"]
+        delta = f"{after - before:+.1f}" if before is not None and after is not None else "—"
+        lines.append(f"| {label} | {_num(before)} | {_num(after)} | {delta} |")
+    lines += ["", "| 案例 | 分组 | 基线 | 带上新经验 |", "|---|---|---|---|"]
+    for row in decision["cases"]:
+        lines.append(f"| {row['case']} | {names[row['split']]} | {_num(row['before'])} | {_num(row['after'])} |")
+    return "\n".join(lines)
+

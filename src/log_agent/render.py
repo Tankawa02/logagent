@@ -582,10 +582,33 @@ class StreamRenderer:
                 result.evidence_repair = repair
                 print_repair_note(repair)
             print_evidence_check(result.evidence_check)
+        experience = getattr(agent, "log_agent_experience", None)
+        if experience is not None:
+            self._absorb_post_calls(result, [c for c in experience.drain_calls() if c.get("usage") or c.get("model")])
+        if experience is not None and post is not None and post.usable and experience.should_reflect(result):
+            self._reflect(experience, post, payload, result)
         result.usage_by_model = self._usage_by_model(result)
         if post is not None:
             result.elapsed = round(time.perf_counter() - self.start, 3)  # 收尾调用也算进本轮耗时
         return result
+
+    def _reflect(self, experience: Any, post: Any, payload: dict[str, Any], result: TurnResult) -> None:
+        """在线经验复盘（默认关闭）：失败只记录，不影响本轮报告。"""
+        from .experience import summary_text
+
+        messages = payload.get("messages") or []
+        question = str(messages[-1].get("content", "")) if messages and isinstance(messages[-1], dict) else ""
+        self._on_phase("reflecting")
+        try:
+            summary, calls = experience.reflect_turn(post.models, question, result)
+        except Exception as exc:  # noqa: BLE001 — 复盘是附加步骤
+            summary, calls = {"error": f"{type(exc).__name__}: {exc}"[:300], "added": [], "votes": {}}, []
+        self._absorb_post_calls(result, calls)
+        result.experience = summary
+        line = summary_text(summary)
+        if line:
+            hint = "，用 log-agent experience review 确认" if summary and summary.get("added") else ""
+            console.print(Text(f"{line}{hint}", style="muted"))
 
     def _absorb_post_calls(self, result: TurnResult, calls: list[dict]) -> None:
         """收尾调用（结构化抽取 / 证据修正）也计入本轮用量与 trace。"""

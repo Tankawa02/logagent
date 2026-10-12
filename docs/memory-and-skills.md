@@ -34,10 +34,61 @@ log-agent memory review               # 逐条处理待确认的建议
 
 不想要这个功能时，在配置文件里写 `memory = "explicit"`（只记你明确要求的）或 `memory = "off"`（完全关闭）。
 
+## 排查经验（自我进化）
+
+记忆记的是"你告诉过 agent 的事"，**排查经验**记的是"agent 自己从过往排查里学到的做法"，例如
+"连接池耗尽类告警：先统计借出 / 归还日志是否配对，再沿未归还的调用路径找泄漏点"。会话开始时由收尾模型
+（默认是子代理模型）按语义从生效的经验里挑出与本次问题相符的至多 8 条，作为排查思路附在系统提示词末尾
+（同一会话内固定不变，不影响 prompt caching）；经验库为空时不发起这次调用，调用失败时退回按字面匹配。
+
+> 为什么不只按字面匹配：经验要求抽象（不含系统名、地区、行号），而提问总是具体的。实测"Twilio 下线了为什么
+> 印尼号码还走它"和"已禁用或下线的下游仍有流量"几乎没有共同字面，只按字面匹配时经验库形同虚设。
+> 挑选调用每会话一次，约 2k tokens，计入本轮用量。
+
+- **条目化、增量更新。** 每条经验 = 标题 + 适用条件 + 做法，带"有用 / 有害"计数。模型只能**提议**新增条目
+  和给本次用到的条目投票；去重、限量、淘汰全部由代码完成，不会让模型整份重写。
+- **状态**：候选（不注入）→ 生效 → 已淘汰 / 已提升为 skill。有害票 ≥2 且多于有用票时自动淘汰；
+  有用票 ≥5 且没有有害票时可以用 `experience promote` 写成 skill。
+- **安全。** 日志内容不可信，所以入库前统一脱敏，并拒绝含链接、文件行号、长 ID、时间、IP、绝对路径或
+  "忽略之前的指令"之类话术的条目；注入时明确它们只是思路提示，与证据冲突时以证据为准，不能放宽任何规则。
+- 经验库在 `~/.log-agent/experience.db`，与会话库、记忆库分开；打不开时本次不用经验，不影响排查。
+
+### 离线学习（推荐）
+
+```bash
+log-agent eval learn -m openai:gpt-4.1          # 基线 → 复盘训练集提炼候选 → 带上候选重跑 → 不退化才整批生效
+log-agent eval learn --holdout coupon-npe -r 2  # 指定留出集、每个案例跑两次减少随机性
+log-agent eval learn --with-pending --dry-run   # 把在线复盘攒下的候选一起检验，只出报告不改状态
+```
+
+案例分成训练集和留出集（默认按名字每 3 个取 1 个做留出集）：只有训练集参与复盘，复盘时能看到标准答案和得分，
+失败的运行也能总结"下次应该怎么做"；带上候选重跑后，**留出集和全体的平均分都不低于基线**（`--tolerance` 可放宽）
+才整批生效，否则丢弃本批新提炼的候选。结果写在 `.log-agent-eval/learn-<时间>/`。
+`log-agent eval run --experience` 可以带着已生效的经验跑评测，和不带时对比。
+
+### 在线复盘（默认关闭）
+
+在网页**设置 → 排查经验**里打开"在线经验复盘"，或在配置文件里写 `experience_reflection = true`
+（环境变量 `LOG_AGENT_EXPERIENCE_REFLECTION`）。开启后每轮结束多一次收尾模型调用：
+
+- 给本轮注入过的经验投票（有用 / 有害），同一会话对同一条只计一次；
+- 只有**证据回查通过**（无不符、通过率 ≥80%）的运行才会提炼新经验，而且只进**候选**，
+  需要你在网页**经验**页或 `log-agent experience review` 确认后才生效。
+
+```bash
+log-agent experience list                 # 查看候选与生效的经验（--status retired 看已淘汰的）
+log-agent experience review               # 逐条确认候选：y 生效 / n 删除 / s 跳过
+log-agent experience add "先找第一条报错" -s "从时间最早的 ERROR 开始看，而不是数量最多的"
+log-agent experience retire 3             # 淘汰（保留记录）；rm 彻底删除
+log-agent experience promote 3            # 写成 ~/.log-agent/skills/experience-3/SKILL.md
+```
+
+完全不想用经验时，在配置文件里写 `experience = false`（环境变量 `LOG_AGENT_EXPERIENCE=off`）。
+
 ## Skills（排查手册）
 
 把团队的排查经验写成 skill，agent 遇到对应问题时会先读手册再按步骤查（例如某个服务的关键日志字段、
-常见根因、要重点看的代码位置）。每个 skill 是一个目录，里面放一份带 frontmatter 的 `SKILL.md`：
+常见根因、要重点看的代码位置）。每个 skill 是一个目录，里��放一份带 frontmatter 的 `SKILL.md`：
 
 ```
 .log-agent/skills/
