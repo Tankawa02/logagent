@@ -25,6 +25,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .report import REPORT_RULES, Analysis
+from .trace_capture import OUTPUT_CHARS, clip, output_detail
 from .usage import usage_from_metadata
 
 STRUCTURED_MODES = ("inline", "extract", "auto")
@@ -84,10 +85,21 @@ def _loose_parse(schema: type[BaseModel], raw: Any) -> BaseModel | None:
         return None
 
 
-def _call_record(purpose: str, method: str, raw: Any, started: float, error: str = "") -> dict[str, Any]:
+def _input_detail(messages: Sequence[dict[str, str]]) -> dict[str, Any]:
+    # 收尾调用的输入就是主模型写出的报告正文，按输出的长度上限存，免得只剩开头一小段
+    entries = [{"role": str(m.get("role") or "unknown"), **clip(str(m.get("content") or ""), OUTPUT_CHARS)}
+               for m in messages]
+    return {"input_messages": entries, "input_full": True, "input_count": len(entries)}
+
+
+def _call_record(purpose: str, method: str, raw: Any, started: float, error: str = "",
+                 messages: Sequence[dict[str, str]] = ()) -> dict[str, Any]:
     metadata = getattr(raw, "response_metadata", None) or {}
     usage = usage_from_metadata(getattr(raw, "usage_metadata", None)) if raw is not None else None
     return {
+        **(_input_detail(messages) if messages else {}),
+        # function_calling 方式的结构化结果在 tool_requests 里，json_schema 方式在 output_text 里
+        **output_detail(raw),
         "purpose": purpose,
         "method": method,
         "t0": started,
@@ -95,7 +107,8 @@ def _call_record(purpose: str, method: str, raw: Any, started: float, error: str
         "input": usage["input"] if usage else None,
         "output": usage["output"] if usage else None,
         "cache_read": usage["cache_read"] if usage else None,
-        "reasoning": usage["reasoning"] if usage else None,
+        # 不能叫 reasoning：那个键是 output_detail 里的思考原文 {text, chars}
+        "reasoning_tokens": usage["reasoning"] if usage else None,
         "usage": usage,
         "model": str(metadata.get("model_name") or metadata.get("model") or ""),
         "finish_reason": str(metadata.get("finish_reason") or ""),
@@ -125,7 +138,7 @@ def invoke_structured(model: Any, schema: type[BaseModel], messages: list[dict[s
                 runnable = candidate.with_structured_output(schema, method=method, include_raw=True)
                 out = runnable.invoke(messages)
             except Exception as exc:  # noqa: BLE001 — 接口不支持某种方式时换下一种
-                record = _call_record(purpose, method, None, started, f"{type(exc).__name__}: {exc}"[:300])
+                record = _call_record(purpose, method, None, started, f"{type(exc).__name__}: {exc}"[:300], messages)
                 record["model"] = record["model"] or _model_label(candidate)
                 record["fallback"] = position > 0
                 calls.append(record)
@@ -134,7 +147,7 @@ def invoke_structured(model: Any, schema: type[BaseModel], messages: list[dict[s
             if parsed is None:
                 parsed = _loose_parse(schema, raw)
             error = "" if parsed is not None else str(out.get("parsing_error") or "未返回可解析的结构化结果")[:300]
-            record = _call_record(purpose, method, raw, started, error)
+            record = _call_record(purpose, method, raw, started, error, messages)
             record["model"] = record["model"] or _model_label(candidate)
             record["fallback"] = position > 0
             calls.append(record)
