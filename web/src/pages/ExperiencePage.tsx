@@ -2,15 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Archive, ArchiveRestore, Check, ChevronDown, History, Lightbulb, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ExperienceConsolidate } from '../components/ExperienceConsolidate'
+import { ExperienceDraftFields as DraftFields, type ExperienceDraft as Draft } from '../components/ExperienceDraftFields'
 import { ExperienceHistory } from '../components/ExperienceHistory'
 import { useConfirm, useToast } from '../components/Feedback'
-import { MEMORY_FIELD } from '../components/MemoryCandidate'
 import { Select } from '../components/Select'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import type { ExperienceIndex, ExperienceItem } from '../lib/types'
 
-const FIELD = MEMORY_FIELD
 const GLOBAL = '__global__'
 const ORIGIN_LABEL: Record<string, string> = { eval: '离线评测', online: '在线复盘', manual: '手动添加' }
 const STATUS_TONE = { candidate: 'amber', active: 'green', retired: 'gray', promoted: 'blue' } as const
@@ -25,54 +25,6 @@ function useRefresh() {
   return () => void client.invalidateQueries({ queryKey: ['experience'] })
 }
 
-type Draft = { title: string; trigger: string; strategy: string }
-
-function DraftFields({ draft, onChange, idPrefix }: { draft: Draft; onChange: (d: Draft) => void; idPrefix: string }) {
-  return (
-    <div className="space-y-3">
-      <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-title`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-          标题
-        </label>
-        <input
-          id={`${idPrefix}-title`}
-          value={draft.title}
-          onChange={(e) => onChange({ ...draft, title: e.target.value })}
-          maxLength={60}
-          placeholder="例如：连接池耗尽先核对借出与归还"
-          className={FIELD}
-        />
-      </div>
-      <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-trigger`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-          适用条件
-        </label>
-        <input
-          id={`${idPrefix}-trigger`}
-          value={draft.trigger}
-          onChange={(e) => onChange({ ...draft, trigger: e.target.value })}
-          maxLength={200}
-          placeholder="什么样的日志特征 / 错误类型 / 技术栈；对任何排查都适用时写“通用”"
-          className={FIELD}
-        />
-      </div>
-      <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-strategy`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-          做法
-        </label>
-        <textarea
-          id={`${idPrefix}-strategy`}
-          value={draft.strategy}
-          onChange={(e) => onChange({ ...draft, strategy: e.target.value })}
-          rows={3}
-          maxLength={400}
-          placeholder="先查什么、用什么工具或搜索词、怎么判断"
-          className={FIELD}
-        />
-      </div>
-    </div>
-  )
-}
 
 function AddExperience({ index }: { index: ExperienceIndex }) {
   const refresh = useRefresh()
@@ -426,6 +378,8 @@ export function ExperiencePage() {
                 </ul>
               )}
             </Card>
+
+            <ExperienceConsolidate index={data} />
 
             <AddExperience index={data} />
           </>

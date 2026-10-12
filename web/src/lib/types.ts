@@ -620,7 +620,16 @@ export type ExperienceEvent = {
   | { kind: 'created'; detail: { origin: string; source: string; status: string; batch: string; scope?: string } }
   | { kind: 'merged'; detail: { origin: string; source: string; counted_helpful: boolean; draft: Omit<ExperienceDraftOut, 'scope'> } }
   | { kind: 'helpful' | 'harmful'; detail: { source: string } }
-  | { kind: 'status'; detail: { from: ExperienceStatus; to: ExperienceStatus; by: string } }
+  | { kind: 'status'; detail: { from: ExperienceStatus; to: ExperienceStatus; by: string; into?: number } }
+  | {
+      kind: 'consolidated'
+      detail: {
+        before: { title: string; trigger: string; strategy: string; status: ExperienceStatus; helpful: number; harmful: number }
+        absorbed: { id: number; title: string; trigger: string; strategy: string; status: ExperienceStatus; helpful: number; harmful: number }[]
+        reason: string
+        model: string
+      }
+    }
   | {
       kind: 'gate'
       detail: {
@@ -636,6 +645,25 @@ export type ExperienceEvent = {
     }
   | { kind: 'edited'; detail: { before: { title: string; trigger: string; strategy: string } } }
 )
+
+export interface ConsolidationProposal {
+  keep: number
+  ids: number[]
+  title: string
+  trigger: string
+  strategy: string
+  reason: string
+  status: 'candidate' | 'active'
+  members: ExperienceItem[]
+}
+
+export interface ConsolidationResult {
+  project: string | null
+  scanned: number
+  proposals: ConsolidationProposal[]
+  rejected: string[]
+  model: string
+}
 
 export interface ExperienceHistory {
   entry: ExperienceItem

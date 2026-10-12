@@ -24,6 +24,7 @@ const STATUS_BY: Record<string, string> = {
   gate: '离线门控通过',
   harmful: '有害票过多，自动淘汰',
   cap: '超出生效上限，得分最低被自动淘汰',
+  consolidated: '精简合并',
 }
 const VERDICT: Record<string, { label: string; tone: Tone }> = {
   helpful: { label: '有用', tone: 'green' },
@@ -187,7 +188,7 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
       )}
 
       <Section
-        title="开始时注入的经验"
+        title="开始时注入��经验"
         aside={run.route && <span className="text-xs text-zinc-400">{run.route === 'model' ? '模型按语义挑选' : '按字面匹配挑选'}</span>}
       >
         {run.injected.length === 0 ? (
@@ -369,8 +370,22 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
             {STATUS_LABEL[event.detail.from]}
             <ArrowRight className="h-3 w-3 text-zinc-400" aria-hidden />
             {STATUS_LABEL[event.detail.to]}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">· {STATUS_BY[event.detail.by] ?? event.detail.by}</span>
+            <span className="font-normal text-zinc-500 dark:text-zinc-400">
+              · {STATUS_BY[event.detail.by] ?? event.detail.by}
+              {event.detail.into ? `，并入 E${event.detail.into}` : ''}
+            </span>
           </span>
+        ),
+      }
+    case 'consolidated':
+      return {
+        icon: <GitMerge className="h-3.5 w-3.5" />,
+        tone: 'bg-brand-600 text-white',
+        text: (
+          <>
+            精简：合并了 {event.detail.absorbed.map((a) => `E${a.id}`).join('、')}
+            {event.detail.model && <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400"> · {shortModel(event.detail.model)}</span>}
+          </>
         ),
       }
     case 'gate':
@@ -422,6 +437,32 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
           {event.detail.model && <span className="font-mono"> · {shortModel(event.detail.model)}</span>}
         </p>
       </Collapsible>
+    )
+  }
+  if (event.kind === 'consolidated') {
+    const { before, absorbed, reason } = event.detail
+    return (
+      <div className="space-y-2 text-xs">
+        {reason && <p className="text-zinc-600 dark:text-zinc-300">理由：{reason}</p>}
+        <div className="rounded-md border border-zinc-100 px-2.5 py-2 dark:border-zinc-800">
+          <p className="text-zinc-400">
+            合并前的本条（{STATUS_LABEL[before.status]} · 有用 {before.helpful} · 有害 {before.harmful}）
+          </p>
+          <p className="mt-0.5 font-medium text-zinc-600 dark:text-zinc-300">{before.title}</p>
+          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{before.trigger}</p>
+          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{before.strategy}</p>
+        </div>
+        {absorbed.map((item) => (
+          <div key={item.id} className="rounded-md border border-zinc-100 px-2.5 py-2 dark:border-zinc-800">
+            <p className="text-zinc-400">
+              并入的 E{item.id}（{STATUS_LABEL[item.status]} · 有用 {item.helpful} · 有害 {item.harmful}）
+            </p>
+            <p className="mt-0.5 font-medium text-zinc-600 dark:text-zinc-300">{item.title}</p>
+            <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{item.trigger}</p>
+            <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{item.strategy}</p>
+          </div>
+        ))}
+      </div>
     )
   }
   if (event.kind === 'edited') {

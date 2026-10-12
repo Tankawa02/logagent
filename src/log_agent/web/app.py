@@ -60,6 +60,8 @@ class WebConfig:
     memory_mode: str = "suggest"
     # 经验库路径（None 时用 ~/.log-agent/experience.db）；是否注入 / 在线复盘由环境变量开关决定，设置页可改
     experience_path: Path | None = None
+    # 经验精简用的收尾模型（测试注入）；None 时按当前默认模型和设置解析
+    experience_models: Callable[[], list[Any]] | None = None
     # serve 启动时的配置快照（web/settings.py 的 SettingsContext）；为 None 时不提供设置页
     settings: Any = None
 
@@ -380,7 +382,7 @@ def create_app(config: WebConfig) -> FastAPI:
         from .workspace import validate_request
 
         if config.agent_factory is None or not config.can_chat:
-            raise HTTPException(503, "当前服务不能新建分析：还没有 API Key（可在「设置」页填写），或启动时用了 --read-only")
+            raise HTTPException(503, "当前服务不能新建��析：还没有 API Key（可在「设置」页填写），或启动时用了 --read-only")
         logs, code, settings = validate_request(body)
         model = (body.model or "").strip() or config.default_model
         if ":" not in model:
@@ -685,7 +687,18 @@ def create_app(config: WebConfig) -> FastAPI:
 
     from . import experience_api
 
-    experience_api.register(app, require_owner=require_owner, experience_path=config.experience_path)
+    def experience_models() -> list[Any]:
+        if config.experience_models is not None:
+            return config.experience_models()
+        if not config.can_chat:
+            return []
+        from ..agent import resolve_post_models
+
+        model = config.default_model if ":" in config.default_model else f"openai:{config.default_model}"
+        return resolve_post_models(model, config.base_url)
+
+    experience_api.register(app, require_owner=require_owner, experience_path=config.experience_path,
+                            post_models=experience_models)
 
     from . import settings as settings_routes
 
