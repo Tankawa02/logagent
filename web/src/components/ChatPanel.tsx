@@ -362,14 +362,15 @@ export function ChatPanel({
               const turn = (message.metadata as { turn?: number } | undefined)?.turn
               const node =
                 message.role === 'user' ? (
-                  <h2
+                  <div
                     key={message.id}
-                    className={`whitespace-pre-wrap text-pretty text-lg font-medium leading-snug tracking-tight text-zinc-900 sm:text-xl dark:text-zinc-50 ${
-                      index > 0 ? 'mt-10 border-t border-zinc-200/80 pt-10 dark:border-zinc-800' : ''
-                    }`}
+                    className={`flex justify-end ${index > 0 ? 'mt-10 border-t border-zinc-200/80 pt-10 dark:border-zinc-800' : ''}`}
                   >
-                    {text}
-                  </h2>
+                    <h2 className="max-w-[85%] whitespace-pre-wrap break-words text-pretty rounded-2xl rounded-br-md bg-brand-50 px-4 py-2.5 text-[15px] font-normal leading-relaxed text-zinc-900 ring-1 ring-inset ring-brand-100 dark:bg-brand-950/50 dark:text-zinc-50 dark:ring-brand-900/70">
+                      <span className="sr-only">问题：</span>
+                      {text}
+                    </h2>
+                  </div>
                 ) : (
                   <AssistantMessage
                     key={message.id}

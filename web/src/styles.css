@@ -98,6 +98,12 @@
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+
+  /* 加载指示器是状态信息，不是装饰：减少动态效果时放慢而不是停住，否则看起来像卡死了 */
+  .motion-essential {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 :root {

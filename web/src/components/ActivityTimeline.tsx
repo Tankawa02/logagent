@@ -133,7 +133,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
           {draft && running && (
             <div className="flex gap-3">
               <span className="flex w-5 shrink-0 justify-center pt-1.5" aria-hidden>
-                <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+                <span className="motion-essential h-2 w-2 animate-pulse rounded-full bg-brand-500" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-zinc-500">正在撰写结论</p>

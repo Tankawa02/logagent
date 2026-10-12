@@ -55,7 +55,7 @@ export function Spinner({ className = '' }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 ${className}`}
+      className={`motion-essential inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 ${className}`}
     />
   )
 }
