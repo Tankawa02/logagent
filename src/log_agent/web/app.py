@@ -382,7 +382,7 @@ def create_app(config: WebConfig) -> FastAPI:
         from .workspace import validate_request
 
         if config.agent_factory is None or not config.can_chat:
-            raise HTTPException(503, "当前服务不能新建��析：还没有 API Key（可在「设置」页填写），或启动时用了 --read-only")
+            raise HTTPException(503, "当前服务不能新建分析：还没有 API Key（可在「设置」页填写），或启动时用了 --read-only")
         logs, code, settings = validate_request(body)
         model = (body.model or "").strip() or config.default_model
         if ":" not in model:
@@ -855,7 +855,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
         raise HTTPException(409, "已有一轮分析正在进行，请等它结束后再追问")
     thread_id = str(body.get("threadId") or info.name)
     run_id = str(body.get("runId") or f"run-{uuid.uuid4().hex[:12]}")[:128]
-    # ���答：存档里的问题保持原样，只在发给模型的消息前加上「重新核实」和用户的补充要求
+    # 重答：存档里的问题保持原样，只在发给模型的消息前加上「重新核实」和用户的补充要求
     prefix = ""
     forwarded = body.get("forwardedProps")
     retry = body.get("retry") or (forwarded.get("retry") if isinstance(forwarded, dict) else None)

@@ -142,11 +142,23 @@ confidence 使用 high/medium/low；结论措辞不作为自动判定依据。�
 根因是待验证的假设时明确标注，不能包装成已证实事实。不要自行填写运行时间、时区或来源清单，程序会记录。
 """
 
+def _prompt_schema(node):
+    """去掉 pydantic 自动生成的 title（只是字段名的首字母大写版本），约束不变，提示词能省约三成。"""
+    if isinstance(node, list):
+        return [_prompt_schema(v) for v in node]
+    if not isinstance(node, dict):
+        return node
+    # properties / $defs 的键是字段名和模型名，Issue 本身就有一个叫 title 的字段，不能删
+    return {k: ({name: _prompt_schema(sub) for name, sub in v.items()} if k in ("properties", "$defs") else _prompt_schema(v))
+            for k, v in node.items() if k != "title"}
+
+
 REPORT_INSTRUCTIONS = """
 ## 机器可读报告附录（主代理每轮最终回答必须提供）
 在所有正文之后追加且仅追加一个 ```log-agent-report 围栏，内容是符合下方 JSON Schema 的 JSON 对象。
 不要在该围栏之后输出其他内容。正文仍按上述要求撰写；附录供本地程序校验与生成速览和工单。
-""" + REPORT_RULES + "Schema：\n" + json.dumps(Analysis.model_json_schema(), ensure_ascii=False)
+""" + REPORT_RULES + "Schema：\n" + json.dumps(_prompt_schema(Analysis.model_json_schema()),
+                                                  ensure_ascii=False, separators=(",", ":"))
 
 # structured = "extract" 时替代 REPORT_INSTRUCTIONS：附录由程序在正文写完后单独抽取（见 postprocess.py）
 EXTRACT_INSTRUCTIONS = """

@@ -191,7 +191,7 @@ def _tz_label() -> str:
 
 
 def _git_time(text: str, *, upper: bool) -> str | None:
-    """把时间边界转成 git 能精确理解的写法；无偏移时间按日志默认时��解释。"""
+    """把时间边界转成 git 能精确理解的写法；无偏移时间按日志默认时区解释。"""
     raw = (text or "").strip()
     if not raw:
         return None
@@ -286,6 +286,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
     排查“是不是最近改出来的问题”时使用：先用日志确定问题开始的时间，再查这之前 1~3 天的提交，
     重点关注改动了报错栈帧所在文件的提交，然后用 show_commit 看具体改动。
     时间按日志默认时区显示。提交时间不等于上线时间，据此下结论时要说明这一点。
+源码目录不是 git 仓库时三个 git 工具都会返回“不在 git 仓库内”，此时不要重试。
 
     Args:
         code_dir: 源码目录（需在 git 仓库内，可以是仓库的子目录）。
@@ -358,7 +359,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
 
 
 def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300) -> ToolOutput:
-    """查看某个提交的说明与���码改动（git show），用来确认可疑提交具体改了什么。
+    """查看某个提交的说明与代码改动（git show），用来确认可疑提交具体改了什么。
 
     合并提交展示相对第一父提交的改动。diff 较长时用 path 只看关心的文件。
 

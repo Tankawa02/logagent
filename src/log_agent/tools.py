@@ -793,7 +793,7 @@ def trace_request(
         for index, (log, label) in enumerate(zip(logs, labels, strict=True)):
             found, cut, saw = _scan_trace(log, index, label, compiled, window, max_lines)
             if window and not saw:
-                # 这份日志没有时间戳：时间��口对它无意义，按全文追踪
+                # 这份日志没有时间戳：时间窗口对它无意义，按全文追踪
                 found, cut, saw = _scan_trace(log, index, label, compiled, TimeWindow(), max_lines)
                 note += f"（{label} 中没有识别到时间戳，已忽略时间窗口）"
             entries.extend(found)
