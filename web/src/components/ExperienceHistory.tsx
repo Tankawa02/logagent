@@ -188,7 +188,7 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
       )}
 
       <Section
-        title="开始时注入��经验"
+        title="开始时注入的经验"
         aside={run.route && <span className="text-xs text-zinc-400">{run.route === 'model' ? '模型按语义挑选' : '按字面匹配挑选'}</span>}
       >
         {run.injected.length === 0 ? (

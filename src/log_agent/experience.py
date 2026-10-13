@@ -206,7 +206,7 @@ class ExperienceStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        # 渲染器在后台线程里跑 agent，中间件和收尾复盘都会在那���读写；写入都是短事务
+        # 渲染器在后台线程里跑 agent，中间件和收尾复盘都会在那里读写；写入都是短事务
         self.conn = sqlite3.connect(str(path), check_same_thread=False, timeout=10)
         with self.conn:
             self.conn.executescript(_SCHEMA)

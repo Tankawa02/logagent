@@ -207,7 +207,7 @@ def update_toml_text(text: str, updates: dict[str, Any]) -> str:
     try:
         before = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"用���级配置文件格式错误��请先手动修正：{exc}") from exc
+        raise ConfigError(f"用户级配置文件格式错误，请先手动修正：{exc}") from exc
 
     lines = text.splitlines()
     boundary = next((i for i, line in enumerate(lines) if _HEADER.match(line)), len(lines))
@@ -396,7 +396,7 @@ def apply(ctx: SettingsContext, config: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ���口
+# 接口
 # ---------------------------------------------------------------------------
 
 

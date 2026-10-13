@@ -178,7 +178,7 @@ def mask_private_keys(text: str) -> str:
     i = 0
     while i < len(lines):
         line = lines[i]
-        # 起止标记在整���里找：`-----BEGIN` 本身以 `-` 开头，不能先当 diff 前缀剥掉
+        # 起止标记在整行里找：`-----BEGIN` 本身以 `-` 开头，不能先当 diff 前缀剥掉
         begin, end = _KEY_BEGIN.search(line), _KEY_END.search(line)
         if begin:
             if end and end.start() > begin.start():

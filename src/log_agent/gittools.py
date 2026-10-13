@@ -191,7 +191,7 @@ def _tz_label() -> str:
 
 
 def _git_time(text: str, *, upper: bool) -> str | None:
-    """把时间边界转成 git 能精确理解的写法；无偏移时间按日志默认时��解释。"""
+    """把时间边界转成 git 能精确理解的写法；无偏移时间按日志默认时区解释。"""
     raw = (text or "").strip()
     if not raw:
         return None
@@ -358,7 +358,7 @@ def recent_changes(code_dir: str, since: str = "", until: str = "", path: str = 
 
 
 def show_commit(code_dir: str, commit: str, path: str = "", max_lines: int = 300) -> ToolOutput:
-    """查看某个提交的说明与���码改动（git show），用来确认可疑提交具体改了什么。
+    """查看某个提交的说明与代码改动（git show），用来确认可疑提交具体改了什么。
 
     合并提交展示相对第一父提交的改动。diff 较长时用 path 只看关心的文件。
 

@@ -88,7 +88,7 @@ log-agent experience promote 3            # 写成 ~/.log-agent/skills/experienc
 ## Skills（排查手册）
 
 把团队的排查经验写成 skill，agent 遇到对应问题时会先读手册再按步骤查（例如某个服务的关键日志字段、
-常见根因、要重点看的代码位置）。每个 skill 是一个目录，里��放一份带 frontmatter 的 `SKILL.md`：
+常见根因、要重点看的代码位置）。每个 skill 是一个目录，里面放一份带 frontmatter 的 `SKILL.md`：
 
 ```
 .log-agent/skills/
