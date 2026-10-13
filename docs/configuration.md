@@ -126,11 +126,32 @@ verbose = true
 - 查找顺序：用户级 `~/.log-agent/config.toml` → 项目级 `.log-agent.toml`（从当前目录逐级向上找最近的一个，覆盖用户级）；
   也可以用环境变量 `LOG_AGENT_CONFIG` 直接指定文件。
 - 优先级：命令行参数 > 环境变量（`LOG_AGENT_MODEL`、`OPENAI_BASE_URL` 等）> 配置文件 > 内置默认值。
-- 支持的键：`model`、`base_url`、`code`、`encoding`、`timezone`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`，
+- 支持的键：`model`、`base_url`、`code`、`encoding`、`timezone`、`no_redact`、`max_steps`、`verbose`、`timeout`、`max_retries`、
+  `memory`、`skills`、模型分层的 `subagent_model` / `post_model` / `fallback_models`（见下文）、排查经验的 `experience` / `experience_reflection`，
   以及 analyze / chat 使用的 `db`、analyze 专用的 `no_save`。写错的键会给出提示并忽略。
-- 只能用环境变量设置的模型分层：`LOG_AGENT_SUBAGENT_MODEL`（子代理用的便宜模型）、`LOG_AGENT_POST_MODEL`
-  （收尾的结构化抽取和证据修正，缺省沿用子代理模型，都没设就用主模型）、`LOG_AGENT_FALLBACK_MODELS`（逗号分隔的备用模型）。
-  收尾用了便宜模型时，失败会依次退到主模型、备用模型。
 - 排查经验（见[长期记忆与 Skills](memory-and-skills.md#排查经验自我进化)）：`experience = false` 关闭经验注入，
   `experience_reflection = true` 开启每轮结束后的在线复盘（默认关闭，网页设置页也能切换）。
 - **API key 不支持写进配置文件**，仍然用 `OPENAI_API_KEY` 环境变量，避免 key 跟着项目文件被提交。
+
+### 模型分层
+
+一次排查里的模型调用分三类，可以各配一个模型，把贵的模型留给真正需要推理的地方：
+
+| 配置项 | 环境变量 | 用在哪 | 缺省 |
+|--------|----------|--------|------|
+| `model` | `LOG_AGENT_MODEL` | 主代理：规划、取证、写最终报告 | 必填 |
+| `subagent_model` | `LOG_AGENT_SUBAGENT_MODEL` | 子代理：主代理委派的具体子问题（取证） | 沿用主模型 |
+| `post_model` | `LOG_AGENT_POST_MODEL` | 收尾：整理结构化报告、按证据回查修正结论、排查经验的挑选 / 复盘 / 合并。只整理不取证，适合便宜、快、结构化输出稳定的模型 | 沿用子代理模型，都没设就用主模型 |
+| `fallback_models` | `LOG_AGENT_FALLBACK_MODELS` | 备用：主模型重试后仍失败（429 / 5xx / 超时）时按顺序切换（配置文件里写列表，环境变量用逗号分隔） | 无 |
+
+```toml
+model = "openai:x-ai/grok-4.7"
+subagent_model = "openai:deepseek/deepseek-v4.1-flash"
+post_model = "openai:deepseek/deepseek-v4.1-flash"
+fallback_models = ["openai:qwen-max"]
+```
+
+- 收尾模型失败时依次退回主模型和备用模型，所以给收尾配便宜模型不会让报告整理失败。
+- 网页「设置 → 模型分层」能直接改这几项（写到用户级 `config.toml`），留空时输入框里会显示实际会用哪个模型。
+- 这几项通过环境变量生效：已经设置了对应环境变量时以环境变量为准，网页里显示为锁定。
+- 每次调用用的是哪个模型，可以在网页「执行记录」里逐条看到。
