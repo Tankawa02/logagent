@@ -66,7 +66,7 @@ function AddExperience({ index }: { index: ExperienceIndex }) {
         <DraftFields draft={draft} onChange={setDraft} idPrefix="new-experience" />
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-48 flex-1 space-y-1">
-            <label htmlFor="experience-scope" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+            <label htmlFor="experience-scope" className="text-xs font-medium text-muted-foreground">
               范围
             </label>
             <Select
@@ -84,7 +84,9 @@ function AddExperience({ index }: { index: ExperienceIndex }) {
             添加并生效
           </Button>
         </div>
-        <p className="text-xs text-zinc-400">内容会脱敏后保存；含链接、文件行号、长 ID、时间等只和单次故障有关的细节会被拒绝。</p>
+        <p className="text-xs text-muted-foreground/70">
+          内容会脱敏后保存；含链接、文件行号、长 ID、时间等只和单次故障有关的细节会被拒绝。
+        </p>
         {save.error && <ErrorBox error={save.error} />}
       </form>
     </Card>
@@ -128,7 +130,7 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
 
   return (
     <li className="group flex flex-wrap items-start gap-3 px-4 py-3">
-      <span className="w-9 shrink-0 pt-0.5 text-right font-mono text-xs text-zinc-400">E{entry.id}</span>
+      <span className="w-9 shrink-0 pt-0.5 text-right font-mono text-xs text-muted-foreground/70">E{entry.id}</span>
       <div className="min-w-0 flex-1 space-y-1.5">
         {editing ? (
           <form
@@ -156,15 +158,15 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
           </form>
         ) : (
           <>
-            <p className="break-words text-sm font-medium text-zinc-900 dark:text-zinc-50">{entry.title}</p>
-            <p className="break-words text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-medium text-zinc-600 dark:text-zinc-300">适用：</span>
+            <p className="break-words text-sm font-medium text-foreground">{entry.title}</p>
+            <p className="break-words text-xs text-muted-foreground">
+              <span className="font-medium text-muted-foreground">适用：</span>
               {entry.trigger || '通用'}
             </p>
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{entry.strategy}</p>
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/80">{entry.strategy}</p>
           </>
         )}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground/70">
           <Badge tone={STATUS_TONE[entry.status]}>{STATUS_LABEL[entry.status]}</Badge>
           <Badge title={entry.project ?? '对所有项目生效'}>{entry.scope}</Badge>
           {entry.promotable && (
@@ -243,7 +245,7 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
         </div>
       )}
       {showHistory && (
-        <div id={historyId} className="min-w-0 basis-full border-t border-zinc-100 pt-3 sm:pl-12 dark:border-zinc-800">
+        <div id={historyId} className="min-w-0 basis-full border-t border-border pt-3 sm:pl-12">
           <ExperienceHistory entry={entry} />
         </div>
       )}
@@ -271,9 +273,7 @@ function IconButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className={`rounded p-1.5 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-        danger ? 'hover:text-red-600' : 'hover:text-zinc-700 dark:hover:text-zinc-200'
-      }`}
+      className={`rounded p-1.5 text-muted-foreground/70 hover:bg-accent ${danger ? 'hover:text-red-600' : 'hover:text-foreground'}`}
     >
       {children}
     </button>
@@ -282,12 +282,12 @@ function IconButton({
 
 function ReflectionStatus({ index }: { index: ExperienceIndex }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-      <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-200">
-        <span className={`h-2 w-2 rounded-full ${index.reflection ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600'}`} aria-hidden />
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm">
+      <span className="flex items-center gap-1.5 text-foreground/80">
+        <span className={`h-2 w-2 rounded-full ${index.reflection ? 'bg-emerald-500' : 'bg-muted-foreground/30'}`} aria-hidden />
         在线复盘{index.reflection ? '已开启' : '已关闭'}
       </span>
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+      <span className="text-xs text-muted-foreground">
         {index.reflection ? '每轮结束后复盘一次，新经验先进候选，由你确认后生效。' : '只使用离线评测学到的和手动添加的经验。'}
       </span>
       <Link to="/settings" className="ml-auto text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
@@ -342,7 +342,7 @@ export function ExperiencePage() {
                   </span>
                 }
               />
-              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <ul className="divide-y divide-border">
                 {candidates.map((entry) => (
                   <ExperienceRow key={entry.id} entry={entry} />
                 ))}
@@ -364,14 +364,14 @@ export function ExperiencePage() {
                 从评测案例里学习，或在设置里开启在线复盘。
               </Empty>
             ) : (
-              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <ul className="divide-y divide-border">
                 {active.map((entry) => (
                   <ExperienceRow key={entry.id} entry={entry} />
                 ))}
               </ul>
             )}
             {showArchived && archived.length > 0 && (
-              <ul className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/50 dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/30">
+              <ul className="divide-y divide-border border-t border-border bg-muted/50">
                 {archived.map((entry) => (
                   <ExperienceRow key={entry.id} entry={entry} />
                 ))}

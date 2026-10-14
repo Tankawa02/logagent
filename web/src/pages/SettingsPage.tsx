@@ -9,7 +9,7 @@ import { api } from '../lib/api'
 import type { ConnectionTestResult, SettingField, SettingKey, Settings, SettingsUpdate, SettingValue } from '../lib/types'
 
 const FIELD =
-  'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:disabled:bg-zinc-900'
+  'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-4 focus:ring-ring/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground'
 
 const KEYS: SettingKey[] = [
   'model',
@@ -170,7 +170,7 @@ function SettingsForm({
         </div>
       )}
       {settings.read_only && (
-        <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
           当前 serve 以 --read-only 启动：可以修改并保存配置���但本次运行不会提供提问功能。
         </div>
       )}
@@ -408,7 +408,7 @@ function SettingsForm({
         </div>
       </Card>
 
-      <p className="text-xs leading-relaxed text-zinc-400">
+      <p className="text-xs leading-relaxed text-muted-foreground/70">
         配置写入 <code className="font-mono">{settings.config_path}</code>，API Key 单独保存在{' '}
         <code className="font-mono">{settings.credentials_path}</code>（仅本人可读写）。
         {settings.project_config && (
@@ -420,10 +420,8 @@ function SettingsForm({
       </p>
 
       <div
-        className={`sticky bottom-4 flex flex-wrap items-center justify-end gap-2 rounded-xl border bg-white/95 py-2 pl-4 pr-2 backdrop-blur transition-shadow dark:bg-zinc-900/95 ${
-          dirty
-            ? 'border-zinc-300 shadow-lg shadow-zinc-900/5 dark:border-zinc-700 dark:shadow-black/30'
-            : 'border-zinc-200/80 dark:border-zinc-800'
+        className={`sticky bottom-4 flex flex-wrap items-center justify-end gap-2 rounded-xl border bg-card/95 py-2 pl-4 pr-2 backdrop-blur transition-shadow ${
+          dirty ? 'border-input shadow-lg shadow-foreground/5 dark:shadow-black/30' : 'border-border'
         }`}
       >
         <div className="mr-auto min-w-0 text-sm" aria-live="polite">
@@ -437,12 +435,12 @@ function SettingsForm({
           ) : invalidModel ? (
             <span className="text-red-600 dark:text-red-400">{invalidModelLabel}不在可用列表里，请重新选择</span>
           ) : dirty ? (
-            <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
+            <span className="flex items-center gap-1.5 text-foreground/80">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
               有未保存的修改
             </span>
           ) : (
-            <span className="text-zinc-400 dark:text-zinc-500">没有未保存的修改</span>
+            <span className="text-muted-foreground/70">没有未保存的修改</span>
           )}
         </div>
         <Button variant="ghost" onClick={reset} disabled={!dirty || save.isPending}>
@@ -468,7 +466,7 @@ const SOURCE_LABEL: Record<string, string> = {
 function SourceNote({ field }: { field: SettingField }) {
   if (field.source === 'env' || field.source === 'cli') {
     return (
-      <p className="flex items-center gap-1 text-xs text-zinc-500">
+      <p className="flex items-center gap-1 text-xs text-muted-foreground">
         <Lock className="h-3 w-3" aria-hidden />由{SOURCE_LABEL[field.source]} <code className="font-mono">{field.origin}</code>{' '}
         指定，网页里不能修改。
       </p>
@@ -514,7 +512,7 @@ function Switch({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${
-          checked ? 'bg-brand-600 dark:bg-brand-500' : 'bg-zinc-300 dark:bg-zinc-700'
+          checked ? 'bg-brand-600 dark:bg-brand-500' : 'bg-muted-foreground/30'
         }`}
       >
         <span
@@ -522,7 +520,7 @@ function Switch({
           className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5.5' : 'translate-x-0.5'}`}
         />
       </button>
-      <span className="text-sm text-zinc-700 dark:text-zinc-300" aria-hidden>
+      <span className="text-sm text-foreground/80" aria-hidden>
         {label}
       </span>
     </div>
@@ -535,13 +533,13 @@ function Row({ label, field, hint, children }: { label: string; field: SettingFi
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <label htmlFor={id} className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+        <label htmlFor={id} className="text-xs font-medium text-foreground/80">
           {label}
         </label>
         {overridden && <Badge tone={field.locked ? 'gray' : 'amber'}>{SOURCE_LABEL[field.source]}</Badge>}
       </div>
       {children(id)}
-      {overridden ? <SourceNote field={field} /> : hint && <p className="text-xs text-zinc-400">{hint}</p>}
+      {overridden ? <SourceNote field={field} /> : hint && <p className="text-xs text-muted-foreground/70">{hint}</p>}
     </div>
   )
 }
@@ -566,8 +564,8 @@ function ApiKeyField({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor={id} className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200">
-          <KeyRound className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+        <label htmlFor={id} className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">
+          <KeyRound className="h-3.5 w-3.5 text-muted-foreground/70" aria-hidden />
           API Key
         </label>
         {key.set ? (
@@ -580,7 +578,7 @@ function ApiKeyField({
         {key.source === 'env' && <Badge tone="gray">环境变量</Badge>}
       </div>
       {key.locked ? (
-        <p className="flex items-center gap-1 text-xs text-zinc-500">
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
           <Lock className="h-3 w-3" aria-hidden />
           由环境变量 <code className="font-mono">OPENAI_API_KEY</code> 提供，网页里不能修改。
         </p>
@@ -603,7 +601,7 @@ function ApiKeyField({
                 type="button"
                 onClick={() => setVisible((v) => !v)}
                 aria-label={visible ? '隐藏 Key' : '显示 Key'}
-                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground/70 hover:text-foreground"
               >
                 {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -614,7 +612,7 @@ function ApiKeyField({
               </Button>
             )}
           </div>
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-muted-foreground/70">
             {clear
               ? '保存后会删除已保存的 Key。'
               : 'Key 只保存在本机，页面不会回显完整内容。也可以继续用环境变量 OPENAI_API_KEY（优先级更高）。'}
@@ -637,25 +635,25 @@ function ConnectionTest({ draft, apiKey, fields }: { draft: Draft; apiKey: strin
   const result = test.data
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-3 sm:flex-row sm:items-center dark:border-zinc-800 dark:bg-zinc-950/40">
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border bg-muted/50 px-3 py-3 sm:flex-row sm:items-center">
       <Button onClick={() => test.mutate()} disabled={test.isPending} className="shrink-0">
         {test.isPending ? <Spinner /> : <PlugZap className="h-4 w-4" aria-hidden />}
         测试连接
       </Button>
       <div className="min-w-0 text-sm" aria-live="polite">
         {test.isPending ? (
-          <span className="text-zinc-500">正在发送一次最小请求…</span>
+          <span className="text-muted-foreground">正在发送一次最小请求…</span>
         ) : test.error ? (
           <span className="text-red-600 dark:text-red-400">{test.error.message}</span>
         ) : result ? (
           <span className={result.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
             {result.ok ? `连接成功 · ${result.latency}s · ${result.message}` : result.message}
-            <span className="block text-xs text-zinc-400">
+            <span className="block text-xs text-muted-foreground/70">
               {result.endpoint} · <span className="font-mono">{result.served_model || result.model}</span>
             </span>
           </span>
         ) : (
-          <span className="text-zinc-500">用上面填写的地址、模型和 Key 发一次请求，不需要先保存。</span>
+          <span className="text-muted-foreground">用上面填写的地址、模型和 Key 发一次请求，不需要先保存。</span>
         )}
       </div>
     </div>

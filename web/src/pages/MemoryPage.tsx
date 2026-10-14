@@ -73,7 +73,7 @@ function AddMemory({ index }: { index: MemoryIndex }) {
         />
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
-            <label htmlFor="memory-kind" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+            <label htmlFor="memory-kind" className="text-xs font-medium text-muted-foreground">
               类型
             </label>
             <Select
@@ -91,7 +91,7 @@ function AddMemory({ index }: { index: MemoryIndex }) {
             />
           </div>
           <div className="min-w-48 flex-1 space-y-1">
-            <label htmlFor="memory-scope" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+            <label htmlFor="memory-scope" className="text-xs font-medium text-muted-foreground">
               范围
             </label>
             <Select
@@ -109,7 +109,7 @@ function AddMemory({ index }: { index: MemoryIndex }) {
             保存
           </Button>
         </div>
-        <p className="text-xs text-zinc-400">内容会脱敏后保存，最长 300 字。⌘ / Ctrl + Enter 快速保存。</p>
+        <p className="text-xs text-muted-foreground/70">内容会脱敏后保存，最长 300 字。⌘ / Ctrl + Enter 快速保存。</p>
         {similar && (
           <SimilarPrompt
             similar={similar}
@@ -155,7 +155,7 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
 
   return (
     <li className="group flex items-start gap-3 px-4 py-3">
-      <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-xs text-zinc-400">#{memory.id}</span>
+      <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-xs text-muted-foreground/70">#{memory.id}</span>
       <div className="min-w-0 flex-1 space-y-1.5">
         {editing ? (
           <form
@@ -194,9 +194,9 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
             </div>
           </form>
         ) : (
-          <p className="whitespace-pre-wrap break-words text-sm text-zinc-800 dark:text-zinc-100">{memory.text}</p>
+          <p className="whitespace-pre-wrap break-words text-sm text-foreground">{memory.text}</p>
         )}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground/70">
           <Badge tone={KIND_TONE[memory.kind]}>{memory.kind_label}</Badge>
           <Badge title={memory.project ?? '对所有项目生效'}>{memory.scope_label}</Badge>
           <span>{ORIGIN_LABEL[memory.origin] ?? memory.origin}</span>
@@ -211,7 +211,7 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
             type="button"
             onClick={() => setEditing(true)}
             aria-label={`编辑记忆 #${memory.id}`}
-            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded p-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -228,7 +228,7 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
               if (ok) remove.mutate()
             }}
             aria-label={`删除记忆 #${memory.id}`}
-            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-red-600 dark:hover:bg-zinc-800"
+            className="rounded p-1.5 text-muted-foreground/70 hover:bg-accent hover:text-red-600"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -263,7 +263,7 @@ function MemoryList({ index }: { index: MemoryIndex }) {
   return (
     <Card>
       <CardHeader title={`已保存的记忆（${index.memories.length}）`}>
-        <div role="tablist" aria-label="按类型筛选" className="flex rounded-md bg-zinc-100 p-0.5 text-xs dark:bg-zinc-800">
+        <div role="tablist" aria-label="按类型筛选" className="flex rounded-md bg-muted p-0.5 text-xs">
           {[{ key: '' as const, label: '全部' }, ...index.kinds].map((k) => (
             <button
               key={k.key || 'all'}
@@ -271,18 +271,21 @@ function MemoryList({ index }: { index: MemoryIndex }) {
               role="tab"
               aria-selected={kind === k.key}
               onClick={() => setKind(k.key)}
-              className={`rounded px-2 py-1 ${kind === k.key ? 'bg-white font-medium text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100' : 'text-zinc-500'}`}
+              className={`rounded px-2 py-1 ${kind === k.key ? 'bg-card font-medium text-foreground shadow-xs' : 'text-muted-foreground'}`}
             >
               {k.label}
-              {k.key && counts[k.key] ? <span className="ml-1 text-zinc-400">{counts[k.key]}</span> : null}
+              {k.key && counts[k.key] ? <span className="ml-1 text-muted-foreground/70">{counts[k.key]}</span> : null}
             </button>
           ))}
         </div>
       </CardHeader>
       {index.memories.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+        <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5">
           <div className="relative min-w-48 flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70"
+              aria-hidden
+            />
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -308,7 +311,7 @@ function MemoryList({ index }: { index: MemoryIndex }) {
       ) : items.length === 0 ? (
         <Empty>没有符合筛选条件的记忆</Empty>
       ) : (
-        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        <ul className="divide-y divide-border">
           {items.map((m) => (
             <MemoryRow key={`${m.id}-${m.updated_at}`} memory={m} />
           ))}
@@ -352,9 +355,9 @@ export function MemoryPage() {
                   </span>
                 }
               >
-                <span className="text-xs text-zinc-400">agent 在对话里发现、值得记住的内容</span>
+                <span className="text-xs text-muted-foreground/70">agent 在对话里发现、值得记住的内容</span>
               </CardHeader>
-              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <ul className="divide-y divide-border">
                 {data.pending.map((c) => (
                   <CandidateRow key={c.id} candidate={c} />
                 ))}

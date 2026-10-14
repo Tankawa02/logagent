@@ -14,7 +14,7 @@ export function ExperienceDraftFields({
   return (
     <div className="space-y-3">
       <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-title`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+        <label htmlFor={`${idPrefix}-title`} className="text-xs font-medium text-muted-foreground">
           标题
         </label>
         <input
@@ -27,7 +27,7 @@ export function ExperienceDraftFields({
         />
       </div>
       <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-trigger`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+        <label htmlFor={`${idPrefix}-trigger`} className="text-xs font-medium text-muted-foreground">
           适用条件
         </label>
         <input
@@ -40,7 +40,7 @@ export function ExperienceDraftFields({
         />
       </div>
       <div className="space-y-1">
-        <label htmlFor={`${idPrefix}-strategy`} className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+        <label htmlFor={`${idPrefix}-strategy`} className="text-xs font-medium text-muted-foreground">
           做法
         </label>
         <textarea

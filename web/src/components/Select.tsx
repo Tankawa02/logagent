@@ -102,7 +102,7 @@ export function Select({
   const sizing = {
     sm: 'rounded-md py-0.5 pl-2 pr-6 text-xs',
     md: 'rounded-md py-1.5 pl-2.5 pr-8 text-sm',
-    lg: 'rounded-lg py-2 pl-3 pr-8 text-sm dark:border-zinc-700',
+    lg: 'rounded-lg py-2 pl-3 pr-8 text-sm',
   }[size]
 
   return (
@@ -120,11 +120,11 @@ export function Select({
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={onKeyDown}
         title={current?.title ?? current?.label}
-        className={`flex w-full items-center border border-zinc-200 bg-white text-left text-zinc-800 outline-none transition-colors hover:border-zinc-300 focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/20 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 ${size === 'lg' ? '' : 'dark:border-zinc-800'} ${sizing}`}
+        className={`flex w-full items-center border border-border bg-card text-left text-foreground outline-none transition-colors hover:border-input focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/20 ${size === 'lg' ? '' : ''} ${sizing}`}
       >
         <span className="truncate">{current?.label ?? '请选择'}</span>
         <ChevronDown
-          className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-zinc-400 transition-transform ${
+          className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground/70 transition-transform ${
             size === 'sm' ? 'right-1.5 h-3 w-3' : 'right-2.5 h-4 w-4'
           } ${open ? 'rotate-180' : ''}`}
           aria-hidden
@@ -136,7 +136,7 @@ export function Select({
           id={listId}
           role="listbox"
           aria-label={ariaLabel}
-          className={`absolute z-40 ${dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} max-h-64 min-w-full animate-menu-in overflow-auto rounded-xl motion-reduce:animate-none border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900 ${
+          className={`absolute z-40 ${dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} max-h-64 min-w-full animate-menu-in overflow-auto rounded-xl motion-reduce:animate-none border border-border bg-card p-1 shadow-lg ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
@@ -157,13 +157,11 @@ export function Select({
                 onMouseEnter={() => setActive(i)}
                 className={`flex cursor-pointer items-center justify-between gap-3 whitespace-nowrap rounded-lg px-2.5 py-1.5 ${
                   size === 'sm' ? 'text-xs' : 'text-[13px]'
-                } ${i === active ? 'bg-zinc-100 dark:bg-zinc-800' : ''} ${
-                  selected ? 'text-brand-700 dark:text-brand-300' : 'text-zinc-700 dark:text-zinc-200'
-                }`}
+                } ${i === active ? 'bg-muted' : ''} ${selected ? 'text-brand-700 dark:text-brand-300' : 'text-foreground/80'}`}
               >
                 <span className="flex min-w-0 items-baseline gap-2">
                   <span className="truncate">{o.label}</span>
-                  {o.hint && <span className="truncate text-xs text-zinc-400 dark:text-zinc-500">{o.hint}</span>}
+                  {o.hint && <span className="truncate text-xs text-muted-foreground/70">{o.hint}</span>}
                 </span>
                 {selected && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}
               </li>

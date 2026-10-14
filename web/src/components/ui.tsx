@@ -68,7 +68,7 @@ export function Spinner({ className = '' }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`motion-essential inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 ${className}`}
+      className={`motion-essential inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-input border-t-foreground/70 ${className}`}
     />
   )
 }
@@ -104,16 +104,12 @@ const ROW_WIDTHS = ['w-3/4', 'w-2/3', 'w-5/6', 'w-1/2', 'w-4/5', 'w-3/5']
 /** 卡片 + 行列表占位（记忆、skill、对话列表等） */
 export function ListSkeleton({ rows = 4, label = '加载中', className = '' }: { rows?: number; label?: string; className?: string }) {
   return (
-    <div
-      role="status"
-      aria-label={label}
-      className={`rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900 ${className}`}
-    >
+    <div role="status" aria-label={label} className={`rounded-xl border border-border bg-card ${className}`}>
       <span className="sr-only">{label}…</span>
-      <div className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+      <div className="border-b border-border px-4 py-3">
         <Skeleton className="h-4 w-28" />
       </div>
-      <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+      <div className="divide-y divide-border">
         {Array.from({ length: rows }, (_, i) => (
           <div key={i} className="space-y-2 px-4 py-3.5">
             <Skeleton className={`h-3.5 ${ROW_WIDTHS[i % ROW_WIDTHS.length]}`} />
@@ -128,9 +124,9 @@ export function ListSkeleton({ rows = 4, label = '加载中', className = '' }: 
 /** 表单卡片占位（设置页） */
 export function FormSkeleton({ fields = 4, label = '加载中' }: { fields?: number; label?: string }) {
   return (
-    <div role="status" aria-label={label} className="rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <div role="status" aria-label={label} className="rounded-xl border border-border bg-card">
       <span className="sr-only">{label}…</span>
-      <div className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+      <div className="border-b border-border px-4 py-3">
         <Skeleton className="h-4 w-24" />
       </div>
       <div className="grid gap-5 px-4 py-5 sm:grid-cols-2">
@@ -152,7 +148,7 @@ export function StatsSkeleton({ label = '加载中' }: { label?: string }) {
       <span className="sr-only">{label}…</span>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="space-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+          <div key={i} className="space-y-2 rounded-xl border border-border bg-card px-4 py-3">
             <Skeleton className="h-3 w-16" />
             <Skeleton className="h-6 w-20" />
           </div>
@@ -186,7 +182,7 @@ export function ShellSkeleton() {
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="px-4 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">{children}</div>
+  return <div className="px-4 py-10 text-center text-sm text-muted-foreground">{children}</div>
 }
 
 export function ErrorBox({ error }: { error: unknown }) {
@@ -199,9 +195,9 @@ export function ErrorBox({ error }: { error: unknown }) {
 }
 
 export function List({ items, empty = '待确认 / 暂无信息' }: { items: string[]; empty?: string }) {
-  if (!items.length) return <p className="text-sm text-zinc-400 dark:text-zinc-500">{empty}</p>
+  if (!items.length) return <p className="text-sm text-muted-foreground/70">{empty}</p>
   return (
-    <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+    <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-foreground/80">
       {items.map((item, i) => (
         <li key={i}>{item}</li>
       ))}

@@ -42,7 +42,7 @@ function sourceLabel(run: ExperienceRun): ReactNode {
     return (
       <>
         评测案例 <span className="font-mono">{run.link?.case ?? run.source}</span>
-        {run.link?.batch && <span className="text-zinc-400"> · 批次 {run.link.batch}</span>}
+        {run.link?.batch && <span className="text-muted-foreground/70"> · 批次 {run.link.batch}</span>}
       </>
     )
   }
@@ -50,7 +50,7 @@ function sourceLabel(run: ExperienceRun): ReactNode {
     return (
       <>
         会话 <span className="font-mono">{run.link.session}</span>
-        {run.link.turn ? <span className="text-zinc-400"> · 第 {run.link.turn} 轮</span> : null}
+        {run.link.turn ? <span className="text-muted-foreground/70"> · 第 {run.link.turn} 轮</span> : null}
       </>
     )
   }
@@ -65,7 +65,7 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <h4 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">{title}</h4>
+        <h4 className="text-xs font-semibold text-muted-foreground">{title}</h4>
         {aside}
       </div>
       {children}
@@ -76,20 +76,20 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
 function Steps({ run }: { run: ExperienceRun }) {
   const steps = run.context.steps ?? []
   const [all, setAll] = useState(false)
-  if (steps.length === 0) return <p className="text-xs text-zinc-400">没有记录到工具调用。</p>
+  if (steps.length === 0) return <p className="text-xs text-muted-foreground/70">没有记录到工具调用。</p>
   const shown = all ? steps : steps.slice(0, STEP_PREVIEW)
   const total = run.context.step_count ?? steps.length
   return (
     <div className="space-y-1.5">
-      <ol className="space-y-0.5 rounded-lg border border-zinc-100 bg-zinc-50/70 p-2 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-950/40">
+      <ol className="space-y-0.5 rounded-lg border border-border bg-muted/50 p-2 font-mono text-xs">
         {shown.map((step, index) => (
           <li key={index} className={`flex gap-2 ${step.subagent ? 'pl-4' : ''}`}>
-            <span className="w-6 shrink-0 text-right text-zinc-400">{index + 1}</span>
-            <span className={`shrink-0 font-medium ${step.failed ? 'text-red-600 dark:text-red-400' : 'text-zinc-800 dark:text-zinc-100'}`}>
-              {step.subagent && <span className="text-zinc-400">↳ </span>}
+            <span className="w-6 shrink-0 text-right text-muted-foreground/70">{index + 1}</span>
+            <span className={`shrink-0 font-medium ${step.failed ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>
+              {step.subagent && <span className="text-muted-foreground/70">↳ </span>}
               {step.name}
             </span>
-            <span className="min-w-0 truncate text-zinc-500 dark:text-zinc-400" title={step.args}>
+            <span className="min-w-0 truncate text-muted-foreground" title={step.args}>
               {step.args}
             </span>
             {step.failed && <span className="shrink-0 text-red-600 dark:text-red-400">失败</span>}
@@ -97,7 +97,7 @@ function Steps({ run }: { run: ExperienceRun }) {
         ))}
       </ol>
       {(steps.length > STEP_PREVIEW || total > steps.length) && (
-        <div className="flex items-center gap-3 text-xs text-zinc-400">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground/70">
           {steps.length > STEP_PREVIEW && (
             <button
               type="button"
@@ -132,10 +132,10 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
   const summary = run.summary
 
   return (
-    <div className="space-y-4 rounded-lg border border-zinc-200/80 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+    <div className="space-y-4 rounded-lg border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span>{sourceLabel(run)}</span>
-        <span className="text-zinc-400">{run.created_at.slice(0, 16)}</span>
+        <span className="text-muted-foreground/70">{run.created_at.slice(0, 16)}</span>
         {run.link?.session && run.link.turn ? (
           <Link
             to="/trace/$name/$turn"
@@ -150,7 +150,7 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
 
       {ctx.question && (
         <Section title="用户问题">
-          <p className="whitespace-pre-wrap break-words text-sm text-zinc-800 dark:text-zinc-100">{ctx.question}</p>
+          <p className="whitespace-pre-wrap break-words text-sm text-foreground">{ctx.question}</p>
         </Section>
       )}
 
@@ -160,18 +160,18 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
           <>
             {assessment && <Badge tone={assessment.tone}>{assessment.label}</Badge>}
             {ctx.confidence && (
-              <span className="text-xs text-zinc-400">置信度 {CONFIDENCE[ctx.confidence as Confidence] ?? ctx.confidence}</span>
+              <span className="text-xs text-muted-foreground/70">置信度 {CONFIDENCE[ctx.confidence as Confidence] ?? ctx.confidence}</span>
             )}
           </>
         }
       >
         {ctx.conclusion ? (
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{ctx.conclusion}</p>
+          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/80">{ctx.conclusion}</p>
         ) : (
-          <p className="text-xs text-zinc-400">没有结论。</p>
+          <p className="text-xs text-muted-foreground/70">没有结论。</p>
         )}
         {evidence && evidence.total > 0 && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs text-muted-foreground">
             证据回查 {evidence.total} 条：通过 {evidence.verified} · 行号偏移 {evidence.shifted} · 不符 {evidence.mismatch} · 无法核对{' '}
             {evidence.unresolved}
             {ctx.budget_hit && ' · 触发了 tokens 预算收尾'}
@@ -182,19 +182,19 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
       {truth && (
         <Section title="评测标准答案" aside={<Badge tone={(truth.score ?? 0) >= 80 ? 'green' : 'amber'}>{score(truth.score)} / 100</Badge>}>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-            <dt className="text-zinc-400">判定</dt>
-            <dd className="text-zinc-700 dark:text-zinc-200">
+            <dt className="text-muted-foreground/70">判定</dt>
+            <dd className="text-foreground/80">
               {truth.assessment || '未标注'} · {truth.assessment_ok ? '答对' : '答错或缺失'}
             </dd>
-            <dt className="text-zinc-400">根因位置</dt>
-            <dd className="break-all font-mono text-zinc-700 dark:text-zinc-200">
+            <dt className="text-muted-foreground/70">根因位置</dt>
+            <dd className="break-all font-mono text-foreground/80">
               {truth.root_cause.join(', ') || '未标注'}
-              <span className="ml-1 font-sans text-zinc-400">{truth.root_cause_hit ? '（命中）' : '（未命中）'}</span>
+              <span className="ml-1 font-sans text-muted-foreground/70">{truth.root_cause_hit ? '（命中）' : '（未命中）'}</span>
             </dd>
             {truth.keywords.length > 0 && (
               <>
-                <dt className="text-zinc-400">关键词</dt>
-                <dd className="text-zinc-700 dark:text-zinc-200">{truth.keywords.join('、')}</dd>
+                <dt className="text-muted-foreground/70">关键词</dt>
+                <dd className="text-foreground/80">{truth.keywords.join('、')}</dd>
               </>
             )}
           </dl>
@@ -203,10 +203,14 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
 
       <Section
         title="开始时注入的经验"
-        aside={run.route && <span className="text-xs text-zinc-400">{run.route === 'model' ? '模型按语义挑选' : '按字面匹配挑选'}</span>}
+        aside={
+          run.route && (
+            <span className="text-xs text-muted-foreground/70">{run.route === 'model' ? '模型按语义挑选' : '按字面匹配挑选'}</span>
+          )
+        }
       >
         {run.injected.length === 0 ? (
-          <p className="text-xs text-zinc-400">无</p>
+          <p className="text-xs text-muted-foreground/70">无</p>
         ) : (
           <ul className="flex flex-wrap gap-1.5">
             {run.injected.map((item) => (
@@ -224,7 +228,10 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
         <Steps run={run} />
       </Section>
 
-      <Section title="复盘模型的判断" aside={run.model && <span className="font-mono text-xs text-zinc-400">{shortModel(run.model)}</span>}>
+      <Section
+        title="复盘模型的判断"
+        aside={run.model && <span className="font-mono text-xs text-muted-foreground/70">{shortModel(run.model)}</span>}
+      >
         {votes.length > 0 && (
           <ul className="flex flex-wrap gap-1.5">
             {votes.map((vote) => (
@@ -244,31 +251,29 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
                 <li
                   key={index}
                   className={`rounded-md border px-2.5 py-2 text-xs ${
-                    mine
-                      ? 'border-brand-200 bg-brand-50/60 dark:border-brand-900 dark:bg-brand-950/30'
-                      : 'border-zinc-100 dark:border-zinc-800'
+                    mine ? 'border-brand-200 bg-brand-50/60 dark:border-brand-900 dark:bg-brand-950/30' : 'border-border'
                   }`}
                 >
-                  <p className="flex flex-wrap items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
+                  <p className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
                     {draft.title}
                     <Badge>{draft.scope === 'project' ? '本项目' : '全局'}</Badge>
                     {mine && <Badge tone="blue">即这条经验</Badge>}
                   </p>
-                  <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{draft.trigger}</p>
-                  <p className="mt-0.5 text-zinc-700 dark:text-zinc-200">{draft.strategy}</p>
+                  <p className="mt-0.5 text-muted-foreground">适用：{draft.trigger}</p>
+                  <p className="mt-0.5 text-foreground/80">{draft.strategy}</p>
                 </li>
               )
             })}
           </ol>
         ) : (
           votes.length === 0 && (
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-muted-foreground/70">
               {summary.confirmed?.length ? '没有提炼新经验，已有经验覆盖了这次的做法。' : '没有提炼新经验。'}
             </p>
           )
         )}
         {summary.added?.length || summary.merged?.length || summary.confirmed?.length || summary.rejected?.length ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs text-muted-foreground">
             落库：
             {[
               summary.added?.length ? `新增 ${summary.added.map((i) => `E${i}`).join('、')}` : '',
@@ -284,10 +289,10 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
 
       {run.outcome && (
         <details className="group">
-          <summary className="cursor-pointer select-none text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
+          <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground hover:text-foreground">
             复盘模型收到的原文（已脱敏）
           </summary>
-          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 p-3 font-mono text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300">
+          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground/80">
             {run.outcome}
           </pre>
         </details>
@@ -307,7 +312,7 @@ function GateTable({
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
-        <thead className="text-zinc-400">
+        <thead className="text-muted-foreground/70">
           <tr>
             <th className="py-1 pr-3 font-medium">分组 / 案例</th>
             <th className="py-1 pr-3 text-right font-medium">基线</th>
@@ -315,12 +320,12 @@ function GateTable({
             <th className="py-1 text-right font-medium">变化</th>
           </tr>
         </thead>
-        <tbody className="tabular-nums text-zinc-700 dark:text-zinc-200">
+        <tbody className="tabular-nums text-foreground/80">
           {(Object.keys(names) as (keyof typeof names)[]).map((key) => {
             const { before, after } = groups[key]
             const delta = before !== null && after !== null ? after - before : null
             return (
-              <tr key={key} className="border-t border-zinc-100 font-medium dark:border-zinc-800">
+              <tr key={key} className="border-t border-border font-medium">
                 <td className="py-1 pr-3">{names[key]}</td>
                 <td className="py-1 pr-3 text-right">{score(before)}</td>
                 <td className="py-1 pr-3 text-right">{score(after)}</td>
@@ -331,10 +336,10 @@ function GateTable({
             )
           })}
           {cases.map((row) => (
-            <tr key={row.case} className="border-t border-zinc-100 text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+            <tr key={row.case} className="border-t border-border text-muted-foreground">
               <td className="py-1 pr-3 font-mono">
                 {row.case}
-                <span className="ml-1 font-sans text-zinc-400">{row.split === 'holdout' ? '留出' : '训练'}</span>
+                <span className="ml-1 font-sans text-muted-foreground/70">{row.split === 'holdout' ? '留出' : '训练'}</span>
               </td>
               <td className="py-1 pr-3 text-right">{score(row.before)}</td>
               <td className="py-1 pr-3 text-right">{score(row.after)}</td>
@@ -367,11 +372,11 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
     case 'merged':
       return {
         icon: <GitMerge className="h-3.5 w-3.5" />,
-        tone: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100',
+        tone: 'bg-muted-foreground/20 text-foreground/80',
         text: (
           <>
             另一次复盘提炼出相似经验，已合并{event.detail.counted_helpful ? '并记一张有用票' : ''}
-            {origin && <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {origin}</span>}
+            {origin && <span className="font-normal text-muted-foreground"> · {origin}</span>}
           </>
         ),
       }
@@ -382,7 +387,7 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         text: (
           <>
             另一次排查印证了这条经验{event.detail.counted_helpful ? '，记一张有用票' : ''}
-            {origin && <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {origin}</span>}
+            {origin && <span className="font-normal text-muted-foreground"> · {origin}</span>}
           </>
         ),
       }
@@ -394,20 +399,20 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         text: (
           <>
             被注入后复盘标为{event.kind === 'helpful' ? '有用' : '有害'}
-            {origin && <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {origin}</span>}
+            {origin && <span className="font-normal text-muted-foreground"> · {origin}</span>}
           </>
         ),
       }
     case 'status':
       return {
         icon: event.detail.to === 'active' ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleSlash className="h-3.5 w-3.5" />,
-        tone: event.detail.to === 'active' ? 'bg-emerald-600 text-white' : 'bg-zinc-400 text-white dark:bg-zinc-600',
+        tone: event.detail.to === 'active' ? 'bg-emerald-600 text-white' : 'bg-muted-foreground/50 text-white',
         text: (
           <span className="inline-flex flex-wrap items-center gap-1">
             {STATUS_LABEL[event.detail.from]}
-            <ArrowRight className="h-3 w-3 text-zinc-400" aria-hidden />
+            <ArrowRight className="h-3 w-3 text-muted-foreground/70" aria-hidden />
             {STATUS_LABEL[event.detail.to]}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">
+            <span className="font-normal text-muted-foreground">
               · {STATUS_BY[event.detail.by] ?? event.detail.by}
               {event.detail.into ? `，并入 E${event.detail.into}` : ''}
             </span>
@@ -421,9 +426,7 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         text: (
           <>
             精简：合并了 {event.detail.absorbed.map((a) => `E${a.id}`).join('、')}
-            {event.detail.model && (
-              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400"> · {shortModel(event.detail.model)}</span>
-            )}
+            {event.detail.model && <span className="font-mono font-normal text-muted-foreground"> · {shortModel(event.detail.model)}</span>}
           </>
         ),
       }
@@ -434,7 +437,7 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         text: (
           <>
             离线门控{event.detail.dry_run ? '（试运行）' : ''}：{event.detail.accepted ? '通过' : '未通过'}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">
+            <span className="font-normal text-muted-foreground">
               {' '}
               · 批次 {event.detail.batch} · 同批候选 {event.detail.candidates.length} 条
             </span>
@@ -444,7 +447,7 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
     case 'edited':
       return {
         icon: <Pencil className="h-3.5 w-3.5" />,
-        tone: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100',
+        tone: 'bg-muted-foreground/20 text-foreground/80',
         text: '人工编辑',
       }
   }
@@ -453,16 +456,16 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
 function EventBody({ event, run, entry }: { event: ExperienceEvent; run: ExperienceRun | undefined; entry: ExperienceItem }) {
   if (event.kind === 'created') {
     if (event.detail.origin === 'manual') return null
-    if (!run) return <p className="text-xs text-zinc-400">复盘记录已被清理。</p>
+    if (!run) return <p className="text-xs text-muted-foreground/70">复盘记录已被清理。</p>
     return <RunDetail run={run} entry={entry} />
   }
   if (event.kind === 'merged') {
     return (
       <div className="space-y-2">
-        <div className="rounded-md border border-zinc-100 px-2.5 py-2 text-xs dark:border-zinc-800">
-          <p className="font-medium text-zinc-800 dark:text-zinc-100">{event.detail.draft.title}</p>
-          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{event.detail.draft.trigger}</p>
-          <p className="mt-0.5 text-zinc-700 dark:text-zinc-200">{event.detail.draft.strategy}</p>
+        <div className="rounded-md border border-border px-2.5 py-2 text-xs">
+          <p className="font-medium text-foreground">{event.detail.draft.title}</p>
+          <p className="mt-0.5 text-muted-foreground">适用：{event.detail.draft.trigger}</p>
+          <p className="mt-0.5 text-foreground/80">{event.detail.draft.strategy}</p>
         </div>
         {run && (
           <Collapsible label="查看这次排查的过程">
@@ -483,7 +486,7 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
     return (
       <Collapsible label="查看门控得分">
         <GateTable groups={event.detail.groups} cases={event.detail.cases} />
-        <p className="mt-1.5 text-xs text-zinc-400">
+        <p className="mt-1.5 text-xs text-muted-foreground/70">
           留出集与全体的平均分都不低于基线{event.detail.tolerance ? `（允许 ${event.detail.tolerance} 分波动）` : ''}才通过
           {event.detail.model && <span className="font-mono"> · {shortModel(event.detail.model)}</span>}
         </p>
@@ -494,23 +497,23 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
     const { before, absorbed, reason } = event.detail
     return (
       <div className="space-y-2 text-xs">
-        {reason && <p className="text-zinc-600 dark:text-zinc-300">理由：{reason}</p>}
-        <div className="rounded-md border border-zinc-100 px-2.5 py-2 dark:border-zinc-800">
-          <p className="text-zinc-400">
+        {reason && <p className="text-muted-foreground">理由：{reason}</p>}
+        <div className="rounded-md border border-border px-2.5 py-2">
+          <p className="text-muted-foreground/70">
             合并前的本条（{STATUS_LABEL[before.status]} · 有用 {before.helpful} · 有害 {before.harmful}）
           </p>
-          <p className="mt-0.5 font-medium text-zinc-600 dark:text-zinc-300">{before.title}</p>
-          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{before.trigger}</p>
-          <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{before.strategy}</p>
+          <p className="mt-0.5 font-medium text-muted-foreground">{before.title}</p>
+          <p className="mt-0.5 text-muted-foreground">适用：{before.trigger}</p>
+          <p className="mt-0.5 text-muted-foreground">{before.strategy}</p>
         </div>
         {absorbed.map((item) => (
-          <div key={item.id} className="rounded-md border border-zinc-100 px-2.5 py-2 dark:border-zinc-800">
-            <p className="text-zinc-400">
+          <div key={item.id} className="rounded-md border border-border px-2.5 py-2">
+            <p className="text-muted-foreground/70">
               并入的 E{item.id}（{STATUS_LABEL[item.status]} · 有用 {item.helpful} · 有害 {item.harmful}）
             </p>
-            <p className="mt-0.5 font-medium text-zinc-600 dark:text-zinc-300">{item.title}</p>
-            <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{item.trigger}</p>
-            <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{item.strategy}</p>
+            <p className="mt-0.5 font-medium text-muted-foreground">{item.title}</p>
+            <p className="mt-0.5 text-muted-foreground">适用：{item.trigger}</p>
+            <p className="mt-0.5 text-muted-foreground">{item.strategy}</p>
           </div>
         ))}
       </div>
@@ -519,11 +522,11 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
   if (event.kind === 'edited') {
     const before = event.detail.before
     return (
-      <div className="rounded-md border border-zinc-100 px-2.5 py-2 text-xs dark:border-zinc-800">
-        <p className="text-zinc-400">编辑前</p>
-        <p className="mt-0.5 font-medium text-zinc-600 line-through decoration-zinc-300 dark:text-zinc-300">{before.title}</p>
-        <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{before.trigger}</p>
-        <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{before.strategy}</p>
+      <div className="rounded-md border border-border px-2.5 py-2 text-xs">
+        <p className="text-muted-foreground/70">编辑前</p>
+        <p className="mt-0.5 font-medium text-muted-foreground line-through decoration-muted-foreground/50">{before.title}</p>
+        <p className="mt-0.5 text-muted-foreground">适用：{before.trigger}</p>
+        <p className="mt-0.5 text-muted-foreground">{before.strategy}</p>
       </div>
     )
   }
@@ -552,7 +555,7 @@ export function ExperienceHistory({ entry }: { entry: ExperienceItem }) {
 
   if (data.events.length === 0) {
     return (
-      <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-950/40 dark:text-zinc-400">
+      <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
         这条经验产生于来历记录功能上线之前，只知道它
         {entry.origin === 'manual' ? '是手动添加的' : `来自${entry.origin === 'eval' ? '离线评测' : '在线复盘'}`}
         {entry.sources.length > 0 && `（来源：${entry.sources.join('、')}）`}，创建于 {entry.created_at.slice(0, 16)}。
@@ -561,7 +564,7 @@ export function ExperienceHistory({ entry }: { entry: ExperienceItem }) {
   }
 
   return (
-    <ol className="relative space-y-4 before:absolute before:bottom-2 before:left-[11px] before:top-2 before:w-px before:bg-zinc-200 dark:before:bg-zinc-800">
+    <ol className="relative space-y-4 before:absolute before:bottom-2 before:left-[11px] before:top-2 before:w-px before:bg-muted-foreground/20">
       {data.events.map((event) => {
         const run = event.run_id !== null ? runs.get(event.run_id) : undefined
         const head = eventHeadline(event, run)
@@ -574,9 +577,9 @@ export function ExperienceHistory({ entry }: { entry: ExperienceItem }) {
               {head.icon}
             </span>
             <div className="min-w-0 flex-1 space-y-2">
-              <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm font-medium text-zinc-800 dark:text-zinc-100">
+              <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm font-medium text-foreground">
                 <span className="min-w-0">{head.text}</span>
-                <time className="shrink-0 text-xs font-normal text-zinc-400" dateTime={event.created_at.replace(' ', 'T')}>
+                <time className="shrink-0 text-xs font-normal text-muted-foreground/70" dateTime={event.created_at.replace(' ', 'T')}>
                   {event.created_at.slice(0, 16)}
                 </time>
               </p>
