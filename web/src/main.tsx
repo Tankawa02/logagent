@@ -9,6 +9,8 @@ import { PageSkeleton, ShellSkeleton } from './components/ui'
 import { api, ApiError } from './lib/api'
 import { validateWorkspaceSearch, type WorkspaceSearch } from './lib/workspace-search'
 import { AuthRequired } from './pages/AuthRequired'
+import '@fontsource-variable/geist'
+import '@fontsource-variable/geist-mono'
 import './styles.css'
 
 // 每个页面一个 chunk：分享页只加载只读 Workspace，管理页不拖慢首屏

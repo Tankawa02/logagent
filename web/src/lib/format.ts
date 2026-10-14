@@ -78,6 +78,30 @@ export function formatGenerated(value: string | null | undefined): string {
   return value.replace('T', ' ').replace(/(\.\d+)?([+-]\d{2}:\d{2}|Z)$/, '')
 }
 
+function startOfDay(ms: number): number {
+  const d = new Date(ms)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** 列表里的「今天 14:28 / 昨天 18:40 / 10月9日 16:22」，跨年再带上年份 */
+export function formatDayTime(value: string | null | undefined, now: number = Date.now()): string {
+  const at = value ? Date.parse(value) : NaN
+  if (Number.isNaN(at)) return formatGenerated(value)
+  const d = new Date(at)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
+  if (days === 0) return `今天 ${hm}`
+  if (days === 1) return `昨天 ${hm}`
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`
+  return d.getFullYear() === new Date(now).getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}年${md}`
+}
+
+export function isToday(value: string | null | undefined, now: number = Date.now()): boolean {
+  const at = value ? Date.parse(value) : NaN
+  return !Number.isNaN(at) && startOfDay(at) === startOfDay(now)
+}
+
 /** 侧边栏里的「刚刚 / 5 分钟前 / 3 小时前 / 2 天前」，超过一周显示月-日 */
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const at = Date.parse(iso)
@@ -129,12 +153,12 @@ export function splitPath(path: string): { dir: string; name: string } {
 export type Tone = 'red' | 'amber' | 'green' | 'gray' | 'blue'
 
 export const TONE_CLASS: Record<Tone, string> = {
-  // 红色只留给「确认故障 / 出错」，做成实心让它成为唯一的强警示；证据层面的问题用琥珀色
-  red: 'bg-red-600 text-white ring-red-600 dark:bg-red-500/90 dark:text-white dark:ring-red-500/90',
-  amber: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900',
-  green: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900',
-  gray: 'bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700',
-  blue: 'bg-brand-50 text-brand-700 ring-brand-200 dark:bg-brand-950/40 dark:text-brand-300 dark:ring-brand-900',
+  // 红色只留给「确认故障 / 出错」；证据层面的问题用琥珀色
+  red: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/30',
+  amber: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30',
+  green: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
+  gray: 'bg-muted text-muted-foreground ring-border',
+  blue: 'bg-brand-soft text-brand-strong ring-brand-200 dark:ring-brand-800',
 }
 
 /** 报告里反引号包着的 `文件:行号` / `文件:起-止`，与 citations._CITATION 相同的写法 */

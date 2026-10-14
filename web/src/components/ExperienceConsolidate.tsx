@@ -61,29 +61,26 @@ function ProposalCard({
   return (
     <li className="space-y-3 px-4 py-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-zinc-400">建议 {position}</span>
-        <span className="text-sm text-zinc-700 dark:text-zinc-200">{proposal.reason}</span>
+        <span className="text-xs font-medium text-muted-foreground/70">建议 {position}</span>
+        <span className="text-sm text-foreground/80">{proposal.reason}</span>
       </div>
       {proposal.shared_step && (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="font-medium text-zinc-600 dark:text-zinc-300">共同的排查动作：</span>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-muted-foreground">共同的排查动作：</span>
           {proposal.shared_step}
         </p>
       )}
       <ul className="space-y-1.5" aria-label="将被合并的经验">
         {proposal.members.map((member) => (
-          <li
-            key={member.id}
-            className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md border border-zinc-100 px-2.5 py-2 text-xs dark:border-zinc-800"
-          >
-            <span className="font-mono text-zinc-400">E{member.id}</span>
+          <li key={member.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-2 text-xs">
+            <span className="font-mono text-muted-foreground/70">E{member.id}</span>
             <Badge tone={STATUS_TONE[member.status]}>{STATUS_LABEL[member.status]}</Badge>
             {member.id === proposal.keep && <Badge tone="blue">保留</Badge>}
-            <span className="min-w-0 flex-1 break-words font-medium text-zinc-800 dark:text-zinc-100">{member.title}</span>
-            <span className="text-zinc-400">
+            <span className="min-w-0 flex-1 break-words font-medium text-foreground">{member.title}</span>
+            <span className="text-muted-foreground/70">
               有用 {member.helpful} · 有害 {member.harmful}
             </span>
-            <p className="basis-full break-words text-zinc-500 dark:text-zinc-400">
+            <p className="basis-full break-words text-muted-foreground">
               适用：{member.trigger || '通用'}｜{member.strategy}
             </p>
           </li>
@@ -97,15 +94,15 @@ function ProposalCard({
         <ExperienceDraftFields draft={draft} onChange={setDraft} idPrefix={`consolidate-${proposal.keep}`} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" className="px-2.5 py-1 text-xs" disabled={!ready || merge.isPending} onClick={() => merge.mutate()}>
+        <Button variant="primary" size="xs" disabled={!ready || merge.isPending} onClick={() => merge.mutate()}>
           {merge.isPending ? <Spinner className="h-3 w-3" /> : <GitMerge className="h-3.5 w-3.5" aria-hidden />}
           合并
         </Button>
-        <Button className="px-2.5 py-1 text-xs" disabled={merge.isPending} onClick={onDone}>
+        <Button size="xs" disabled={merge.isPending} onClick={onDone}>
           <X className="h-3.5 w-3.5" aria-hidden />
           忽略
         </Button>
-        <span className="text-xs text-zinc-400">
+        <span className="text-xs text-muted-foreground/70">
           保留 E{proposal.keep}（{proposal.status === 'active' ? '生效' : '候选'}），票数累加；
           {absorbed.map((id) => `E${id}`).join('、')} 转为已淘汰，来历里可追溯。
         </span>
@@ -143,12 +140,12 @@ export function ExperienceConsolidate({ index }: { index: ExperienceIndex }) {
         }
       />
       <div className="space-y-3 px-4 py-4">
-        <p className="text-pretty text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-pretty text-sm text-muted-foreground">
           让收尾模型找出同一范围里讲同一类故障的经验，起草合并后的内容。只给建议，逐条确认后才会合并。
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-48 flex-1 space-y-1">
-            <label htmlFor="consolidate-scope" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+            <label htmlFor="consolidate-scope" className="text-xs font-medium text-muted-foreground">
               范围
             </label>
             <Select
@@ -161,11 +158,7 @@ export function ExperienceConsolidate({ index }: { index: ExperienceIndex }) {
               options={options.map((o) => ({ value: o.value, label: o.label, hint: `${o.count} 条候选 / 生效`, title: o.value }))}
             />
           </div>
-          <Button
-            variant="primary"
-            disabled={analyze.isPending}
-            onClick={() => analyze.mutate(selected)}
-          >
+          <Button variant="primary" disabled={analyze.isPending} onClick={() => analyze.mutate(selected)}>
             {analyze.isPending ? <Spinner className="h-3 w-3" /> : <Combine className="h-4 w-4" aria-hidden />}
             {analyze.isPending ? '分析中…' : '找出同类经验'}
           </Button>
@@ -173,15 +166,15 @@ export function ExperienceConsolidate({ index }: { index: ExperienceIndex }) {
         {analyze.error && <ErrorBox error={analyze.error} />}
       </div>
       {result && (
-        <div className="border-t border-zinc-100 dark:border-zinc-800">
-          <p className="px-4 pt-3 text-xs text-zinc-400" aria-live="polite">
+        <div className="border-t border-border">
+          <p className="px-4 pt-3 text-xs text-muted-foreground/70" aria-live="polite">
             检查了 {result.scanned} 条，建议合并 {result.proposals.length} 组
             {result.model && <span className="font-mono"> · {shortModel(result.model)}</span>}
           </p>
           {pending.length === 0 ? (
             <Empty>{result.proposals.length ? '这一批建议都处理完了。' : '没有发现可以合并的同类经验。'}</Empty>
           ) : (
-            <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            <ul className="divide-y divide-border">
               {pending.map((proposal) => (
                 <ProposalCard
                   key={proposal.keep}
@@ -194,7 +187,7 @@ export function ExperienceConsolidate({ index }: { index: ExperienceIndex }) {
             </ul>
           )}
           {result.rejected.length > 0 && (
-            <details className="px-4 pb-3 text-xs text-zinc-400">
+            <details className="px-4 pb-3 text-xs text-muted-foreground/70">
               <summary className="cursor-pointer select-none">{result.rejected.length} 组建议未通过检查，已丢弃</summary>
               <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
                 {result.rejected.map((reason, i) => (

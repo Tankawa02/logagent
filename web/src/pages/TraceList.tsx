@@ -1,15 +1,44 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import { AlertTriangle, ChevronRight, Clock, Coins, MessagesSquare, Plus, Search, Wrench, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { Select } from '../components/Select'
-import { Badge, Card, CardHeader, Empty, ErrorBox, StatsSkeleton } from '../components/ui'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ArrowDownUp, Check, ChevronDown, Clock, Coins, Hash, MessagesSquare, Plus, Search, Wrench, X } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../components/Menu'
+import { TopBar, TopBarTitle } from '../components/TopBar'
+import { STATUS_STYLE, TraceStatusBadge } from '../components/TraceStatusBadge'
+import { buttonClass, Card, Empty, ErrorBox, StatsSkeleton } from '../components/ui'
 import { api } from '../lib/api'
-import { formatDuration, formatGenerated, formatTokens, formatUsd, shortModel, TURN_STATUS } from '../lib/format'
+import { formatDayTime, formatDuration, formatGenerated, formatTokens, formatUsd, isToday, shortModel, TURN_STATUS } from '../lib/format'
 import type { TraceItem } from '../lib/types'
 
 const PAGE = 300
 const LIMIT_MAX = 2000
+
+type Sort = 'newest' | 'oldest' | 'slowest' | 'tokens' | 'tools'
+
+const SORT_LABELS: Record<Sort, string> = {
+  newest: '最新优先',
+  oldest: '最早优先',
+  slowest: '耗时最长',
+  tokens: 'Token 最多',
+  tools: '工具最多',
+}
+
+const SORTERS: Record<Sort, (a: TraceItem, b: TraceItem) => number> = {
+  newest: (a, b) => (b.generated_at ?? '').localeCompare(a.generated_at ?? ''),
+  oldest: (a, b) => (a.generated_at ?? '').localeCompare(b.generated_at ?? ''),
+  slowest: (a, b) => (b.elapsed_seconds ?? -1) - (a.elapsed_seconds ?? -1),
+  tokens: (a, b) => (b.usage?.total ?? -1) - (a.usage?.total ?? -1),
+  tools: (a, b) => b.tool_count - a.tool_count,
+}
+
+const TRIGGER =
+  'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-background px-2.5 text-[13px] text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+function percentile(values: number[], p: number): number {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]
+}
 
 type Measured = TraceItem & { elapsed_seconds: number; usage: NonNullable<TraceItem['usage']> }
 
@@ -18,36 +47,37 @@ function isMeasured(item: TraceItem): item is Measured {
   return item.elapsed_seconds != null && item.usage != null
 }
 
-const SELECT =
-  'rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950'
-
 function Stat({
   icon: Icon,
   label,
   value,
   hint,
   empty,
+  danger,
 }: {
   icon: typeof Clock
   label: string
   value: string
   hint?: string
   empty?: boolean
+  danger?: boolean
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-        <Icon className="h-3.5 w-3.5" aria-hidden />
+    <div className="rounded-xl border border-border bg-card px-4 py-3.5">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon className="size-3.5" aria-hidden />
         {label}
       </div>
       <div
-        className={`mt-1 font-mono text-xl font-semibold tabular-nums ${
-          empty ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-900 dark:text-zinc-50'
-        }`}
+        className={`mt-1.5 text-2xl font-semibold tabular-nums tracking-tight ${empty ? 'text-muted-foreground/50' : 'text-foreground'}`}
       >
         {value}
       </div>
-      {hint && <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">{empty ? '暂无数据' : hint}</div>}
+      {hint && (
+        <div className={`mt-0.5 truncate text-xs ${danger ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`} title={hint}>
+          {empty ? '暂无数据' : hint}
+        </div>
+      )}
     </div>
   )
 }
@@ -61,48 +91,48 @@ const TRACE_FEATURES = [
 function TraceEmpty({ session }: { session?: string }) {
   return (
     <Card className="px-6 py-12 text-center">
-      <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-brand-50 text-brand-600 ring-1 ring-inset ring-brand-100 dark:bg-brand-950/40 dark:text-brand-300 dark:ring-brand-900">
-        <MessagesSquare className="h-5 w-5" aria-hidden />
+      <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-brand-soft text-brand-strong">
+        <MessagesSquare className="size-5" aria-hidden />
       </span>
-      <h2 className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-50">
-        {session ? '这个会话还没有完成的对话' : '还没有执行记录'}
-      </h2>
-      <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+      <h2 className="mt-4 text-base font-semibold text-foreground">{session ? '这个会话还没有完成的对话' : '还没有执行记录'}</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
         {session
           ? '在会话里提问并等这一轮结束后，这里会出现它的耗时和工具调用。'
           : '完成一次日志分析后，这里会按轮次记录模型的执行过程，方便你回看和比较。'}
       </p>
       <ul className="mx-auto mt-6 grid max-w-xl gap-3 text-left sm:grid-cols-3">
         {TRACE_FEATURES.map(({ icon: Icon, title, text }) => (
-          <li key={title} className="rounded-lg border border-zinc-200/80 px-3 py-2.5 dark:border-zinc-800">
-            <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200">
-              <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+          <li key={title} className="rounded-lg border border-border px-3 py-2.5">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              <Icon className="size-3.5 text-muted-foreground" aria-hidden />
               {title}
             </span>
-            <span className="mt-1 block text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{text}</span>
+            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{text}</span>
           </li>
         ))}
       </ul>
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         {session ? (
-          <Link
-            to="/sessions/$name"
-            params={{ name: session }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
-          >
+          <Link to="/sessions/$name" params={{ name: session }} className={buttonClass('primary')}>
             回到会话
           </Link>
         ) : (
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
-          >
-            <Plus className="h-4 w-4" aria-hidden />
+          <Link to="/" className={buttonClass('primary')}>
+            <Plus className="size-4" aria-hidden />
             新建分析
           </Link>
         )}
       </div>
     </Card>
+  )
+}
+
+function SideCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-4">
+      <h2 className="mb-3 text-[13px] font-semibold text-foreground">{title}</h2>
+      {children}
+    </section>
   )
 }
 
@@ -114,26 +144,25 @@ function ToolRanking({ items }: { items: TraceItem[] }) {
   }, [items])
   const max = ranking[0]?.[1] ?? 1
   return (
-    <Card>
-      <CardHeader title="工具使用排行" />
+    <SideCard title="常用工具">
       {ranking.length === 0 ? (
-        <Empty>还没有工具调用</Empty>
+        <p className="text-sm text-muted-foreground">还没有工具调用</p>
       ) : (
-        <ul className="space-y-2 px-4 py-3">
+        <ul className="space-y-2.5">
           {ranking.map(([name, count]) => (
-            <li key={name} className="text-sm">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">{name}</span>
-                <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-500">{count}</span>
-              </div>
-              <div className="mt-1 h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800">
-                <div className="h-full rounded-full bg-amber-500" style={{ width: `${(count / max) * 100}%` }} />
-              </div>
+            <li key={name} className="flex items-center gap-2.5 text-xs">
+              <span className="w-28 shrink-0 truncate font-mono text-foreground/90" title={name}>
+                {name}
+              </span>
+              <span className="h-1.5 min-w-0 flex-1 rounded-full bg-muted" aria-hidden>
+                <span className="block h-full rounded-full bg-amber-500" style={{ width: `${(count / max) * 100}%` }} />
+              </span>
+              <span className="w-6 shrink-0 text-right tabular-nums text-muted-foreground">{count}</span>
             </li>
           ))}
         </ul>
       )}
-    </Card>
+    </SideCard>
   )
 }
 
@@ -157,92 +186,151 @@ function ModelBreakdown({ items }: { items: TraceItem[] }) {
     }
     return [...map.entries()].sort((a, b) => b[1].turns - a[1].turns)
   }, [items])
+  const max = rows[0]?.[1].turns ?? 1
   return (
-    <Card>
-      <CardHeader title="按模型" />
+    <SideCard title="模型分布">
       {rows.length === 0 ? (
-        <Empty>暂无数据</Empty>
+        <p className="text-sm text-muted-foreground">暂无数据</p>
       ) : (
-        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        <ul className="space-y-3">
           {rows.map(([model, row]) => (
-            <li key={model} className="px-4 py-2.5 text-sm">
-              <div className="truncate font-mono text-xs text-zinc-800 dark:text-zinc-200" title={model}>
-                {model || '未知模型'}
+            <li key={model}>
+              <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                <span className="truncate font-mono text-xs text-foreground/90" title={model}>
+                  {model || '未知模型'}
+                </span>
+                <span
+                  className="shrink-0 tabular-nums text-muted-foreground"
+                  title={
+                    row.measured
+                      ? `平均 ${formatTokens(row.tokens / row.measured)} tokens${row.priced ? ` · 平均 ${formatUsd(row.cost / row.priced)}/轮` : ''}`
+                      : '耗时与用量未记录'
+                  }
+                >
+                  {row.turns} 次{row.measured ? ` · 平均 ${formatDuration(row.seconds / row.measured)}` : ''}
+                </span>
               </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs tabular-nums text-zinc-500">
-                <span>{row.turns} 轮</span>
-                {row.measured ? (
-                  <>
-                    <span>平均 {formatDuration(row.seconds / row.measured)}</span>
-                    <span>平均 {formatTokens(row.tokens / row.measured)} tokens</span>
-                    {row.priced > 0 && <span>平均 {formatUsd(row.cost / row.priced)}/轮</span>}
-                  </>
-                ) : (
-                  <span>耗时与用量未记录</span>
-                )}
+              <div className="mt-1.5 h-1.5 rounded-full bg-muted" aria-hidden>
+                <div className="h-full rounded-full bg-primary" style={{ width: `${(row.turns / max) * 100}%` }} />
               </div>
             </li>
           ))}
         </ul>
       )}
-    </Card>
+    </SideCard>
   )
 }
 
-function TraceRow({ item, maxSeconds }: { item: TraceItem; maxSeconds: number }) {
-  const status = TURN_STATUS[item.status] ?? TURN_STATUS.ok
+const TH = 'whitespace-nowrap px-3 py-2.5 text-left text-xs font-medium text-muted-foreground'
+
+function TraceTable({ items, maxSeconds }: { items: TraceItem[]; maxSeconds: number }) {
+  const navigate = useNavigate()
   return (
-    <li>
-      <Link
-        to="/trace/$name/$turn"
-        params={{ name: item.session, turn: String(item.turn) }}
-        className="group flex items-center gap-3 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <Badge tone={status.tone}>{status.label}</Badge>
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.question || '（无问题文本）'}</span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
-            <span className="tabular-nums">{formatGenerated(item.generated_at)}</span>
-            <span className="truncate">
-              {item.title || item.session} · 第 {item.turn} 轮
-            </span>
-            <span className="font-mono">{shortModel(item.model)}</span>
-            {item.failed_tools > 0 && <span className="text-red-600">{item.failed_tools} 次工具失败</span>}
-            {item.incomplete_tools > 0 && <span className="text-amber-600">{item.incomplete_tools} 个工具未完成</span>}
-            {item.legacy && <span>旧版记录</span>}
-          </div>
-          <div className="mt-2 flex items-center gap-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <div className="h-1.5 min-w-0 flex-1 rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden>
-                {item.elapsed_seconds != null && (
-                  <div
-                    className={`h-full rounded-full ${item.status === 'error' ? 'bg-red-500' : 'bg-brand-500'}`}
-                    style={{ width: `${Math.max(2, (item.elapsed_seconds / maxSeconds) * 100)}%` }}
-                  />
-                )}
-              </div>
-              <span className="w-14 shrink-0 text-right font-mono" title={item.elapsed_seconds == null ? '未记录耗时' : undefined}>
-                {item.elapsed_seconds == null ? '—' : formatDuration(item.elapsed_seconds)}
-              </span>
-            </div>
-            <span className="flex w-14 shrink-0 items-center gap-1 font-mono" title={item.usage ? 'tokens' : '未记录用量'}>
-              <Coins className="h-3 w-3" aria-hidden />
-              {item.usage ? formatTokens(item.usage.total) : '—'}
-            </span>
-            <span
-              className={`flex w-10 shrink-0 items-center gap-1 font-mono ${item.failed_tools ? 'text-red-600' : ''}`}
-              title={item.failed_tools ? `工具调用 ${item.tool_count} 次，${item.failed_tools} 次失败` : `工具调用 ${item.tool_count} 次`}
-            >
-              <Wrench className="h-3 w-3" aria-hidden />
-              {item.tool_count}
-            </span>
-          </div>
-        </div>
-        <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 group-hover:text-zinc-500" aria-hidden />
-      </Link>
-    </li>
+    <div className="overflow-x-auto rounded-xl border border-border bg-card">
+      <table className="w-full min-w-[720px] border-collapse text-sm">
+        <thead className="border-b border-border bg-muted/40">
+          <tr>
+            <th scope="col" className={`${TH} pl-4`}>
+              状态
+            </th>
+            <th scope="col" className={TH}>
+              问题
+            </th>
+            <th scope="col" className={TH}>
+              模型
+            </th>
+            <th scope="col" className={TH}>
+              耗时
+            </th>
+            <th scope="col" className={`${TH} text-right`}>
+              Token
+            </th>
+            <th scope="col" className={`${TH} text-right`}>
+              工具
+            </th>
+            <th scope="col" className={`${TH} pr-4 text-right`}>
+              时间
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {items.map((item) => {
+            const style = STATUS_STYLE[item.status] ?? STATUS_STYLE.ok
+            const to = { to: '/trace/$name/$turn', params: { name: item.session, turn: String(item.turn) } } as const
+            return (
+              <tr
+                key={`${item.session}-${item.turn}`}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest('a')) return
+                  void navigate(to)
+                }}
+                className="cursor-pointer transition-colors hover:bg-accent/60"
+              >
+                <td className="py-3 pl-4 pr-3 align-middle">
+                  <TraceStatusBadge status={item.status} />
+                </td>
+                <td className="w-full max-w-0 px-3 py-3 align-middle">
+                  <Link
+                    {...to}
+                    className="block truncate font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {item.question || '（无问题文本）'}
+                  </Link>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    {item.title || item.session} · 第 {item.turn} 轮{item.legacy ? ' · 旧版记录' : ''}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 align-middle font-mono text-xs text-muted-foreground" title={item.model}>
+                  {shortModel(item.model)}
+                </td>
+                <td className="px-3 py-3 align-middle">
+                  <div className="flex items-center gap-2.5">
+                    <span className="h-1.5 w-12 shrink-0 rounded-full bg-muted" aria-hidden>
+                      {item.elapsed_seconds != null && (
+                        <span
+                          className={`block h-full rounded-full ${style.bar}`}
+                          style={{ width: `${Math.max(4, (item.elapsed_seconds / maxSeconds) * 100)}%` }}
+                        />
+                      )}
+                    </span>
+                    <span
+                      className="w-14 text-right tabular-nums text-foreground"
+                      title={item.elapsed_seconds == null ? '未记录耗时' : undefined}
+                    >
+                      {item.elapsed_seconds == null ? '—' : formatDuration(item.elapsed_seconds)}
+                    </span>
+                  </div>
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-3 text-right align-middle tabular-nums text-foreground"
+                  title={item.usage ? 'tokens' : '未记录用量'}
+                >
+                  {item.usage ? formatTokens(item.usage.total) : '—'}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-3 text-right align-middle tabular-nums text-foreground"
+                  title={
+                    item.failed_tools ? `工具调用 ${item.tool_count} 次，${item.failed_tools} 次失败` : `工具调用 ${item.tool_count} 次`
+                  }
+                >
+                  {item.tool_count}
+                  {item.failed_tools > 0 && <span className="ml-1 text-xs text-red-600 dark:text-red-400">{item.failed_tools} 失败</span>}
+                  {item.incomplete_tools > 0 && (
+                    <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">{item.incomplete_tools} 未完成</span>
+                  )}
+                </td>
+                <td
+                  className="whitespace-nowrap py-3 pl-3 pr-4 text-right align-middle text-xs tabular-nums text-muted-foreground"
+                  title={formatGenerated(item.generated_at)}
+                >
+                  {formatDayTime(item.generated_at)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -250,6 +338,7 @@ export function TraceList({ session }: { session?: string }) {
   const [text, setText] = useState('')
   const [model, setModel] = useState('')
   const [status, setStatus] = useState('')
+  const [sort, setSort] = useState<Sort>('newest')
   const [limit, setLimit] = useState(PAGE)
   const trace = useQuery({
     queryKey: ['trace', session ?? '', limit],
@@ -262,15 +351,23 @@ export function TraceList({ session }: { session?: string }) {
   const capped = all.length >= limit
   // 同一个模型可能带不同的 provider 前缀（openai:kimi-k3 / kimi-k3），按去掉前缀后的名字归为一类
   const models = useMemo(() => [...new Set(all.map((t) => shortModel(t.model)))].sort(), [all])
-  const items = useMemo(() => {
+  // 状态标签上的数字按除状态以外的筛选条件计算，切换状态时数字不跟着变
+  const filtered = useMemo(() => {
     const needle = text.trim().toLowerCase()
     return all.filter(
       (t) =>
-        (!model || shortModel(t.model) === model) &&
-        (!status || t.status === status) &&
-        (!needle || `${t.question} ${t.title} ${t.session}`.toLowerCase().includes(needle)),
+        (!model || shortModel(t.model) === model) && (!needle || `${t.question} ${t.title} ${t.session}`.toLowerCase().includes(needle)),
     )
-  }, [all, text, model, status])
+  }, [all, text, model])
+  const items = useMemo(
+    () => (status ? filtered.filter((t) => t.status === status) : [...filtered]).sort(SORTERS[sort]),
+    [filtered, status, sort],
+  )
+  const counts = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const t of filtered) map[t.status] = (map[t.status] ?? 0) + 1
+    return map
+  }, [filtered])
 
   const totals = useMemo(() => {
     const measured = items.filter(isMeasured)
@@ -282,6 +379,11 @@ export function TraceList({ session }: { session?: string }) {
     const failed = items.reduce((sum, t) => sum + t.failed_tools, 0)
     const errors = items.filter((t) => t.status !== 'ok').length
     return {
+      today: items.filter((t) => isToday(t.generated_at)).length,
+      p95: percentile(
+        measured.map((t) => t.elapsed_seconds),
+        95,
+      ),
       measured: measured.length,
       unmeasured: items.length - measured.length,
       seconds,
@@ -295,144 +397,199 @@ export function TraceList({ session }: { session?: string }) {
   }, [items])
   const maxSeconds = Math.max(1, ...items.map((t) => t.elapsed_seconds ?? 0))
   const unmeasuredHint = totals.unmeasured ? ` · ${totals.unmeasured} 轮旧记录未计入` : ''
-  const showModels = new Set(items.map((t) => shortModel(t.model))).size > 1
-  const showTools = items.some((t) => Object.keys(t.tools).length > 0)
+  const tabs = [
+    { value: '', label: '全部', count: filtered.length },
+    ...Object.entries(TURN_STATUS).map(([key, s]) => ({ value: key, label: s.label, count: counts[key] ?? 0 })),
+  ]
 
   return (
-    <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">执行记录</h1>
-            <p className="mt-1 text-sm text-zinc-500">每一轮对话用了哪个模型、耗时多少、调用了哪些工具。</p>
-          </div>
-          {session && (
-            <Link
-              to="/trace"
-              className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300"
-            >
-              仅看会话 <span className="font-mono">{session}</span>
-              <X className="h-3 w-3" aria-label="清除会话筛选" />
+    <div className="flex h-full min-h-0 flex-col">
+      <TopBar
+        actions={
+          session && (
+            <Link to="/trace" className={buttonClass('secondary', 'xs', 'max-w-56')}>
+              <span className="truncate">
+                仅看会话 <span className="font-mono">{session}</span>
+              </span>
+              <X className="size-3 shrink-0" aria-label="清除会话筛选" />
             </Link>
-          )}
-        </header>
+          )
+        }
+      >
+        <TopBarTitle>执行记录</TopBarTitle>
+      </TopBar>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">每次分析中模型和工具的调用明细。用来排查慢、贵或失败的执行。</p>
 
-        {trace.isLoading && <StatsSkeleton label="加载执行记录" />}
-        {trace.error && <ErrorBox error={trace.error} />}
+          {trace.isLoading && <StatsSkeleton label="加载执行记录" />}
+          {trace.error && <ErrorBox error={trace.error} />}
 
-        {trace.data && all.length === 0 && <TraceEmpty session={session} />}
-        {trace.data && all.length > 0 && (
-          <>
-            {capped && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-                <span>仅统计最近 {all.length} 轮，更早的对话没有计入下面的数字。</span>
-                {limit < LIMIT_MAX && (
-                  <button
-                    type="button"
-                    onClick={() => setLimit((n) => Math.min(n + PAGE, LIMIT_MAX))}
-                    disabled={trace.isFetching}
-                    className="rounded-md bg-white px-2 py-1 text-xs font-medium text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100 disabled:opacity-60 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-800"
-                  >
-                    {trace.isFetching ? '加载中…' : `再加载 ${PAGE} 轮`}
-                  </button>
-                )}
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat
-                icon={MessagesSquare}
-                empty={!items.length}
-                label={capped ? '最近对话轮数' : '对话轮数'}
-                value={String(items.length)}
-                hint={totals.errors ? `${totals.errors} 轮未正常完成` : '全部正常完成'}
-              />
-              <Stat
-                icon={Clock}
-                empty={!totals.measured}
-                label="平均耗时"
-                value={totals.measured ? formatDuration(totals.seconds / totals.measured) : '—'}
-                hint={`合计 ${formatDuration(totals.seconds)}${unmeasuredHint}`}
-              />
-              <Stat
-                icon={Coins}
-                empty={!totals.measured}
-                label="tokens"
-                value={formatTokens(totals.tokens)}
-                hint={`平均每轮 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}${
-                  totals.priced ? ` · 费用 ${formatUsd(totals.cost)}${totals.priced < totals.measured ? '+' : ''}` : ''
-                }${unmeasuredHint}`}
-              />
-              <Stat
-                icon={totals.failed ? AlertTriangle : Wrench}
-                label="工具调用"
-                empty={!items.length}
-                value={String(totals.tools)}
-                hint={totals.failed ? `${totals.failed} 次失败` : '无失败'}
-              />
-            </div>
-
-            <div className={`grid gap-5 ${showModels || showTools ? 'lg:grid-cols-[1fr_16rem]' : ''}`}>
-              <Card className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
-                  <div className="relative min-w-40 flex-1">
-                    <Search
-                      className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
-                      aria-hidden
-                    />
-                    <input
-                      value={text}
-                      onChange={(e) => setText(e.target.value)}
-                      placeholder="搜索问题或会话"
-                      aria-label="搜索问题或会话"
-                      className={`${SELECT} w-full pl-8`}
-                    />
-                  </div>
-                  <Select
-                    value={model}
-                    onChange={setModel}
-                    ariaLabel="按模型筛选"
-                    className="w-40 max-w-48"
-                    options={[{ value: '', label: '全部模型' }, ...models.map((m) => ({ value: m, label: shortModel(m), title: m }))]}
-                  />
-                  <Select
-                    value={status}
-                    onChange={setStatus}
-                    ariaLabel="按状态筛选"
-                    align="right"
-                    className="w-32"
-                    options={[
-                      { value: '', label: '全部状态' },
-                      ...Object.entries(TURN_STATUS).map(([key, s]) => ({ value: key, label: s.label })),
-                    ]}
-                  />
-                </div>
-                {items.length > 0 && (
-                  <p className="flex items-center gap-1.5 border-b border-zinc-100 px-4 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-                    <span className="h-1.5 w-6 rounded-full bg-brand-500" aria-hidden />
-                    条形长度为相对耗时，最长的一轮为满格
-                  </p>
-                )}
-                {items.length === 0 ? (
-                  <Empty>{all.length ? '没有符合筛选条件的对话' : '还没有对话记录，先去新建一次分析吧'}</Empty>
-                ) : (
-                  <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {items.map((item) => (
-                      <TraceRow key={`${item.session}-${item.turn}`} item={item} maxSeconds={maxSeconds} />
-                    ))}
-                  </ul>
-                )}
-              </Card>
-              {/* 只用了一个模型、也没有工具调用时，右栏的两张卡片都只是重复或空白，干脆收起 */}
-              {(showModels || showTools) && (
-                <div className="space-y-5">
-                  {showModels && <ModelBreakdown items={items} />}
-                  {showTools && <ToolRanking items={items} />}
+          {trace.data && all.length === 0 && <TraceEmpty session={session} />}
+          {trace.data && all.length > 0 && (
+            <>
+              {capped && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                  <span>仅统计最近 {all.length} 轮，更早的对话没有计入下面的数字。</span>
+                  {limit < LIMIT_MAX && (
+                    <button
+                      type="button"
+                      onClick={() => setLimit((n) => Math.min(n + PAGE, LIMIT_MAX))}
+                      disabled={trace.isFetching}
+                      className={buttonClass('secondary', 'xs')}
+                    >
+                      {trace.isFetching ? '加载中…' : `再加载 ${PAGE} 轮`}
+                    </button>
+                  )}
                 </div>
               )}
-            </div>
-          </>
-        )}
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <Stat
+                  icon={Hash}
+                  empty={!items.length}
+                  label={capped ? '最近执行次数' : '执行次数'}
+                  value={String(items.length)}
+                  hint={`今天 ${totals.today} 次${totals.errors ? ` · ${totals.errors} 次未正常完成` : ''}`}
+                />
+                <Stat
+                  icon={Clock}
+                  empty={!totals.measured}
+                  label="平均耗时"
+                  value={totals.measured ? formatDuration(totals.seconds / totals.measured) : '—'}
+                  hint={`P95 ${formatDuration(totals.p95)}${unmeasuredHint}`}
+                />
+                <Stat
+                  icon={Coins}
+                  empty={!totals.measured}
+                  label="Token 消耗"
+                  value={formatTokens(totals.tokens)}
+                  hint={`${
+                    totals.priced
+                      ? `费用约 ${formatUsd(totals.cost)}${totals.priced < totals.measured ? '+' : ''}`
+                      : `平均每次 ${totals.measured ? formatTokens(totals.tokens / totals.measured) : '—'}`
+                  }${unmeasuredHint}`}
+                />
+                <Stat
+                  icon={Wrench}
+                  label="工具调用"
+                  empty={!items.length}
+                  value={String(totals.tools)}
+                  danger={totals.failed > 0}
+                  hint={
+                    totals.failed
+                      ? `${totals.failed} 次失败 · ${((totals.failed / Math.max(1, totals.tools)) * 100).toFixed(1)}%`
+                      : '无失败'
+                  }
+                />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div role="tablist" aria-label="按状态筛选" className="inline-flex items-center rounded-lg bg-muted p-0.5">
+                      {tabs.map((tab) => {
+                        const active = status === tab.value
+                        return (
+                          <button
+                            key={tab.value || 'all'}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            onClick={() => setStatus(tab.value)}
+                            className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                              active ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {tab.label}
+                            <span className={`tabular-nums ${tab.value === 'error' && tab.count ? 'text-red-600 dark:text-red-400' : ''}`}>
+                              {tab.count}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+                      <label className="relative min-w-40 max-w-80 flex-1">
+                        <span className="sr-only">搜索问题或会话</span>
+                        <Search
+                          className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <input
+                          value={text}
+                          onChange={(e) => setText(e.target.value)}
+                          placeholder="搜索问题或会话"
+                          className="h-8 w-full rounded-lg border border-input bg-background pl-8 pr-8 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                        />
+                        {text && (
+                          <button
+                            type="button"
+                            onClick={() => setText('')}
+                            aria-label="清除搜索"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="size-3.5" aria-hidden />
+                          </button>
+                        )}
+                      </label>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className={TRIGGER} aria-label="按模型筛选">
+                          <span className="text-muted-foreground">模型</span>
+                          <span className={`max-w-36 truncate ${model ? 'font-mono text-xs' : ''}`}>{model || '全部'}</span>
+                          <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuItem onSelect={() => setModel('')}>
+                            <Check className={model ? 'opacity-0' : ''} aria-hidden />
+                            全部模型
+                          </DropdownMenuItem>
+                          {models.length > 0 && <DropdownMenuSeparator />}
+                          {models.map((m) => (
+                            <DropdownMenuItem key={m} onSelect={() => setModel(m)}>
+                              <Check className={model === m ? '' : 'opacity-0'} aria-hidden />
+                              <span className="truncate font-mono text-xs">{m}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className={TRIGGER} aria-label="排序方式">
+                          <ArrowDownUp className="size-3.5 text-muted-foreground" aria-hidden />
+                          {SORT_LABELS[sort]}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          {(Object.keys(SORT_LABELS) as Sort[]).map((s) => (
+                            <DropdownMenuItem key={s} onSelect={() => setSort(s)}>
+                              <Check className={sort === s ? '' : 'opacity-0'} aria-hidden />
+                              {SORT_LABELS[s]}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                  {items.length === 0 ? (
+                    <Card>
+                      <Empty>{all.length ? '没有符合筛选条件的对话' : '还没有对话记录，先去新建一次分析吧'}</Empty>
+                    </Card>
+                  ) : (
+                    <TraceTable items={items} maxSeconds={maxSeconds} />
+                  )}
+                  {items.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      显示 {items.length} 条，共 {all.length} 条
+                    </p>
+                  )}
+                </div>
+                <aside className="grid content-start gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                  <ModelBreakdown items={items} />
+                  <ToolRanking items={items} />
+                </aside>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </main>
+    </div>
   )
 }

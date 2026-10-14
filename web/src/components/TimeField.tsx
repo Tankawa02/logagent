@@ -3,8 +3,8 @@ import type { ReactNode } from 'react'
 import type { BoundCheck } from '../lib/time-input'
 
 export const FIELD =
-  'w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:ring-4 dark:bg-zinc-950'
-export const FIELD_OK = 'border-zinc-200 focus:border-brand-400 focus:ring-brand-500/10 dark:border-zinc-700'
+  'w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-4'
+export const FIELD_OK = 'border-border focus:border-ring focus:ring-ring/20'
 export const FIELD_BAD = 'border-red-300 focus:border-red-400 focus:ring-red-500/10 dark:border-red-800'
 
 export function TimeField({
@@ -30,7 +30,7 @@ export function TimeField({
   const noteId = `${id}-note`
   return (
     <div className={`space-y-1.5 ${wide ? 'sm:col-span-2' : ''}`}>
-      <label htmlFor={id} className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground">
         {label}
       </label>
       <input
@@ -53,7 +53,7 @@ export function TimeField({
         </p>
       ) : (
         hint && (
-          <p id={noteId} className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p id={noteId} className="text-xs text-muted-foreground">
             {hint}
           </p>
         )
@@ -127,7 +127,7 @@ export function TimePresets({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 sm:col-span-2" role="group" aria-label="时间范围快捷选项">
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">快捷：</span>
+      <span className="text-xs text-muted-foreground">快捷：</span>
       {TIME_PRESETS.map((preset) => (
         <button
           key={preset.label}
@@ -136,17 +136,13 @@ export function TimePresets({
             const [since, until] = preset.range(timezone)
             onPick(since, until)
           }}
-          className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-xs text-zinc-600 transition-colors hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:text-brand-300"
+          className="rounded-full border border-border bg-card px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-brand-300 hover:text-brand-700 dark:hover:text-brand-300"
         >
           {preset.label}
         </button>
       ))}
       {active && onClear && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="rounded-full px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-        >
+        <button type="button" onClick={onClear} className="rounded-full px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">
           清除范围
         </button>
       )}

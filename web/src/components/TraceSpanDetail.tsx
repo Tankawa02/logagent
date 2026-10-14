@@ -1,5 +1,5 @@
-import { ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronUp, Copy, Wrench } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { ArrowUpRight, Bot, Brain, Check, ChevronLeft, ChevronRight, Copy, CornerLeftUp, Users, Wrench } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { formatDuration } from '../lib/format'
 import { useCopy } from '../lib/hooks'
 import type { ClippedText, LlmCall, TraceMessage, ToolCall, ToolRequest } from '../lib/types'
@@ -10,6 +10,31 @@ export type Span =
 
 export type Tab = 'input' | 'output'
 
+/** 树和详情共用的配色：方形图标底色、时间条颜色、类型名 */
+export function spanMeta(span: Span) {
+  if (span.kind === 'llm') return { icon: Bot, kindLabel: '模型调用', chip: 'bg-brand-soft text-brand-strong', bar: 'bg-brand-500' }
+  if (span.call.failed)
+    return {
+      icon: Wrench,
+      kindLabel: span.call.subagent ? '子智能体' : '工具调用',
+      chip: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+      bar: 'bg-red-500',
+    }
+  if (span.call.subagent)
+    return {
+      icon: Users,
+      kindLabel: '子智能体',
+      chip: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
+      bar: 'bg-violet-500',
+    }
+  return {
+    icon: Wrench,
+    kindLabel: '工具调用',
+    chip: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+    bar: 'bg-amber-500',
+  }
+}
+
 /** 详情面板里的跳转：模型调用 -> 它发起的工具，工具 -> 发起它的模型调用 */
 export interface SpanLinks {
   toolByRequestId: Map<string, Span>
@@ -18,10 +43,10 @@ export interface SpanLinks {
 }
 
 const ROLE_STYLE: Record<string, { label: string; className: string }> = {
-  system: { label: 'System', className: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200' },
-  user: { label: 'User', className: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300' },
-  assistant: { label: 'AI', className: 'bg-brand-100 text-brand-800 dark:bg-brand-950 dark:text-brand-300' },
-  tool: { label: 'Tool', className: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
+  system: { label: '系统', className: 'bg-muted text-muted-foreground' },
+  user: { label: '用户', className: 'bg-brand-soft text-brand-strong' },
+  assistant: { label: '助手', className: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
+  tool: { label: '工具结果', className: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' },
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -120,22 +145,32 @@ function ToolRequestList({ requests, links }: { requests: ToolRequest[]; links?:
 }
 
 function MessageItem({ message }: { message: TraceMessage }) {
-  const role = ROLE_STYLE[message.role] ?? { label: message.role, className: 'bg-zinc-100 text-zinc-600' }
+  const role = ROLE_STYLE[message.role] ?? { label: message.role, className: 'bg-muted text-muted-foreground' }
   // 系统提示和很长的工具结果默认收起，先看清整体顺序
-  const long = message.role === 'system' || message.chars > 1200
+  const [open, setOpen] = useState(message.role !== 'system' && message.chars <= 1200)
+  const preview =
+    message.text.split('\n').find((line) => line.trim()) ||
+    (message.tool_requests?.length ? `调用 ${message.tool_requests.map((r) => r.name).join('、')}` : '')
   return (
-    <li>
-      <details open={!long} className="group rounded-md ring-1 ring-zinc-200 dark:ring-zinc-800">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 [&::-webkit-details-marker]:hidden">
-          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${role.className}`}>{role.label}</span>
-          {message.name && <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400">{message.name}</span>}
-          <span className="ml-auto text-xs tabular-nums text-zinc-400">{message.chars.toLocaleString()} 字</span>
-        </summary>
-        <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-zinc-800">
+    <li className="overflow-hidden rounded-lg border border-border bg-card">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden />
+        <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${role.className}`}>{role.label}</span>
+        {message.name && <span className="shrink-0 truncate font-mono text-xs text-foreground/80">{message.name}</span>}
+        {!open && <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{preview}</span>}
+        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{message.chars.toLocaleString()} 字符</span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-border p-2.5">
           {(message.text || !message.tool_requests?.length) && <TextBlock text={message.text} chars={message.chars} />}
           {message.tool_requests?.length ? <ToolRequestList requests={message.tool_requests} /> : null}
         </div>
-      </details>
+      )}
     </li>
   )
 }
@@ -172,7 +207,7 @@ function clippedText(value: unknown): ClippedText | undefined {
 
 function LlmOutput({ call, links }: { call: LlmCall; links?: SpanLinks }) {
   const hasText = Boolean(call.output_text?.text)
-  // 旧版本把思考 token 数（数字）写进了同名的 reasoning 字段，覆盖了思考原文
+  // 旧版本把��考 token 数（数字）写进了同名的 reasoning 字段，覆盖了思考原文
   const reasoning = clippedText(call.reasoning)
   if (!call.output_text && !reasoning && !call.tool_requests) {
     return <p className="text-zinc-500">这一轮由旧版本记录，没有保存模型输出。</p>
@@ -244,29 +279,44 @@ function ToolOutput({ call }: { call: ToolCall }) {
 
 function Metadata({ span }: { span: Span }) {
   const incomplete = Boolean(span.call.incomplete)
+  const items: { label: string; value: string; title?: string }[] = [
+    { label: '开始于', value: `+${formatDuration(span.start)}` },
+    {
+      label: '耗时',
+      value: `${span.seconds.toFixed(span.seconds < 10 ? 2 : 1)}s${incomplete ? '（未完成）' : ''}`,
+      title: incomplete ? '量到本轮结束，调用本身没有完成' : undefined,
+    },
+  ]
+  if (span.kind === 'llm') {
+    const { call } = span
+    items.push({ label: '首 token', value: call.first_token != null ? `${call.first_token.toFixed(2)}s` : '—' })
+    items.push({ label: '输入 token', value: call.input != null ? call.input.toLocaleString() : '未知' })
+    items.push({
+      label: '输出 token',
+      value:
+        call.output != null
+          ? `${call.output.toLocaleString()}${call.reasoning_tokens ? `（推理 ${call.reasoning_tokens.toLocaleString()}）` : ''}`
+          : '未知',
+    })
+    items.push({ label: '结束原因', value: call.finish_reason || (incomplete ? '中途断开' : '—') })
+    if (call.model) items.push({ label: '模型', value: call.model, title: call.model })
+  } else {
+    const { call } = span
+    if (call.call_id) items.push({ label: '调用 ID', value: call.call_id, title: call.call_id })
+    if (call.output_chars != null) items.push({ label: '返回字符', value: call.output_chars.toLocaleString() })
+    if (call.subagent) items.push({ label: '子智能体', value: call.subagent })
+  }
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-zinc-500">
-      <span>开始 +{formatDuration(span.start)}</span>
-      <span>
-        耗时 {span.seconds.toFixed(3)}s{incomplete && '（量到本轮结束，未完成）'}
-      </span>
-      {span.kind === 'llm' && (
-        <>
-          {span.call.first_token != null && <span>首字 {span.call.first_token.toFixed(2)}s</span>}
-          {span.call.input == null || span.call.output == null ? (
-            <span>输出中断，用量未知</span>
-          ) : (
-            <>
-              <span>输入 {span.call.input.toLocaleString()} tokens</span>
-              <span>输出 {span.call.output.toLocaleString()} tokens</span>
-            </>
-          )}
-          {span.call.model && <span className="font-mono">{span.call.model}</span>}
-          {span.call.finish_reason && <span>结束原因 {span.call.finish_reason}</span>}
-        </>
-      )}
-      {span.kind === 'tool' && span.call.subagent && <span>子代理 {span.call.subagent}</span>}
-    </div>
+    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
+      {items.map((m) => (
+        <div key={m.label} className="min-w-0 bg-card px-3 py-2">
+          <dt className="text-xs text-muted-foreground">{m.label}</dt>
+          <dd className="mt-0.5 truncate font-mono text-[13px] tabular-nums text-foreground" title={m.title}>
+            {m.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -294,31 +344,33 @@ export function TraceSpanDetail({
     { key: 'input', label: '输入' },
     { key: 'output', label: '输出' },
   ]
-  const Icon = span.kind === 'llm' ? Bot : Wrench
+  const meta = spanMeta(span)
+  const Icon = meta.icon
   const failed = span.kind === 'tool' && span.call.failed
-  const iconTone =
-    span.kind === 'llm' ? 'text-brand-600' : failed ? 'text-red-600' : span.call.subagent ? 'text-violet-600' : 'text-amber-600'
   const navButton =
-    'rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
+    'flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30'
   return (
-    <div className="space-y-3 text-xs">
-      <div className="flex items-center gap-2">
-        <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} aria-hidden />
-        <h3
-          className={`min-w-0 truncate font-mono text-sm font-semibold ${failed ? 'text-red-700 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-50'}`}
-        >
-          {span.label}
-        </h3>
-        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          {span.kind === 'llm' ? '模型' : span.call.subagent ? '子代理' : '工具'}
+    <div className="flex min-h-full flex-col text-xs">
+      <div className="sticky top-0 z-10 flex shrink-0 items-center gap-2.5 border-b border-border bg-card px-4 py-2.5">
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded-md ${meta.chip}`}>
+          <Icon className="size-4" aria-hidden />
         </span>
-        {failed && (
-          <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-300">失败</span>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <span className="mr-1 font-mono text-[11px] tabular-nums text-zinc-400">
-            {nav.position} / {nav.count}
-          </span>
+        <div className="min-w-0 flex-1">
+          <h3
+            className={`truncate text-sm font-semibold ${span.kind === 'tool' ? 'font-mono' : ''} ${failed ? 'text-red-700 dark:text-red-400' : 'text-foreground'}`}
+          >
+            {span.label}
+          </h3>
+          <p className="truncate text-xs text-muted-foreground">
+            {meta.kindLabel}
+            {failed && <span className="text-red-600 dark:text-red-400"> · 执行失败</span>}
+            {span.call.incomplete && <span className="text-amber-600 dark:text-amber-400"> · 未完成</span>}
+          </p>
+        </div>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {nav.position} / {nav.count}
+        </span>
+        <div className="flex shrink-0 items-center">
           <button
             type="button"
             onClick={nav.onPrev}
@@ -327,7 +379,7 @@ export function TraceSpanDetail({
             title="上一个调用（↑）"
             className={navButton}
           >
-            <ChevronUp className="h-4 w-4" aria-hidden />
+            <ChevronLeft className="size-4" aria-hidden />
           </button>
           <button
             type="button"
@@ -337,52 +389,55 @@ export function TraceSpanDetail({
             title="下一个调用（↓）"
             className={navButton}
           >
-            <ChevronDown className="h-4 w-4" aria-hidden />
+            <ChevronRight className="size-4" aria-hidden />
           </button>
         </div>
       </div>
-      <Metadata span={span} />
-      {links.parent && (
-        <p className="text-zinc-500">
-          由{' '}
+      <div className="space-y-4 p-4">
+        <Metadata span={span} />
+        {links.parent && (
           <button
             type="button"
             onClick={() => links.parent && links.onJump(links.parent.key)}
-            className="inline-flex items-center gap-0.5 font-mono text-brand-700 underline-offset-2 hover:underline dark:text-brand-400"
+            className="inline-flex items-center gap-1.5 rounded-md text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {links.parent.label}
-          </button>{' '}
-          发起
-        </p>
-      )}
-      <div role="tablist" aria-label="查看内容" className="inline-flex rounded-md bg-zinc-200/70 p-0.5 dark:bg-zinc-800">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            id={`span-tab-${t.key}`}
-            aria-selected={tab === t.key}
-            aria-controls="span-tabpanel"
-            onClick={() => onTabChange(t.key)}
-            className={`rounded px-3 py-1 ${tab === t.key ? 'bg-white font-medium text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200'}`}
-          >
-            {t.label}
+            <CornerLeftUp className="size-3.5" aria-hidden />由{' '}
+            <span className="font-medium text-foreground underline-offset-4 hover:underline">{links.parent.label}</span> 发起
           </button>
-        ))}
-      </div>
-      <div role="tabpanel" id="span-tabpanel" aria-labelledby={`span-tab-${tab}`}>
-        {span.kind === 'llm' ? (
-          tab === 'input' ? (
-            <LlmInput call={span.call} index={span.index} />
-          ) : (
-            <LlmOutput call={span.call} links={links} />
-          )
-        ) : tab === 'input' ? (
-          <ToolInput call={span.call} />
-        ) : (
-          <ToolOutput call={span.call} />
         )}
+        <div role="tablist" aria-label="查看内容" className="flex gap-4 border-b border-border">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              id={`span-tab-${t.key}`}
+              aria-selected={tab === t.key}
+              aria-controls="span-tabpanel"
+              onClick={() => onTabChange(t.key)}
+              className={`-mb-px border-b-2 pb-2 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                tab === t.key
+                  ? 'border-primary font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div role="tabpanel" id="span-tabpanel" aria-labelledby={`span-tab-${tab}`}>
+          {span.kind === 'llm' ? (
+            tab === 'input' ? (
+              <LlmInput call={span.call} index={span.index} />
+            ) : (
+              <LlmOutput call={span.call} links={links} />
+            )
+          ) : tab === 'input' ? (
+            <ToolInput call={span.call} />
+          ) : (
+            <ToolOutput call={span.call} />
+          )}
+        </div>
       </div>
     </div>
   )

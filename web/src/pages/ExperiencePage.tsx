@@ -1,20 +1,37 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Archive, ArchiveRestore, Check, ChevronDown, History, Lightbulb, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  Archive,
+  Check,
+  ChevronDown,
+  History,
+  Lightbulb,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
+import { useId, useState, type KeyboardEvent } from 'react'
 import { ExperienceConsolidate } from '../components/ExperienceConsolidate'
 import { ExperienceDraftFields as DraftFields, type ExperienceDraft as Draft } from '../components/ExperienceDraftFields'
 import { ExperienceHistory } from '../components/ExperienceHistory'
 import { useConfirm, useToast } from '../components/Feedback'
-import { Select } from '../components/Select'
-import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../components/Menu'
+import { ScopeMenu } from '../components/ScopeMenu'
+import { Button, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
+import { PageScaffold } from '../components/TopBar'
 import { api } from '../lib/api'
+import { formatDay } from '../lib/day'
 import type { ExperienceIndex, ExperienceItem } from '../lib/types'
 
 const GLOBAL = '__global__'
 const ORIGIN_LABEL: Record<string, string> = { eval: '离线评测', online: '在线复盘', manual: '手动添加' }
-const STATUS_TONE = { candidate: 'amber', active: 'green', retired: 'gray', promoted: 'blue' } as const
-const STATUS_LABEL = { candidate: '候选', active: '生效', retired: '已淘汰', promoted: '已提升为 skill' } as const
 
 function isComposing(event: KeyboardEvent): boolean {
   return event.nativeEvent.isComposing || event.keyCode === 229
@@ -25,86 +42,105 @@ function useRefresh() {
   return () => void client.invalidateQueries({ queryKey: ['experience'] })
 }
 
-
-function AddExperience({ index }: { index: ExperienceIndex }) {
+function AddExperience({ index, onClose }: { index: ExperienceIndex; onClose: () => void }) {
   const refresh = useRefresh()
   const toast = useToast()
-  const empty: Draft = { title: '', trigger: '通用', strategy: '' }
-  const [draft, setDraft] = useState<Draft>(empty)
+  const [draft, setDraft] = useState<Draft>({ title: '', trigger: '', strategy: '' })
   const [scope, setScope] = useState(GLOBAL)
   const save = useMutation({
     mutationFn: () =>
       api.addExperience({
         title: draft.title.trim(),
-        trigger: draft.trigger.trim(),
+        trigger: draft.trigger.trim() || '通用',
         strategy: draft.strategy.trim(),
         project: scope === GLOBAL ? null : scope,
       }),
     onSuccess: (result) => {
-      setDraft(empty)
       refresh()
-      toast(result.created ? `已添加 E${result.entry.id}` : `与已有经验相似，已合并到 E${result.entry.id}`)
+      toast(result.created ? '已添加并生效' : '与已有经验相似，已合并')
+      onClose()
     },
   })
-  const ready = draft.title.trim() && draft.strategy.trim()
-
-  function submit(event: FormEvent) {
-    event.preventDefault()
+  const ready = Boolean(draft.title.trim() && draft.strategy.trim())
+  const submit = () => {
     if (ready && !save.isPending) save.mutate()
   }
 
   return (
-    <Card>
-      <CardHeader title="手动添加经验" />
+    <section aria-labelledby="exp-new" className="rounded-xl border border-border bg-card p-4">
+      <h2 id="exp-new" className="mb-3 text-sm font-semibold text-foreground">
+        手动添加经验
+      </h2>
       <form
-        onSubmit={submit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isComposing(e)) submit(e)
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          submit()
         }}
-        className="space-y-3 px-4 py-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isComposing(e)) {
+            e.preventDefault()
+            submit()
+          }
+        }}
       >
         <DraftFields draft={draft} onChange={setDraft} idPrefix="new-experience" />
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-48 flex-1 space-y-1">
-            <label htmlFor="experience-scope" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              范围
-            </label>
-            <Select
-              id="experience-scope"
-              value={scope}
-              onChange={setScope}
-              options={[
-                { value: GLOBAL, label: '全局', hint: '所有项目生效' },
-                ...index.projects.map((p) => ({ value: p.key, label: p.label, hint: '仅该项目', title: p.key })),
-              ]}
-            />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] text-muted-foreground">作用范围</span>
+          <ScopeMenu
+            label="作用范围"
+            value={scope}
+            onChange={setScope}
+            options={[{ value: GLOBAL, label: '全局' }, ...index.projects.map((p) => ({ value: p.key, label: p.label, title: p.key }))]}
+          />
+          <div className="ml-auto flex gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              取消
+            </Button>
+            <Button type="submit" variant="primary" disabled={!ready || save.isPending}>
+              {save.isPending && <Spinner className="size-3" />}
+              添加并生效
+            </Button>
           </div>
-          <Button type="submit" variant="primary" disabled={!ready || save.isPending}>
-            {save.isPending ? <Spinner className="h-3 w-3" /> : <Plus className="h-4 w-4" aria-hidden />}
-            添加并生效
-          </Button>
         </div>
-        <p className="text-xs text-zinc-400">内容会脱敏后保存；含链接、文件行号、长 ID、时间等只和单次故障有关的细节会被拒绝。</p>
+        <p className="text-xs text-muted-foreground">内容会脱敏后保存；链接、文件行号、长 ID 等只和单次故障有关的细节会被拒绝。</p>
         {save.error && <ErrorBox error={save.error} />}
       </form>
-    </Card>
+    </section>
   )
 }
 
-function ExperienceRow({ entry }: { entry: ExperienceItem }) {
+function StatusPill({ entry }: { entry: ExperienceItem }) {
+  if (entry.status === 'promoted')
+    return <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand-strong">已升级为技能</span>
+  if (entry.status === 'retired') return <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">已归档</span>
+  if (entry.status === 'active' && entry.promotable)
+    return (
+      <span
+        className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+        title={`可以用 log-agent experience promote ${entry.id} 写成技能`}
+      >
+        可升级为技能
+      </span>
+    )
+  return null
+}
+
+function ExperienceCard({ entry }: { entry: ExperienceItem }) {
   const refresh = useRefresh()
   const toast = useToast()
   const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const historyId = useId()
   const [draft, setDraft] = useState<Draft>({ title: entry.title, trigger: entry.trigger, strategy: entry.strategy })
+  const archived = entry.status === 'retired' || entry.status === 'promoted'
 
   const status = useMutation({
     mutationFn: (next: 'candidate' | 'active' | 'retired') => api.setExperienceStatus(entry.id, next),
     onSuccess: (item) => {
       refresh()
-      toast(item.status === 'active' ? `E${entry.id} 已生效` : item.status === 'retired' ? `E${entry.id} 已淘汰` : '已更新')
+      toast(item.status === 'active' ? '已生效' : item.status === 'retired' ? '已归档' : '已更新')
     },
   })
   const update = useMutation({
@@ -113,188 +149,205 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
     onSuccess: () => {
       setEditing(false)
       refresh()
-      toast(`已更新 E${entry.id}`)
+      toast('已保存修改')
     },
   })
   const remove = useMutation({
     mutationFn: () => api.deleteExperience(entry.id),
     onSuccess: () => {
       refresh()
-      toast(`已删除 E${entry.id}`)
+      toast(entry.status === 'candidate' ? '已丢弃' : '已删除')
     },
   })
   const busy = status.isPending || update.isPending || remove.isPending
   const error = status.error ?? update.error ?? remove.error
 
+  const askDelete = async () => {
+    const ok = await confirm({
+      title: '删除这条经验？',
+      description: `「${entry.title}」及其投票记录会被永久删除。如果只是暂时不想用，可以选择归档。`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (ok) remove.mutate()
+  }
+
+  if (editing) {
+    const cancel = () => {
+      setDraft({ title: entry.title, trigger: entry.trigger, strategy: entry.strategy })
+      setEditing(false)
+    }
+    return (
+      <li className="rounded-xl border border-border bg-card p-4">
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (draft.title.trim() && draft.strategy.trim()) update.mutate()
+          }}
+        >
+          <DraftFields draft={draft} onChange={setDraft} idPrefix={`experience-${entry.id}`} />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={cancel}>
+              取消
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !draft.title.trim() || !draft.strategy.trim()}>
+              保存
+            </Button>
+          </div>
+          {update.error && <ErrorBox error={update.error} />}
+        </form>
+      </li>
+    )
+  }
+
   return (
-    <li className="group flex flex-wrap items-start gap-3 px-4 py-3">
-      <span className="w-9 shrink-0 pt-0.5 text-right font-mono text-xs text-zinc-400">E{entry.id}</span>
-      <div className="min-w-0 flex-1 space-y-1.5">
-        {editing ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (draft.title.trim() && draft.strategy.trim()) update.mutate()
-            }}
-            className="space-y-2"
-          >
-            <DraftFields draft={draft} onChange={setDraft} idPrefix={`experience-${entry.id}`} />
-            <div className="flex gap-2">
-              <Button type="submit" variant="primary" className="px-2 py-1 text-xs" disabled={busy}>
-                保存
-              </Button>
-              <Button
-                className="px-2 py-1 text-xs"
-                onClick={() => {
-                  setDraft({ title: entry.title, trigger: entry.trigger, strategy: entry.strategy })
-                  setEditing(false)
-                }}
-              >
-                取消
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <p className="break-words text-sm font-medium text-zinc-900 dark:text-zinc-50">{entry.title}</p>
-            <p className="break-words text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-medium text-zinc-600 dark:text-zinc-300">适用：</span>
-              {entry.trigger || '通用'}
-            </p>
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{entry.strategy}</p>
-          </>
-        )}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
-          <Badge tone={STATUS_TONE[entry.status]}>{STATUS_LABEL[entry.status]}</Badge>
-          <Badge title={entry.project ?? '对所有项目生效'}>{entry.scope}</Badge>
-          {entry.promotable && (
-            <Badge tone="blue" title={`可以用 log-agent experience promote ${entry.id} 写成 skill`}>
-              可提升为 skill
-            </Badge>
-          )}
-          <span>{ORIGIN_LABEL[entry.origin] ?? entry.origin}</span>
-          <span aria-hidden>·</span>
-          <span>
-            有用 {entry.helpful} · 有害 {entry.harmful}
-          </span>
-          <span aria-hidden>·</span>
-          <span>{entry.updated_at.slice(0, 16)}</span>
-          <button
-            type="button"
-            onClick={() => setShowHistory((v) => !v)}
-            aria-expanded={showHistory}
-            aria-controls={historyId}
-            className="ml-1 inline-flex items-center gap-1 rounded px-1 font-medium text-brand-600 hover:underline dark:text-brand-400"
-          >
-            <History className="h-3.5 w-3.5" aria-hidden />
-            {showHistory ? '收起来历' : '查看来历'}
-            <ChevronDown className={`h-3 w-3 transition-transform ${showHistory ? 'rotate-180' : ''}`} aria-hidden />
-          </button>
+    <li className={`rounded-xl border border-border p-4 ${archived ? 'bg-muted/30' : 'bg-card'}`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className={`break-words text-[15px] font-medium leading-6 ${archived ? 'text-muted-foreground' : 'text-foreground'}`}>
+              {entry.title}
+            </h3>
+            <StatusPill entry={entry} />
+          </div>
+          <p className="mt-1 break-words text-[13px] text-muted-foreground">
+            <span className="font-medium text-foreground/80">适用：</span>
+            {entry.trigger || '通用'}
+          </p>
         </div>
-        {error && <ErrorBox error={error} />}
-      </div>
-      {!editing && (
-        <div className="flex shrink-0 items-center gap-1">
-          {entry.status === 'candidate' ? (
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {entry.status === 'candidate' && (
             <>
-              <Button variant="primary" className="px-2 py-1 text-xs" disabled={busy} onClick={() => status.mutate('active')}>
-                <Check className="h-3.5 w-3.5" aria-hidden />
+              <Button variant="primary" disabled={busy} onClick={() => status.mutate('active')}>
+                <Check className="size-3.5" aria-hidden />
                 生效
               </Button>
-              <Button className="px-2 py-1 text-xs" disabled={busy} onClick={() => remove.mutate()}>
-                <X className="h-3.5 w-3.5" aria-hidden />
+              <Button variant="ghost" className="text-muted-foreground" disabled={busy} onClick={() => remove.mutate()}>
+                <X className="size-3.5" aria-hidden />
                 丢弃
               </Button>
             </>
-          ) : (
-            <div className="flex gap-0.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100">
-              {entry.status === 'active' ? (
-                <IconButton label={`淘汰 E${entry.id}`} disabled={busy} onClick={() => status.mutate('retired')}>
-                  <Archive className="h-3.5 w-3.5" />
-                </IconButton>
-              ) : (
-                entry.status === 'retired' && (
-                  <IconButton label={`重新启用 E${entry.id}`} disabled={busy} onClick={() => status.mutate('active')}>
-                    <ArchiveRestore className="h-3.5 w-3.5" />
-                  </IconButton>
-                )
-              )}
-              <IconButton label={`编辑 E${entry.id}`} disabled={busy} onClick={() => setEditing(true)}>
-                <Pencil className="h-3.5 w-3.5" />
-              </IconButton>
-              <IconButton
-                label={`删除 E${entry.id}`}
+          )}
+          {entry.status === 'retired' && (
+            <Button disabled={busy} onClick={() => status.mutate('active')}>
+              <RotateCcw className="size-3.5" aria-hidden />
+              恢复
+            </Button>
+          )}
+          {entry.status !== 'candidate' && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
                 disabled={busy}
-                danger
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: `删除经验 E${entry.id}？`,
-                    description: '彻底删除，之后的排查不再参考它。只想暂停使用可以选择淘汰。',
-                    confirmLabel: '删除',
-                    danger: true,
-                  })
-                  if (ok) remove.mutate()
-                }}
+                aria-label={`${entry.title} 的更多操作`}
+                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </IconButton>
-            </div>
+                <MoreHorizontal className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={() => setEditing(true)}>
+                  <Pencil />
+                  编辑
+                </DropdownMenuItem>
+                {entry.status === 'active' && (
+                  <DropdownMenuItem onSelect={() => status.mutate('retired')}>
+                    <Archive />
+                    归档
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => void askDelete()}>
+                  <Trash2 />
+                  删除
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
-      )}
-      {showHistory && (
-        <div id={historyId} className="min-w-0 basis-full border-t border-zinc-100 pt-3 sm:pl-12 dark:border-zinc-800">
+      </div>
+
+      <p className={`mt-3 whitespace-pre-wrap break-words text-sm leading-6 ${archived ? 'text-muted-foreground' : 'text-foreground/90'}`}>
+        {entry.strategy}
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-3 text-xs text-muted-foreground">
+        <span className="rounded bg-muted px-1.5 py-0.5 text-foreground/80" title={entry.project ?? '对所有项目生效'}>
+          {entry.scope}
+        </span>
+        <span>{ORIGIN_LABEL[entry.origin] ?? entry.origin}</span>
+        <span className="inline-flex items-center gap-1" title="被采纳后判定为有用的次数">
+          <ThumbsUp className="size-3.5" aria-hidden />
+          <span className="sr-only">有用</span>
+          {entry.helpful}
+        </span>
+        <span
+          className={`inline-flex items-center gap-1 ${entry.harmful > entry.helpful ? 'text-red-600 dark:text-red-400' : ''}`}
+          title="被采纳后判定为误导的次数"
+        >
+          <ThumbsDown className="size-3.5" aria-hidden />
+          <span className="sr-only">误导</span>
+          {entry.harmful}
+        </span>
+        <span>
+          更新于 <time dateTime={entry.updated_at}>{formatDay(entry.updated_at)}</time>
+        </span>
+        <button
+          type="button"
+          aria-expanded={historyOpen}
+          aria-controls={historyId}
+          onClick={() => setHistoryOpen((o) => !o)}
+          className="ml-auto inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <History className="size-3.5" aria-hidden />
+          来历
+          <ChevronDown className={`size-3.5 transition-transform ${historyOpen ? 'rotate-180' : ''}`} aria-hidden />
+        </button>
+      </div>
+
+      {historyOpen && (
+        <div id={historyId} className="mt-3">
           <ExperienceHistory entry={entry} />
+        </div>
+      )}
+      {error && !update.error && (
+        <div className="mt-3">
+          <ErrorBox error={error} />
         </div>
       )}
     </li>
   )
 }
 
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  danger = false,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  disabled?: boolean
-  danger?: boolean
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className={`rounded p-1.5 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-        danger ? 'hover:text-red-600' : 'hover:text-zinc-700 dark:hover:text-zinc-200'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
 function ReflectionStatus({ index }: { index: ExperienceIndex }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-      <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-200">
-        <span className={`h-2 w-2 rounded-full ${index.reflection ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600'}`} aria-hidden />
-        在线复盘{index.reflection ? '已开启' : '已关闭'}
-      </span>
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">
-        {index.reflection ? '每轮结束后复盘一次，新经验先进候选，由你确认后生效。' : '只使用离线评测学到的和手动添加的经验。'}
-      </span>
-      <Link to="/settings" className="ml-auto text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
-        在设置里切换
-      </Link>
+    <div className="rounded-xl border border-border bg-card px-4 py-3">
+      <div className="flex items-center gap-3">
+        <span
+          className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${
+            index.reflection
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+              : 'bg-muted text-muted-foreground'
+          }`}
+        >
+          <RefreshCw className="size-4" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">在线复盘{index.reflection ? '已开启' : '已关闭'}</p>
+          <p className="text-xs text-muted-foreground">
+            {index.reflection ? '每次分析结束后，agent 会总结新经验并给已有经验投票' : '开启后，agent 会在分析结束后自动总结经验'}
+          </p>
+        </div>
+        <Link
+          to="/settings"
+          className="shrink-0 rounded-sm text-[13px] text-brand-strong underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          去设置
+        </Link>
+      </div>
       {!index.enabled && (
-        <p className="w-full text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-3 flex items-center gap-1.5 border-t border-border pt-3 text-xs text-amber-700 dark:text-amber-300">
+          <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
           经验注入已被配置 experience = false 关闭，下面的经验暂时不会被使用。
         </p>
       )}
@@ -304,87 +357,103 @@ function ReflectionStatus({ index }: { index: ExperienceIndex }) {
 
 export function ExperiencePage() {
   const experience = useQuery({ queryKey: ['experience'], queryFn: api.experience })
-  const [showArchived, setShowArchived] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const data = experience.data
   const candidates = data?.entries.filter((e) => e.status === 'candidate') ?? []
   const active = data?.entries.filter((e) => e.status === 'active') ?? []
   const archived = data?.entries.filter((e) => e.status === 'retired' || e.status === 'promoted') ?? []
 
   return (
-    <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">经验</h1>
-          <p className="mt-1 text-pretty text-sm text-zinc-500">
-            从过往排查里提炼的可复用策略。生效的经验会按与问题的相关度挑选几条，作为排查思路提示给模型；被标为有害的会自动淘汰。
-          </p>
-          {data && (
-            <p className="mt-1 truncate font-mono text-xs text-zinc-400" title={data.path}>
-              {data.path}
-            </p>
+    <PageScaffold
+      title="经验"
+      width="md"
+      description="从过往排查中总结出的做法。agent 会按相关度参考它们；被验证有用的经验可以升级为技能。"
+      actions={
+        data && (
+          <Button onClick={() => setFormOpen(true)} disabled={formOpen}>
+            <Plus className="size-4" aria-hidden />
+            手动添加
+          </Button>
+        )
+      }
+    >
+      {experience.isLoading && <ListSkeleton rows={5} label="加载经验" />}
+      {experience.error && <ErrorBox error={experience.error} />}
+
+      {data && (
+        <>
+          <ReflectionStatus index={data} />
+
+          {formOpen && <AddExperience index={data} onClose={() => setFormOpen(false)} />}
+
+          {candidates.length > 0 && (
+            <section aria-labelledby="exp-candidates" className="space-y-3">
+              <h2 id="exp-candidates" className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                待确认
+                <span className="rounded-full bg-amber-100 px-2 text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+                  {candidates.length}
+                </span>
+              </h2>
+              <ul className="space-y-3">
+                {candidates.map((entry) => (
+                  <ExperienceCard key={`${entry.id}-${entry.updated_at}`} entry={entry} />
+                ))}
+              </ul>
+            </section>
           )}
-        </header>
 
-        {experience.isLoading && <ListSkeleton rows={5} label="加载经验" />}
-        {experience.error && <ErrorBox error={experience.error} />}
-
-        {data && (
-          <>
-            <ReflectionStatus index={data} />
-
-            {candidates.length > 0 && (
-              <Card className="border-amber-200 dark:border-amber-900">
-                <CardHeader
-                  title={
-                    <span className="flex items-center gap-1.5">
-                      <Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />
-                      待确认的候选（{candidates.length}）
-                    </span>
-                  }
-                />
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {candidates.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
-                  ))}
-                </ul>
-              </Card>
+          <section aria-labelledby="exp-active" className="space-y-3">
+            <h2 id="exp-active" className="text-sm font-semibold text-foreground">
+              生效中 <span className="font-normal text-muted-foreground">({active.length})</span>
+            </h2>
+            {active.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border px-6 py-10 text-center">
+                <Lightbulb className="size-6 text-muted-foreground" aria-hidden />
+                <p className="text-sm font-medium text-foreground">还没有生效中的经验</p>
+                <p className="text-[13px] text-muted-foreground">
+                  确认上方的候选经验，或运行 <code className="rounded bg-muted px-1 font-mono text-xs">log-agent eval learn</code>{' '}
+                  从评测中学习。
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {active.map((entry) => (
+                  <ExperienceCard key={`${entry.id}-${entry.updated_at}`} entry={entry} />
+                ))}
+              </ul>
             )}
+          </section>
 
-            <Card>
-              <CardHeader title={`生效中（${active.length}）`}>
-                {archived.length > 0 && (
-                  <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setShowArchived((v) => !v)}>
-                    {showArchived ? '收起已淘汰' : `查看已淘汰 / 已提升（${archived.length}）`}
-                  </Button>
-                )}
-              </CardHeader>
-              {active.length === 0 ? (
-                <Empty>
-                  还没有生效的经验。可以运行 <code className="font-mono">log-agent eval learn</code>{' '}
-                  从评测案例里学习，或在设置里开启在线复盘。
-                </Empty>
-              ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {active.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
-                  ))}
-                </ul>
-              )}
-              {showArchived && archived.length > 0 && (
-                <ul className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/50 dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/30">
+          <ExperienceConsolidate index={data} />
+
+          {archived.length > 0 && (
+            <section aria-labelledby="exp-archived">
+              <button
+                type="button"
+                id="exp-archived"
+                aria-expanded={archivedOpen}
+                onClick={() => setArchivedOpen((o) => !o)}
+                className="inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <ChevronDown className={`size-4 transition-transform ${archivedOpen ? '' : '-rotate-90'}`} aria-hidden />
+                已归档与已升级 ({archived.length})
+              </button>
+              {archivedOpen && (
+                <ul className="mt-3 space-y-3">
                   {archived.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
+                    <ExperienceCard key={`${entry.id}-${entry.updated_at}`} entry={entry} />
                   ))}
                 </ul>
               )}
-            </Card>
+            </section>
+          )}
 
-            <ExperienceConsolidate index={data} />
-
-            <AddExperience index={data} />
-          </>
-        )}
-      </div>
-    </main>
+          <p className="truncate font-mono text-xs text-muted-foreground" title={data.path}>
+            存储位置：{data.path}
+          </p>
+        </>
+      )}
+    </PageScaffold>
   )
 }

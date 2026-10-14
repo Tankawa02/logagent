@@ -25,6 +25,7 @@ export function ModelCombobox({
   loading,
   validate = true,
   className,
+  wrapperClassName = '',
 }: {
   id: string
   value: string
@@ -35,6 +36,7 @@ export function ModelCombobox({
   /** 列表可能已过期（比如设置页正在改接口地址）时关掉校验 */
   validate?: boolean
   className: string
+  wrapperClassName?: string
 }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
@@ -84,7 +86,7 @@ export function ModelCombobox({
   }
 
   return (
-    <div className="relative">
+    <div className={`relative ${wrapperClassName}`}>
       <input
         id={id}
         role="combobox"
@@ -111,7 +113,7 @@ export function ModelCombobox({
         className={`${className} pr-9 font-mono ${unknown ? 'border-red-400! focus:ring-red-500/10! dark:border-red-700!' : ''}`}
       />
       <ChevronDown
-        className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70 transition-transform ${open ? 'rotate-180' : ''}`}
         aria-hidden
       />
       {open && (loading || filtered.length > 0) && (
@@ -119,7 +121,7 @@ export function ModelCombobox({
           ref={listRef}
           id={listId}
           role="listbox"
-          className="absolute inset-x-0 top-full z-30 mt-1.5 max-h-64 overflow-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+          className="absolute inset-x-0 top-full z-30 mt-1.5 max-h-64 overflow-auto rounded-xl border border-border bg-card p-1 shadow-lg"
         >
           {filtered.map((m, i) => {
             const selected = m === value
@@ -136,18 +138,18 @@ export function ModelCombobox({
                 }}
                 onMouseEnter={() => setActive(i)}
                 className={`flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 font-mono text-[13px] ${
-                  i === active ? 'bg-zinc-100 dark:bg-zinc-800' : ''
-                } ${selected ? 'text-brand-700 dark:text-brand-300' : 'text-zinc-700 dark:text-zinc-200'}`}
+                  i === active ? 'bg-muted' : ''
+                } ${selected ? 'text-brand-700 dark:text-brand-300' : 'text-foreground/80'}`}
               >
                 <span className="truncate">{m}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
-                  {m === defaultModel && <span className="font-sans text-xs text-zinc-500">默认</span>}
+                  {m === defaultModel && <span className="font-sans text-xs text-muted-foreground">默认</span>}
                   {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
                 </span>
               </li>
             )
           })}
-          {loading && !filtered.length && <li className="px-2.5 py-1.5 text-xs text-zinc-400">正在读取模型列表…</li>}
+          {loading && !filtered.length && <li className="px-2.5 py-1.5 text-xs text-muted-foreground/70">正在读取模型列表…</li>}
         </ul>
       )}
       {unknown && (

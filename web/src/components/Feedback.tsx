@@ -119,16 +119,7 @@ function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettl
           <Button onClick={cancel} data-autofocus={danger ? '' : undefined}>
             {cancelLabel}
           </Button>
-          <Button
-            variant={danger ? 'danger' : 'primary'}
-            onClick={() => onSettle(true)}
-            data-autofocus={danger ? undefined : ''}
-            className={
-              danger
-                ? 'border-red-600 bg-red-600 text-white hover:bg-red-700 dark:border-red-600 dark:bg-red-600 dark:text-white dark:hover:bg-red-500'
-                : ''
-            }
-          >
+          <Button variant={danger ? 'destructive' : 'primary'} onClick={() => onSettle(true)} data-autofocus={danger ? undefined : ''}>
             {confirmLabel}
           </Button>
         </div>
