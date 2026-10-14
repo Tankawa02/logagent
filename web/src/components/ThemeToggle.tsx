@@ -1,11 +1,5 @@
 import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react'
-import {
-  setThemePreference,
-  toggleResolvedTheme,
-  useResolvedDark,
-  useThemePreference,
-  type ThemePreference,
-} from '../lib/theme'
+import { setThemePreference, toggleResolvedTheme, useResolvedDark, useThemePreference, type ThemePreference } from '../lib/theme'
 
 const OPTIONS: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
   { value: 'system', label: '跟随系统', icon: Monitor },

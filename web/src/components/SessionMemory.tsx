@@ -119,10 +119,7 @@ function MemoryLine({ memory, muted = false }: { memory: MemoryItem; muted?: boo
 export function MemoryConfirm({ memory }: { memory: SessionMemory }) {
   if (memory.mode === 'off' || memory.pending.length === 0) return null
   return (
-    <section
-      aria-label="待确认的记忆"
-      className="ml-10 overflow-hidden rounded-xl border border-primary/25 bg-brand-soft/40"
-    >
+    <section aria-label="待确认的记忆" className="ml-10 overflow-hidden rounded-xl border border-primary/25 bg-brand-soft/40">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3">
         <Lightbulb className="size-4 text-brand-strong" aria-hidden />
         <h3 className="text-sm font-semibold text-foreground">要记住这些吗？</h3>
