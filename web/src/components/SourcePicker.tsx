@@ -1,5 +1,5 @@
 import { useQueries } from '@tanstack/react-query'
-import { AlertCircle, FileText, FolderCode, History, Plus, X } from 'lucide-react'
+import { CircleAlert, CircleCheck, FileText, FolderGit2, FolderOpen, History, Plus, X } from 'lucide-react'
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { baseName } from '../lib/format'
@@ -38,6 +38,9 @@ function statusOf(isLog: boolean, data: FsGlob | undefined, error: unknown, pend
   return { state: 'ok', matched: data.files.length }
 }
 
+const INPUT_ICON_BUTTON =
+  'flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40'
+
 export function SourcePicker({
   kind,
   values,
@@ -53,10 +56,12 @@ export function SourcePicker({
   recent?: string[]
 }) {
   const [browsing, setBrowsing] = useState(false)
-  const suggestions = recent.filter((path) => !values.includes(path))
+  const suggestions = recent.filter((path) => !values.includes(path)).slice(0, 3)
   const [typed, setTyped] = useState('')
   const isLog = kind === 'log'
-  const Icon = isLog ? FileText : FolderCode
+  const Icon = isLog ? FileText : FolderGit2
+  const label = isLog ? '日志文件' : '源码目录'
+  const inputId = `${kind}-path-input`
 
   // 添加时就去服务端确认路径存在，而不是等点「开始分析」才报错
   const checks = useQueries({
@@ -93,102 +98,72 @@ export function SourcePicker({
   }
 
   const last = values.at(-1)
-  const errors = values.flatMap((value, i) => {
-    const status = statuses[i]
-    return status.state === 'error' ? [{ value, message: status.message }] : []
-  })
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <h3 className="flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
-          <Icon className="h-3.5 w-3.5 self-center text-zinc-400" aria-hidden />
-          {isLog ? '日志文件' : '源码目录'}
-          {isLog ? (
-            <span className="rounded-full bg-brand-50 px-1.5 py-px text-[11px] font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
-              必填
-            </span>
-          ) : (
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">可选</span>
-          )}
-        </h3>
-        {/* 选好之后说明文字就没用了，收起来让来源区更紧凑 */}
-        {values.length === 0 && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">{isLog ? '支持多个文件、通配符' : '提供后 agent 会结合代码定位根因'}</p>
-        )}
+    <div className="min-w-0">
+      <div className="mb-1.5 flex items-center gap-2">
+        <label htmlFor={inputId} className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+          <Icon className="size-3.5 text-muted-foreground" aria-hidden />
+          {label}
+        </label>
+        <span className={`rounded px-1.5 text-xs ${isLog ? 'bg-brand-soft text-brand-strong' : 'bg-muted text-muted-foreground'}`}>
+          {isLog ? '必填' : '可选'}
+        </span>
       </div>
 
       {values.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
+        <ul className="mb-2 space-y-1.5">
           {values.map((value, i) => {
             const status = statuses[i]
             const bad = status.state === 'error'
             return (
-              <li
-                key={value}
-                title={bad ? `${value}\n${status.message}` : value}
-                className={`flex max-w-full items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-xs shadow-xs ${
-                  bad
-                    ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200'
-                    : 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900'
-                }`}
-              >
-                {status.state === 'checking' ? (
-                  <Spinner className="shrink-0" />
-                ) : bad ? (
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
-                ) : (
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
-                )}
-                <span className="font-medium">{baseName(value) || value}</span>
-                <span className={`hidden min-w-0 truncate font-mono sm:inline ${bad ? 'text-red-500/80' : 'text-zinc-400'}`}>
-                  {parentOf(value)}
-                </span>
-                {status.state === 'ok' && status.matched > 1 && (
-                  <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    {status.matched} 个文件
-                  </span>
-                )}
-                <span className="sr-only">{bad ? `，有问题：${status.message}` : status.state === 'checking' ? '，正在检查' : ''}</span>
-                <button
-                  type="button"
-                  onClick={() => onChange(values.filter((v) => v !== value))}
-                  aria-label={`移除 ${value}`}
-                  className={`rounded-full p-0.5 ${
-                    bad
-                      ? 'text-red-500 hover:bg-red-100 hover:text-red-800 dark:hover:bg-red-900/60 dark:hover:text-red-100'
-                      : 'text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200'
+              <li key={value}>
+                <div
+                  title={value}
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
+                    bad ? 'border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10' : 'border-border bg-background'
                   }`}
                 >
-                  <X className="h-3 w-3" />
-                </button>
+                  {status.state === 'checking' ? (
+                    <Spinner className="shrink-0" />
+                  ) : bad ? (
+                    <CircleAlert className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+                  ) : (
+                    <CircleCheck className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  )}
+                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">
+                    <span className="text-foreground">{baseName(value) || value}</span>
+                    <span className="ml-1.5 text-muted-foreground">{parentOf(value)}</span>
+                  </span>
+                  {status.state === 'ok' && (
+                    <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                      {isLog ? (status.matched > 1 ? `匹配 ${status.matched} 个文件` : '1 个文件') : '目录'}
+                    </span>
+                  )}
+                  <span className="sr-only">{bad ? `，有问题：${status.message}` : status.state === 'checking' ? '，正在检查' : ''}</span>
+                  <button
+                    type="button"
+                    onClick={() => onChange(values.filter((v) => v !== value))}
+                    aria-label={`移除 ${value}`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+                {bad && (
+                  <p role="alert" className="mt-1 break-all pl-1 text-xs text-red-700 dark:text-red-300">
+                    {status.message}
+                  </p>
+                )}
               </li>
             )
           })}
         </ul>
       )}
 
-      {errors.length > 0 && (
-        <ul role="alert" className="space-y-0.5 px-0.5 text-xs text-red-700 dark:text-red-300">
-          {errors.map(({ value, message }) => (
-            <li key={value} className="break-all">
-              <span className="font-medium">{baseName(value) || value}</span>：{message}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setBrowsing(true)}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:text-brand-300"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden />
-          {isLog ? '浏览文件' : '浏览目录'}
-        </button>
+      <div className="relative">
         <input
-          id={`${kind}-path-input`}
+          id={inputId}
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={onKey}
@@ -202,14 +177,29 @@ export function SourcePicker({
           }}
           spellCheck={false}
           aria-label={isLog ? '输入日志路径' : '输入源码目录路径'}
-          placeholder={isLog ? '或粘贴路径（可多行），回车添加' : '或粘贴目录路径（可多行），回车添加'}
-          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-200 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-500/10 dark:hover:border-zinc-700 dark:focus:bg-zinc-950"
+          placeholder={isLog ? '~/logs/app.log 或 /var/log/*.log' : '~/work/order-service'}
+          className="h-9 w-full rounded-lg border border-input bg-background pl-3 pr-16 font-mono text-[13px] outline-none placeholder:font-sans placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
         />
+        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setBrowsing(true)}
+            aria-label={isLog ? '浏览文件' : '浏览目录'}
+            title={isLog ? '浏览文件' : '浏览目录'}
+            className={INPUT_ICON_BUTTON}
+          >
+            <FolderOpen className="size-4" />
+          </button>
+          <button type="button" onClick={commitTyped} disabled={!typed.trim()} aria-label={`添加${label}`} className={INPUT_ICON_BUTTON}>
+            <Plus className="size-4" />
+          </button>
+        </div>
       </div>
+
       {suggestions.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-0.5">
-          <span className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
-            <History className="h-3 w-3" aria-hidden />
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <History className="size-3" aria-hidden />
             最近使用
           </span>
           {suggestions.map((path) => (
@@ -218,22 +208,16 @@ export function SourcePicker({
               type="button"
               onClick={() => add([path])}
               title={`添加 ${path}`}
-              className="flex max-w-56 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-brand-800 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
+              className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:bg-brand-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Plus className="h-3 w-3 shrink-0" aria-hidden />
-              <span className="truncate">{baseName(path) || path}</span>
+              {baseName(path) || path}
             </button>
           ))}
         </div>
       ) : (
         values.length === 0 && (
-          <p className="flex flex-wrap gap-x-1.5 gap-y-0.5 px-0.5 text-xs text-zinc-400 dark:text-zinc-500">
-            <span>例如</span>
-            {(isLog ? ['~/logs/app.log', '/var/log/*.log'] : ['~/work/order-service']).map((example) => (
-              <code key={example} className="break-all font-mono">
-                {example}
-              </code>
-            ))}
+          <p className="mt-2 text-xs text-muted-foreground">
+            {isLog ? '支持多个文件、通配符和多行粘贴' : '提供后 agent 会结合代码定位根因'}
           </p>
         )
       )}

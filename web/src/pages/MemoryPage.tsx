@@ -5,6 +5,7 @@ import { CandidateRow, KIND_TONE, MEMORY_FIELD, SimilarPrompt, useRefreshMemory 
 import { useConfirm, useToast } from '../components/Feedback'
 import { Select } from '../components/Select'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
+import { PageScaffold } from '../components/TopBar'
 import { api } from '../lib/api'
 import type { MemoryIndex, MemoryItem, MemoryKind, MemorySaveResult } from '../lib/types'
 
@@ -178,11 +179,11 @@ function MemoryRow({ memory }: { memory: MemoryItem }) {
               className={FIELD}
             />
             <div className="flex gap-2">
-              <Button type="submit" variant="primary" className="px-2 py-1 text-xs" disabled={update.isPending || !text.trim()}>
+              <Button type="submit" variant="primary" size="xs" disabled={update.isPending || !text.trim()}>
                 保存
               </Button>
               <Button
-                className="px-2 py-1 text-xs"
+                size="xs"
                 onClick={() => {
                   setText(memory.text)
                   setEditing(false)
@@ -322,19 +323,20 @@ export function MemoryPage() {
   const data = memory.data
 
   return (
-    <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">记忆</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            跨会话记住你的表达偏好、术语和项目事实，每轮对话前注入给模型。表达偏好默认全局，术语和事实挂在项目上。
-          </p>
+    <PageScaffold
+      title="记忆"
+      width="md"
+      description={
+        <>
+          agent 跨会话记住你的表达偏好、术语和项目事实，每轮对话前注入给模型。表达偏好默认全局，术语和事实挂在项目上。
           {data && (
-            <p className="mt-1 truncate font-mono text-xs text-zinc-400" title={data.path}>
+            <span className="mt-1 block truncate font-mono text-xs text-muted-foreground/80" title={data.path}>
               {data.path}
-            </p>
+            </span>
           )}
-        </header>
+        </>
+      }
+    >
 
         {memory.isLoading && <ListSkeleton rows={5} label="加载记忆" />}
         {memory.error && <ErrorBox error={memory.error} />}
@@ -364,7 +366,6 @@ export function MemoryPage() {
             <MemoryList index={data} />
           </>
         )}
-      </div>
-    </main>
+    </PageScaffold>
   )
 }

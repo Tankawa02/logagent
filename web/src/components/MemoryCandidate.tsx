@@ -41,7 +41,7 @@ export function SimilarPrompt({
           <li key={m.id} className="flex items-start gap-2 rounded bg-white/70 px-2 py-1.5 dark:bg-zinc-900/60">
             <span className="font-mono text-xs text-zinc-400">#{m.id}</span>
             <span className="min-w-0 flex-1 text-zinc-700 dark:text-zinc-200">{m.text}</span>
-            <Button variant="secondary" className="shrink-0 px-2 py-0.5 text-xs" disabled={busy} onClick={() => onReplace(m.id)}>
+            <Button variant="secondary" size="xs" className="shrink-0" disabled={busy} onClick={() => onReplace(m.id)}>
               替换这条
             </Button>
           </li>
@@ -109,36 +109,19 @@ export function CandidateRow({ candidate, className = 'px-4 py-3' }: { candidate
         />
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="primary"
-            className="px-2 py-1 text-xs"
-            disabled={busy || (editing && !text.trim())}
-            onClick={() => accept.mutate({})}
-          >
+          <Button variant="primary" size="xs" disabled={busy || (editing && !text.trim())} onClick={() => accept.mutate({})}>
             <Check className="h-3.5 w-3.5" aria-hidden />
             {editing ? '保存修改后的' : '记住'}
           </Button>
-          <Button className="px-2 py-1 text-xs" disabled={busy} onClick={() => setEditing((v) => !v)}>
+          <Button size="xs" disabled={busy} onClick={() => setEditing((v) => !v)}>
             <Pencil className="h-3.5 w-3.5" aria-hidden />
             {editing ? '取消编辑' : '编辑'}
           </Button>
-          <Button
-            variant="ghost"
-            className="px-2 py-1 text-xs"
-            disabled={busy}
-            onClick={() => reject.mutate(false)}
-            title="90 天内不再提示"
-          >
+          <Button variant="ghost" size="xs" disabled={busy} onClick={() => reject.mutate(false)} title="90 天内不再提示">
             <X className="h-3.5 w-3.5" aria-hidden />
             不保存
           </Button>
-          <Button
-            variant="ghost"
-            className="px-2 py-1 text-xs"
-            disabled={busy}
-            onClick={() => reject.mutate(true)}
-            title="以后都不再提示相似内容"
-          >
+          <Button variant="ghost" size="xs" disabled={busy} onClick={() => reject.mutate(true)} title="以后都不再提示相似内容">
             <Ban className="h-3.5 w-3.5" aria-hidden />
             不再提示
           </Button>

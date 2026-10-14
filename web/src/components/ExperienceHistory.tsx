@@ -54,7 +54,11 @@ function sourceLabel(run: ExperienceRun): ReactNode {
       </>
     )
   }
-  return <>命令行排查 <span className="font-mono">{run.source}</span></>
+  return (
+    <>
+      命令行排查 <span className="font-mono">{run.source}</span>
+    </>
+  )
 }
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
@@ -95,11 +99,19 @@ function Steps({ run }: { run: ExperienceRun }) {
       {(steps.length > STEP_PREVIEW || total > steps.length) && (
         <div className="flex items-center gap-3 text-xs text-zinc-400">
           {steps.length > STEP_PREVIEW && (
-            <button type="button" onClick={() => setAll((v) => !v)} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            <button
+              type="button"
+              onClick={() => setAll((v) => !v)}
+              className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+            >
               {all ? '收起' : `展开全部 ${steps.length} 步`}
             </button>
           )}
-          {total > steps.length && <span>共 {total} 步，只保存了前 {steps.length} 步</span>}
+          {total > steps.length && (
+            <span>
+              共 {total} 步，只保存了前 {steps.length} 步
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -147,7 +159,9 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
         aside={
           <>
             {assessment && <Badge tone={assessment.tone}>{assessment.label}</Badge>}
-            {ctx.confidence && <span className="text-xs text-zinc-400">置信度 {CONFIDENCE[ctx.confidence as Confidence] ?? ctx.confidence}</span>}
+            {ctx.confidence && (
+              <span className="text-xs text-zinc-400">置信度 {CONFIDENCE[ctx.confidence as Confidence] ?? ctx.confidence}</span>
+            )}
           </>
         }
       >
@@ -253,7 +267,7 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
             </p>
           )
         )}
-        {(summary.added?.length || summary.merged?.length || summary.confirmed?.length || summary.rejected?.length) ? (
+        {summary.added?.length || summary.merged?.length || summary.confirmed?.length || summary.rejected?.length ? (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             落库：
             {[
@@ -282,7 +296,13 @@ function RunDetail({ run, entry }: { run: ExperienceRun; entry: ExperienceItem }
   )
 }
 
-function GateTable({ groups, cases }: { groups: Record<'train' | 'holdout' | 'all', GateGroup>; cases: { case: string; split: string; before: number | null; after: number | null }[] }) {
+function GateTable({
+  groups,
+  cases,
+}: {
+  groups: Record<'train' | 'holdout' | 'all', GateGroup>
+  cases: { case: string; split: string; before: number | null; after: number | null }[]
+}) {
   const names = { train: '训练集', holdout: '留出集', all: '全体' } as const
   return (
     <div className="overflow-x-auto">
@@ -339,7 +359,8 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
             '手动添加'
           ) : (
             <>
-              由{event.detail.origin === 'eval' ? '离线评测' : '在线复盘'}提炼，进入{STATUS_LABEL[event.detail.status as ExperienceStatus] ?? event.detail.status}
+              由{event.detail.origin === 'eval' ? '离线评测' : '在线复盘'}提炼，进入
+              {STATUS_LABEL[event.detail.status as ExperienceStatus] ?? event.detail.status}
             </>
           ),
       }
@@ -400,7 +421,9 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         text: (
           <>
             精简：合并了 {event.detail.absorbed.map((a) => `E${a.id}`).join('、')}
-            {event.detail.model && <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400"> · {shortModel(event.detail.model)}</span>}
+            {event.detail.model && (
+              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400"> · {shortModel(event.detail.model)}</span>
+            )}
           </>
         ),
       }
@@ -419,7 +442,11 @@ function eventHeadline(event: ExperienceEvent, run: ExperienceRun | undefined): 
         ),
       }
     case 'edited':
-      return { icon: <Pencil className="h-3.5 w-3.5" />, tone: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100', text: '人工编辑' }
+      return {
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        tone: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100',
+        text: '人工编辑',
+      }
   }
 }
 
@@ -437,12 +464,20 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
           <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">适用：{event.detail.draft.trigger}</p>
           <p className="mt-0.5 text-zinc-700 dark:text-zinc-200">{event.detail.draft.strategy}</p>
         </div>
-        {run && <Collapsible label="查看这次排查的过程"><RunDetail run={run} entry={entry} /></Collapsible>}
+        {run && (
+          <Collapsible label="查看这次排查的过程">
+            <RunDetail run={run} entry={entry} />
+          </Collapsible>
+        )}
       </div>
     )
   }
   if (event.kind === 'helpful' || event.kind === 'harmful' || event.kind === 'confirmed') {
-    return run ? <Collapsible label="查看这次排查的过程"><RunDetail run={run} entry={entry} /></Collapsible> : null
+    return run ? (
+      <Collapsible label="查看这次排查的过程">
+        <RunDetail run={run} entry={entry} />
+      </Collapsible>
+    ) : null
   }
   if (event.kind === 'gate') {
     return (
@@ -498,7 +533,9 @@ function EventBody({ event, run, entry }: { event: ExperienceEvent; run: Experie
 function Collapsible({ label, children }: { label: string; children: ReactNode }) {
   return (
     <details className="group">
-      <summary className="cursor-pointer select-none text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">{label}</summary>
+      <summary className="cursor-pointer select-none text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+        {label}
+      </summary>
       <div className="mt-2">{children}</div>
     </details>
   )
@@ -516,7 +553,8 @@ export function ExperienceHistory({ entry }: { entry: ExperienceItem }) {
   if (data.events.length === 0) {
     return (
       <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-950/40 dark:text-zinc-400">
-        这条经验产生于来历记录功能上线之前，只知道它{entry.origin === 'manual' ? '是手动添加的' : `来自${entry.origin === 'eval' ? '离线评测' : '在线复盘'}`}
+        这条经验产生于来历记录功能上线之前，只知道它
+        {entry.origin === 'manual' ? '是手动添加的' : `来自${entry.origin === 'eval' ? '离线评测' : '在线复盘'}`}
         {entry.sources.length > 0 && `（来源：${entry.sources.join('、')}）`}，创建于 {entry.created_at.slice(0, 16)}。
       </p>
     )
@@ -529,7 +567,10 @@ export function ExperienceHistory({ entry }: { entry: ExperienceItem }) {
         const head = eventHeadline(event, run)
         return (
           <li key={event.id} className="relative flex gap-3">
-            <span className={`relative z-10 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${head.tone}`} aria-hidden>
+            <span
+              className={`relative z-10 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${head.tone}`}
+              aria-hidden
+            >
               {head.icon}
             </span>
             <div className="min-w-0 flex-1 space-y-2">

@@ -121,9 +121,13 @@ export function ReportView({
               <Target className="h-3.5 w-3.5" aria-hidden />
               结论
             </h3>
-            <p className={`text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50 ${PROSE}`}>{analysis.conclusion}</p>
+            <p className={`text-pretty text-[15px] font-medium leading-7 text-zinc-900 dark:text-zinc-50 ${PROSE}`}>
+              {analysis.conclusion}
+            </p>
             {analysis.impact && (
-              <p className={`mt-3 border-t border-brand-200/70 pt-3 text-sm leading-relaxed text-zinc-700 dark:border-brand-900/70 dark:text-zinc-300 ${PROSE}`}>
+              <p
+                className={`mt-3 border-t border-brand-200/70 pt-3 text-sm leading-relaxed text-zinc-700 dark:border-brand-900/70 dark:text-zinc-300 ${PROSE}`}
+              >
                 <span className="mr-1.5 font-medium text-zinc-900 dark:text-zinc-100">影响范围</span>
                 {analysis.impact}
               </p>

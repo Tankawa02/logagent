@@ -97,11 +97,11 @@ function ProposalCard({
         <ExperienceDraftFields draft={draft} onChange={setDraft} idPrefix={`consolidate-${proposal.keep}`} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" className="px-2.5 py-1 text-xs" disabled={!ready || merge.isPending} onClick={() => merge.mutate()}>
+        <Button variant="primary" size="xs" disabled={!ready || merge.isPending} onClick={() => merge.mutate()}>
           {merge.isPending ? <Spinner className="h-3 w-3" /> : <GitMerge className="h-3.5 w-3.5" aria-hidden />}
           合并
         </Button>
-        <Button className="px-2.5 py-1 text-xs" disabled={merge.isPending} onClick={onDone}>
+        <Button size="xs" disabled={merge.isPending} onClick={onDone}>
           <X className="h-3.5 w-3.5" aria-hidden />
           忽略
         </Button>
@@ -161,11 +161,7 @@ export function ExperienceConsolidate({ index }: { index: ExperienceIndex }) {
               options={options.map((o) => ({ value: o.value, label: o.label, hint: `${o.count} 条候选 / 生效`, title: o.value }))}
             />
           </div>
-          <Button
-            variant="primary"
-            disabled={analyze.isPending}
-            onClick={() => analyze.mutate(selected)}
-          >
+          <Button variant="primary" disabled={analyze.isPending} onClick={() => analyze.mutate(selected)}>
             {analyze.isPending ? <Spinner className="h-3 w-3" /> : <Combine className="h-4 w-4" aria-hidden />}
             {analyze.isPending ? '分析中…' : '找出同类经验'}
           </Button>

@@ -1,30 +1,36 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import {
-  BookOpen,
+  Activity,
   Brain,
-  GanttChart,
+  History,
   Keyboard,
   Lightbulb,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
   Pin,
   PinOff,
   Plus,
+  ScanSearch,
   Search,
   Settings,
+  Sparkles,
   Trash2,
+  X,
+  type LucideIcon,
 } from 'lucide-react'
-import { ThemeCycleButton, ThemeToggle } from './ThemeToggle'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { dismissDeleteError, scheduleDelete, undoDelete, useDeferredDelete } from '../lib/deferred-delete'
 import { ASSESSMENT, relativeTime } from '../lib/format'
 import { MOD } from '../lib/shortcuts'
-import { useToast } from './Feedback'
-import { openShortcuts } from './ShortcutsDialog'
 import type { SessionSummary } from '../lib/types'
+import { useToast } from './Feedback'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './Menu'
+import { openShortcuts } from './ShortcutsDialog'
+import { ThemeCycleButton } from './ThemeToggle'
 import { ErrorBox, Skeleton } from './ui'
 
 function errorText(error: unknown): string {
@@ -50,45 +56,28 @@ const DOT: Record<string, string> = {
   red: 'bg-red-500',
   green: 'bg-emerald-500',
   amber: 'bg-amber-500',
-  gray: 'bg-zinc-300 dark:bg-zinc-600',
-  blue: 'bg-brand-500',
+  gray: 'bg-muted-foreground/40',
+  blue: 'bg-primary',
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  red: 'font-medium text-red-600 dark:text-red-400',
-  green: 'text-emerald-700 dark:text-emerald-400',
-  amber: 'text-amber-700 dark:text-amber-400',
-  gray: 'text-zinc-500 dark:text-zinc-400',
-  blue: 'text-brand-700 dark:text-brand-300',
-}
-
-const NAV = [
-  { to: '/trace', icon: GanttChart, label: '执行记录', hint: 'Trace · 模型、耗时与工具调用' },
-  { to: '/skills', icon: BookOpen, label: '技能', hint: 'Skills · 排查手册' },
+const NAV: { to: '/trace' | '/skills' | '/memory' | '/experience'; icon: LucideIcon; label: string; hint: string }[] = [
+  { to: '/trace', icon: Activity, label: '执行记录', hint: 'Trace · 模型、耗时与工具调用' },
+  { to: '/skills', icon: Sparkles, label: '技能', hint: 'Skills · 排查手册' },
   { to: '/memory', icon: Brain, label: '记忆', hint: 'Memory · 偏好、术语与事实' },
   { to: '/experience', icon: Lightbulb, label: '经验', hint: 'Experience · 从过往排查提炼的策略' },
-  { to: '/settings', icon: Settings, label: '设置', hint: '模型连接、API Key 与默认值' },
-] as const
+]
 
+const NAV_ITEM =
+  'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+const NAV_ACTIVE = 'bg-card font-medium text-foreground shadow-sm ring-1 ring-border hover:bg-card'
 const ICON_BUTTON =
-  'flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+  'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
-function LogoMark({ className = 'h-7 w-7' }: { className?: string }) {
+function LogoMark() {
   return (
-    <span className={`flex shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white ${className}`} aria-hidden>
-      <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
-        <path d="M3 11.5h2v-4H3zm4 0h2v-7H7zm4 0h2V8h-2z" />
-      </svg>
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground" aria-hidden>
+      <ScanSearch className="size-[18px]" />
     </span>
-  )
-}
-
-export function Brand() {
-  return (
-    <Link to="/" className="flex items-center gap-2 rounded-lg" aria-label="log-agent 首页">
-      <LogoMark />
-      <span className="text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">log-agent</span>
-    </Link>
   )
 }
 
@@ -96,70 +85,83 @@ const NEW_HINT = `新建分析（${MOD}+Shift+O）`
 
 let handledSearchFocus = 0
 
-function NewButton({ onNavigate, compact = false }: { onNavigate?: () => void; compact?: boolean }) {
-  if (compact) {
-    return (
-      <Link
-        to="/"
-        onClick={onNavigate}
-        aria-label="新建分析"
-        title={NEW_HINT}
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-700 shadow-xs hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-      >
-        <Plus className="h-4 w-4" />
-      </Link>
-    )
-  }
-  return (
-    <Link
-      to="/"
-      onClick={onNavigate}
-      title={NEW_HINT}
-      className="group flex w-full items-center gap-2 rounded-full border border-zinc-200 bg-white py-2 pl-3.5 pr-2 text-sm text-zinc-700 shadow-xs transition-colors hover:border-brand-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-brand-700"
-    >
-      <Plus className="h-4 w-4 text-zinc-400 group-hover:text-brand-600" aria-hidden />
-      新建分析
-    </Link>
-  )
-}
-
 /** 折叠后的窄栏：只留图标入口 */
 export function SidebarRail({ onExpand }: { onExpand: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   return (
-    <div className="flex h-full flex-col items-center gap-3 py-4">
-      <Link to="/" aria-label="log-agent 首页">
-        <LogoMark className="h-8 w-8" />
-      </Link>
-      <NewButton compact />
-      <nav aria-label="功能" className="flex flex-col items-center gap-1 pt-2">
-        {NAV.map(({ to, icon: Icon, label }) => (
-          <Link
-            key={to}
-            to={to}
-            title={label}
-            aria-label={label}
-            className={`${ICON_BUTTON} ${pathname.startsWith(to) ? 'bg-zinc-200/70 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100' : ''}`}
+    <nav aria-label="主导航" className="flex h-full flex-col items-center bg-sidebar text-sidebar-foreground">
+      <div className="flex h-14 items-center justify-center">
+        <Link to="/" aria-label="log-agent 首页">
+          <LogoMark />
+        </Link>
+      </div>
+      <div className="flex flex-col items-center gap-1">
+        <button type="button" onClick={onExpand} aria-label="展开侧边栏" title="展开侧边栏" className={`${ICON_BUTTON} mb-1`}>
+          <PanelLeftOpen className="size-4" />
+        </button>
+        <Link
+          to="/"
+          aria-label="新建分析"
+          title={NEW_HINT}
+          className="inline-flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xs transition-colors hover:bg-primary/90"
+        >
+          <Plus className="size-4" />
+        </Link>
+      </div>
+      <ul className="mt-3 flex flex-col items-center gap-0.5">
+        {NAV.map(({ to, icon: Icon, label }) => {
+          const active = pathname.startsWith(to)
+          return (
+            <li key={to}>
+              <Link
+                to={to}
+                title={label}
+                aria-label={label}
+                className={`${NAV_ITEM} size-9 justify-center px-0 ${active ? NAV_ACTIVE : ''}`}
+              >
+                <Icon className={`size-4 ${active ? 'text-brand-strong' : 'text-muted-foreground'}`} aria-hidden />
+              </Link>
+            </li>
+          )
+        })}
+        <li>
+          <button
+            type="button"
+            onClick={onExpand}
+            title="历史会话"
+            aria-label="历史会话"
+            className={`${NAV_ITEM} size-9 justify-center px-0`}
           >
-            <Icon className="h-[18px] w-[18px]" />
-          </Link>
-        ))}
-      </nav>
-      <ThemeCycleButton className={`${ICON_BUTTON} mt-auto`} />
-      <button type="button" onClick={onExpand} aria-label="展开侧边栏" title="展开侧边栏" className={ICON_BUTTON}>
-        <PanelLeftOpen className="h-[18px] w-[18px]" />
-      </button>
-    </div>
+            <History className="size-4 text-muted-foreground" aria-hidden />
+          </button>
+        </li>
+      </ul>
+      <div className="flex-1" />
+      <div className="flex w-full flex-col items-center gap-1 border-t border-sidebar-border py-2.5">
+        <Link
+          to="/settings"
+          title="设置"
+          aria-label="设置"
+          className={`${NAV_ITEM} size-9 justify-center px-0 ${pathname.startsWith('/settings') ? NAV_ACTIVE : ''}`}
+        >
+          <Settings className="size-4 text-muted-foreground" aria-hidden />
+        </Link>
+        <ThemeCycleButton className={ICON_BUTTON} />
+      </div>
+    </nav>
   )
 }
 
 export function Sidebar({
   onNavigate,
   onCollapse,
+  onClose,
   focusSearch = 0,
 }: {
   onNavigate?: () => void
   onCollapse?: () => void
+  /** 移动端抽屉里显示关闭按钮 */
+  onClose?: () => void
   /** 每次 +1 就把焦点放到搜索框（⌘K） */
   focusSearch?: number
 }) {
@@ -277,51 +279,61 @@ export function Sidebar({
     if (activeName) document.getElementById(`session-option-${activeName}`)?.scrollIntoView({ block: 'nearest' })
   }, [activeName])
 
+  const canChat = meta.data?.can_chat
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 px-4 pb-4 pt-4">
-        <Brand />
-        {onCollapse && (
-          <button
-            type="button"
-            onClick={onCollapse}
-            aria-label="收起侧边栏"
-            title="收起侧边栏"
-            className={`${ICON_BUTTON} ml-auto h-8 w-8`}
-          >
-            <PanelLeftClose className="h-4 w-4" />
+    <nav aria-label="主导航" className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+      <div className="flex h-14 shrink-0 items-center gap-2 px-3">
+        <Link to="/" onClick={onNavigate} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg" aria-label="log-agent 首页">
+          <LogoMark />
+          <span className="truncate font-heading text-[15px] font-semibold tracking-tight">log-agent</span>
+        </Link>
+        {onClose ? (
+          <button type="button" onClick={onClose} aria-label="关闭导航" className={ICON_BUTTON}>
+            <X className="size-4" />
           </button>
+        ) : (
+          onCollapse && (
+            <button type="button" onClick={onCollapse} aria-label="收起侧边栏" title="收起侧边栏" className={ICON_BUTTON}>
+              <PanelLeftClose className="size-4" />
+            </button>
+          )
         )}
       </div>
 
-      <div className="space-y-4 px-3">
-        <NewButton onNavigate={onNavigate} />
-        <nav aria-label="功能" className="space-y-0.5">
-          {NAV.map(({ to, icon: Icon, label, hint }) => {
-            const active = pathname.startsWith(to)
-            return (
-              <Link
-                key={to}
-                to={to}
-                onClick={onNavigate}
-                title={hint}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
-                  active
-                    ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-                    : 'text-zinc-600 hover:bg-zinc-200/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100'
-                }`}
-              >
-                <Icon className="h-4 w-4" aria-hidden />
-                {label}
-              </Link>
-            )
-          })}
-        </nav>
+      <div className="px-3">
+        <Link
+          to="/"
+          onClick={onNavigate}
+          title={NEW_HINT}
+          className="flex h-9 w-full items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+        >
+          <Plus className="size-4" aria-hidden />
+          新建分析
+          <kbd className="ml-auto rounded bg-primary-foreground/15 px-1.5 py-0.5 font-mono text-xs" aria-hidden>
+            {MOD === '⌘' ? '⌘⇧O' : 'Ctrl⇧O'}
+          </kbd>
+        </Link>
       </div>
 
-      <div className="mt-5 px-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+      <ul className="mt-3 space-y-0.5 px-3">
+        {NAV.map(({ to, icon: Icon, label, hint }) => {
+          const active = pathname.startsWith(to)
+          return (
+            <li key={to}>
+              <Link to={to} onClick={onNavigate} title={hint} className={`${NAV_ITEM} ${active ? NAV_ACTIVE : ''}`}>
+                <Icon className={`size-4 shrink-0 ${active ? 'text-brand-strong' : 'text-muted-foreground'}`} aria-hidden />
+                {label}
+              </Link>
+            </li>
+          )
+        })}
+      </ul>
+
+      <div className="mt-4 px-3">
+        <label className="relative block">
+          <span className="sr-only">搜索会话（↑↓ 选择，Enter 打开）</span>
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <input
             ref={searchInput}
             value={text}
@@ -329,30 +341,29 @@ export function Sidebar({
             onKeyDown={onSearchKey}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            placeholder="搜索历史会话"
-            aria-label="搜索会话（↑↓ 选择，Enter 打开）"
+            placeholder="搜索会话"
             aria-controls="session-list"
             aria-activedescendant={activeName ? `session-option-${activeName}` : undefined}
             aria-keyshortcuts={MOD === '⌘' ? 'Meta+K' : 'Control+K'}
-            className="w-full rounded-lg bg-zinc-200/50 py-1.5 pl-8 pr-12 text-sm outline-none transition-colors placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-brand-500/25 dark:bg-zinc-900 dark:focus:bg-zinc-900"
+            className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-12 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
           />
           {!searchFocused && !text && (
             <kbd
               aria-hidden
-              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-zinc-300/80 bg-white/70 px-1 font-sans text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 font-mono text-xs text-muted-foreground"
             >
-              {MOD} K
+              {MOD}K
             </kbd>
           )}
-        </div>
+        </label>
       </div>
 
       {searchFocused && flat.length > 0 && (
-        <p className="mt-1.5 px-4 text-[11px] text-zinc-400 dark:text-zinc-500" aria-hidden>
+        <p className="mt-1.5 px-4 text-[11px] text-muted-foreground" aria-hidden>
           ↑↓ 选择 · Enter 打开 · Esc 清空
         </p>
       )}
-      <nav id="session-list" aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-auto px-3 pb-3">
+      <div id="session-list" aria-label="会话列表" className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {sessions.isLoading && (
           <div role="status" aria-label="加载会话列表" className="space-y-3 px-2.5 pt-1">
             {[0, 1, 2, 3].map((i) => (
@@ -366,7 +377,7 @@ export function Sidebar({
         {deletion.failed && (
           <div role="alert" className="mb-2 space-y-1">
             <ErrorBox error={`删除会话「${deletion.failed.item.label}」失败：${errorText(deletion.failed.error)}`} />
-            <button type="button" onClick={dismissDeleteError} className="px-1 text-xs text-zinc-500 hover:underline">
+            <button type="button" onClick={dismissDeleteError} className="px-1 text-xs text-muted-foreground hover:underline">
               知道了
             </button>
           </div>
@@ -380,154 +391,195 @@ export function Sidebar({
               type="button"
               onClick={() => void sessions.refetch()}
               disabled={sessions.isFetching}
-              className="px-1 text-xs text-brand-700 hover:underline disabled:opacity-60 dark:text-brand-400"
+              className="px-1 text-xs text-brand-strong hover:underline disabled:opacity-60"
             >
               {sessions.isFetching ? '重试中…' : '重试'}
             </button>
           </div>
         )}
         {sessions.data?.length === 0 && (
-          <p className="px-2 py-6 text-center text-xs leading-relaxed text-zinc-500">
+          <p className="px-2.5 py-6 text-center text-sm leading-relaxed text-muted-foreground">
             {q ? `没有匹配「${q}」的会话` : '还没有会话，点上方「新建分析」开始'}
           </p>
         )}
         {groups.map(([label, items]) => (
-          <div key={label} className="mb-4">
-            <h3 className="px-2.5 pb-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">{label}</h3>
-            <ul className="space-y-px">
-              {items.map((s) => {
-                const active = pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`
-                const tone = s.last?.assessment ? ASSESSMENT[s.last.assessment].tone : 'gray'
-                const label = s.title || '新的分析'
-                if (editing === s.name) {
-                  return (
-                    <li key={s.name}>
-                      <RenameInput initial={s.title} onSave={(title) => void rename(s, title)} onCancel={() => setEditing(null)} />
-                    </li>
-                  )
-                }
-                return (
-                  <li key={s.name} className="group relative">
-                    <Link
-                      id={`session-option-${s.name}`}
-                      onDoubleClick={(e) => {
-                        e.preventDefault()
-                        setEditing(s.name)
-                      }}
-                      to="/sessions/$name"
-                      params={{ name: s.name }}
-                      onClick={onNavigate}
-                      title={s.title || s.name}
-                      aria-current={active ? 'page' : undefined}
-                      className={`block rounded-lg px-2.5 py-2 pr-8 transition-colors group-focus-within:pr-20 group-hover:pr-20 pointer-coarse:pr-20 ${
-                        active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
-                      } ${activeName === s.name ? 'ring-2 ring-inset ring-brand-400/70' : ''}`}
-                    >
-                      <span
-                        className={`flex items-center gap-1 text-sm ${active ? 'font-medium text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-200'}`}
-                      >
-                        {s.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600" aria-label="已置顶" />}
-                        <span className="truncate">{label}</span>
-                      </span>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
-                        <span className={`flex shrink-0 items-center gap-1 ${STATUS_TEXT[tone]}`}>
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
-                          {s.last?.assessment ? ASSESSMENT[s.last.assessment].label : s.turns ? '暂无结论' : '未提问'}
-                        </span>
-                        <span className="min-w-0 truncate" title={`${s.logs.map((l) => l.name).join('、') || '无日志'} · ${s.turns} 轮`}>
-                          {s.logs[0]?.name ?? '无日志'}
-                          {s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''}
-                          {s.origin === 'analyze' ? ' · CLI' : ''}
-                        </span>
-                        <time
-                          dateTime={s.updated_at}
-                          title={s.updated_at.replace('T', ' ').slice(0, 19)}
-                          className="ml-auto shrink-0 tabular-nums"
-                        >
-                          {relativeTime(s.updated_at)}
-                        </time>
-                      </span>
-                      {/* 搜索时多给一行最近一轮的结论，方便认出要找的是哪个会话 */}
-                      {q && s.last?.summary && (
-                        <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-zinc-500 dark:text-zinc-400">{s.last.summary}</span>
-                      )}
-                    </Link>
-                    <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => void patch(s, { pinned: !s.pinned })}
-                        aria-label={`${s.pinned ? '取消置顶' : '置顶'} ${label}`}
-                        title={s.pinned ? '取消置顶' : '置顶'}
-                        className={ROW_ACTION}
-                      >
-                        {s.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditing(s.name)}
-                        aria-label={`重命名 ${label}`}
-                        title="重命名（也可以双击标题）"
-                        className={ROW_ACTION}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => requestDelete(s)}
-                        aria-label={`删除会话 ${label}`}
-                        title="删除会话（几秒内可撤销）"
-                        className={`${ROW_ACTION} hover:text-red-600`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+          <section key={label} aria-label={label} className="mt-3 first:mt-0">
+            <h2 className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">{label}</h2>
+            <ul className="space-y-0.5">
+              {items.map((s) =>
+                editing === s.name ? (
+                  <li key={s.name}>
+                    <RenameInput initial={s.title} onSave={(title) => void rename(s, title)} onCancel={() => setEditing(null)} />
                   </li>
-                )
-              })}
+                ) : (
+                  <SessionRow
+                    key={s.name}
+                    session={s}
+                    active={pathname === `/sessions/${encodeURIComponent(s.name)}` || pathname === `/sessions/${s.name}`}
+                    highlighted={activeName === s.name}
+                    showSummary={!!q}
+                    onNavigate={onNavigate}
+                    onTogglePin={() => void patch(s, { pinned: !s.pinned })}
+                    onRename={() => setEditing(s.name)}
+                    onDelete={() => requestDelete(s)}
+                  />
+                ),
+              )}
             </ul>
-          </div>
+          </section>
         ))}
-      </nav>
+      </div>
 
-      <div aria-live="polite" className="px-3 empty:hidden">
+      <div className="flex items-center gap-1 border-t border-sidebar-border px-3 py-2.5">
+        <Link
+          to="/settings"
+          onClick={onNavigate}
+          title="模型连接、API Key 与默认值"
+          className={`${NAV_ITEM} w-auto flex-1 ${pathname.startsWith('/settings') ? NAV_ACTIVE : ''}`}
+        >
+          <Settings className="size-4 text-muted-foreground" aria-hidden />
+          设置
+        </Link>
+        {meta.data && (
+          <span
+            className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
+            title={`log-agent v${meta.data.version}${meta.data.db ? ` · ${meta.data.db}` : ''}`}
+          >
+            <span className={`size-1.5 rounded-full ${canChat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
+            {canChat ? '已连接' : '只读'}
+          </span>
+        )}
+        <button type="button" onClick={openShortcuts} title="键盘快捷键（?）" aria-label="键盘快捷键" className={ICON_BUTTON}>
+          <Keyboard className="size-4" aria-hidden />
+        </button>
+        <ThemeCycleButton className={ICON_BUTTON} />
+      </div>
+
+      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4" aria-live="polite">
         {deletion.pending && (
-          <div className="mb-2 flex items-center gap-2 rounded-xl bg-zinc-900 py-2 pl-3 pr-1.5 text-sm text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
-            <span className="min-w-0 flex-1 truncate">已删除「{deletion.pending.label}」</span>
+          <div
+            role="status"
+            className="pointer-events-auto flex animate-toast-in items-center gap-3 rounded-xl bg-foreground py-2 pl-4 pr-2 text-sm text-background shadow-lg motion-reduce:animate-none"
+          >
+            <span className="max-w-[240px] truncate">已删除「{deletion.pending.label}」</span>
             <button
               type="button"
               onClick={undoDelete}
-              className="shrink-0 rounded-lg px-2 py-1 text-sm font-medium text-brand-300 hover:bg-white/10 dark:text-brand-700 dark:hover:bg-zinc-900/10"
+              className="rounded-md px-2 py-1 font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/60"
             >
               撤销
             </button>
           </div>
         )}
       </div>
-
-      <div className="space-y-2 border-t border-zinc-200/70 px-3 py-3 dark:border-zinc-800">
-        <ThemeToggle />
-        {meta.data && (
-          <div className="flex items-center gap-2 px-1 text-xs text-zinc-500" title={meta.data.db ?? undefined}>
-            <span className={`h-2 w-2 shrink-0 rounded-full ${meta.data.can_chat ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden />
-            <span className="min-w-0 flex-1 truncate">{meta.data.can_chat ? '模型已连接' : '只读模式'}</span>
-            <button
-              type="button"
-              onClick={openShortcuts}
-              title="键盘快捷键（?）"
-              aria-label="键盘快捷键"
-              className="shrink-0 rounded-md p-0.5 text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            >
-              <Keyboard className="h-3.5 w-3.5" aria-hidden />
-            </button>
-            <span className="shrink-0 font-mono text-zinc-500 dark:text-zinc-400">v{meta.data.version}</span>
-          </div>
-        )}
-      </div>
-    </div>
+    </nav>
   )
 }
 
-const ROW_ACTION = 'rounded-md p-1 text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-800 dark:hover:bg-zinc-700 dark:hover:text-zinc-100'
+function SessionRow({
+  session: s,
+  active,
+  highlighted,
+  showSummary,
+  onNavigate,
+  onTogglePin,
+  onRename,
+  onDelete,
+}: {
+  session: SessionSummary
+  active: boolean
+  highlighted: boolean
+  showSummary: boolean
+  onNavigate?: () => void
+  onTogglePin: () => void
+  onRename: () => void
+  onDelete: () => void
+}) {
+  const renaming = useRef(false)
+  const tone = s.last?.assessment ? ASSESSMENT[s.last.assessment].tone : 'gray'
+  const label = s.title || '新的分析'
+  const status = s.last?.assessment ? ASSESSMENT[s.last.assessment].label : s.turns ? '暂无结论' : '未提问'
+  const source = `${s.logs[0]?.name ?? '无日志'}${s.logs.length > 1 ? ` +${s.logs.length - 1}` : ''}${s.origin === 'analyze' ? ' · CLI' : ''}`
+
+  return (
+    <li
+      className={`group relative flex items-center gap-1 rounded-lg transition-colors ${
+        active ? 'bg-card shadow-sm ring-1 ring-border' : 'hover:bg-sidebar-accent'
+      } ${highlighted ? 'ring-2 ring-inset ring-primary/60' : ''}`}
+    >
+      <Link
+        id={`session-option-${s.name}`}
+        to="/sessions/$name"
+        params={{ name: s.name }}
+        onClick={onNavigate}
+        onDoubleClick={(e) => {
+          e.preventDefault()
+          onRename()
+        }}
+        title={s.title || s.name}
+        aria-current={active ? 'page' : undefined}
+        className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className={`mt-[7px] size-2 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className={`flex items-center gap-1 text-sm ${active ? 'font-medium text-foreground' : 'text-foreground/90'}`}>
+            {s.pinned && <Pin className="size-3 shrink-0 text-brand-strong" aria-label="已置顶" />}
+            <span className="truncate">{label}</span>
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            <span className="sr-only">{status}，</span>
+            {source} ·{' '}
+            <time dateTime={s.updated_at} title={s.updated_at.replace('T', ' ').slice(0, 19)} className="tabular-nums">
+              {relativeTime(s.updated_at)}
+            </time>
+          </span>
+          {/* 搜索时多给一行最近一轮的结论，方便认出要找的是哪个会话 */}
+          {showSummary && s.last?.summary && (
+            <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{s.last.summary}</span>
+          )}
+        </span>
+      </Link>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={`${label} 的更多操作`}
+          className={`mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:opacity-100 pointer-coarse:opacity-100 ${
+            active ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
+          }`}
+        >
+          <MoreHorizontal className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-40"
+          onCloseAutoFocus={(e) => {
+            // 重命名时焦点要留给输入框，不能被还给「…」按钮
+            if (renaming.current) e.preventDefault()
+            renaming.current = false
+          }}
+        >
+          <DropdownMenuItem onSelect={onTogglePin}>
+            {s.pinned ? <PinOff /> : <Pin />}
+            {s.pinned ? '取消置顶' : '置顶'}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              renaming.current = true
+              onRename()
+            }}
+          >
+            <Pencil />
+            重命名
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+            <Trash2 />
+            删除
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </li>
+  )
+}
 
 function RenameInput({ initial, onSave, onCancel }: { initial: string; onSave: (title: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState(initial)
@@ -535,8 +587,12 @@ function RenameInput({ initial, onSave, onCancel }: { initial: string; onSave: (
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    input.current?.focus()
-    input.current?.select()
+    // 从下拉菜单触发时菜单关闭会把焦点还给触发按钮，晚一帧再抢回来
+    const frame = requestAnimationFrame(() => {
+      input.current?.focus()
+      input.current?.select()
+    })
+    return () => cancelAnimationFrame(frame)
   }, [])
 
   function finish(save: boolean) {
@@ -565,7 +621,7 @@ function RenameInput({ initial, onSave, onCancel }: { initial: string; onSave: (
       }}
       aria-label="会话标题"
       placeholder="会话标题"
-      className="w-full rounded-lg border border-brand-300 bg-white px-2.5 py-2 text-sm outline-none ring-4 ring-brand-500/10 dark:border-brand-800 dark:bg-zinc-900"
+      className="m-0.5 h-9 w-[calc(100%-4px)] rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     />
   )
 }

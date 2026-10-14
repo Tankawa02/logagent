@@ -385,9 +385,7 @@ export function ChatPanel({
                     onOpen={onOpen}
                     onShowTurn={onShowTurn}
                     turn={turn}
-                    onRetry={
-                      message === lastAssistant && index > lastUserIndex && !isLoading && lastQuestion ? toggleRetry : undefined
-                    }
+                    onRetry={message === lastAssistant && index > lastUserIndex && !isLoading && lastQuestion ? toggleRetry : undefined}
                     retrying={retrying}
                   />
                 )

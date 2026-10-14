@@ -8,6 +8,7 @@ import { ExperienceHistory } from '../components/ExperienceHistory'
 import { useConfirm, useToast } from '../components/Feedback'
 import { Select } from '../components/Select'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
+import { PageScaffold } from '../components/TopBar'
 import { api } from '../lib/api'
 import type { ExperienceIndex, ExperienceItem } from '../lib/types'
 
@@ -140,11 +141,11 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
           >
             <DraftFields draft={draft} onChange={setDraft} idPrefix={`experience-${entry.id}`} />
             <div className="flex gap-2">
-              <Button type="submit" variant="primary" className="px-2 py-1 text-xs" disabled={busy}>
+              <Button type="submit" variant="primary" size="xs" disabled={busy}>
                 保存
               </Button>
               <Button
-                className="px-2 py-1 text-xs"
+                size="xs"
                 onClick={() => {
                   setDraft({ title: entry.title, trigger: entry.trigger, strategy: entry.strategy })
                   setEditing(false)
@@ -197,11 +198,11 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
         <div className="flex shrink-0 items-center gap-1">
           {entry.status === 'candidate' ? (
             <>
-              <Button variant="primary" className="px-2 py-1 text-xs" disabled={busy} onClick={() => status.mutate('active')}>
+              <Button variant="primary" size="xs" disabled={busy} onClick={() => status.mutate('active')}>
                 <Check className="h-3.5 w-3.5" aria-hidden />
                 生效
               </Button>
-              <Button className="px-2 py-1 text-xs" disabled={busy} onClick={() => remove.mutate()}>
+              <Button size="xs" disabled={busy} onClick={() => remove.mutate()}>
                 <X className="h-3.5 w-3.5" aria-hidden />
                 丢弃
               </Button>
@@ -219,7 +220,7 @@ function ExperienceRow({ entry }: { entry: ExperienceItem }) {
                   </IconButton>
                 )
               )}
-              <IconButton label={`编辑 E${entry.id}`} disabled={busy} onClick={() => setEditing(true)}>
+              <IconButton label={`���辑 E${entry.id}`} disabled={busy} onClick={() => setEditing(true)}>
                 <Pencil className="h-3.5 w-3.5" />
               </IconButton>
               <IconButton
@@ -311,19 +312,20 @@ export function ExperiencePage() {
   const archived = data?.entries.filter((e) => e.status === 'retired' || e.status === 'promoted') ?? []
 
   return (
-    <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6">
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">经验</h1>
-          <p className="mt-1 text-pretty text-sm text-zinc-500">
-            从过往排查里提炼的可复用策略。生效的经验会按与问题的相关度挑选几条，作为排查思路提示给模型；被标为有害的会自动淘汰。
-          </p>
+    <PageScaffold
+      title="经验"
+      width="md"
+      description={
+        <>
+          从过往排查里提炼的可复用策略。生效的经验会按与问题的相关度挑选几条，作为排查思路提示给 agent；被标为有害的会自动淘汰。
           {data && (
-            <p className="mt-1 truncate font-mono text-xs text-zinc-400" title={data.path}>
+            <span className="mt-1 block truncate font-mono text-xs text-muted-foreground/80" title={data.path}>
               {data.path}
-            </p>
+            </span>
           )}
-        </header>
+        </>
+      }
+    >
 
         {experience.isLoading && <ListSkeleton rows={5} label="加载经验" />}
         {experience.error && <ErrorBox error={experience.error} />}
@@ -353,7 +355,7 @@ export function ExperiencePage() {
             <Card>
               <CardHeader title={`生效中（${active.length}）`}>
                 {archived.length > 0 && (
-                  <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setShowArchived((v) => !v)}>
+                  <Button variant="ghost" size="xs" onClick={() => setShowArchived((v) => !v)}>
                     {showArchived ? '收起已淘汰' : `查看已淘汰 / 已提升（${archived.length}）`}
                   </Button>
                 )}
@@ -384,7 +386,6 @@ export function ExperiencePage() {
             <AddExperience index={data} />
           </>
         )}
-      </div>
-    </main>
+    </PageScaffold>
   )
 }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Markdown } from '../components/Markdown'
 import { useConfirm, useToast } from '../components/Feedback'
 import { Select } from '../components/Select'
+import { TopBar, TopBarTitle } from '../components/TopBar'
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, ListSkeleton, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import type { SkillSource, SkillSummary } from '../lib/types'
@@ -97,21 +98,23 @@ function SourceList({
   onSelect: (next: Selection) => void
 }) {
   return (
-    <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+    <div className="px-2 pb-3">
       {byPriority(sources).map((source, index) => (
-        <section key={source.key} className="px-2 py-3" aria-labelledby={`source-${source.key}`}>
-          <div className="flex items-baseline justify-between gap-2 px-2">
-            <h3 id={`source-${source.key}`} className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+        <section key={source.key} className="pt-3" aria-labelledby={`source-${source.key}`}>
+          <div className="flex items-center justify-between gap-2 px-2">
+            <h3 id={`source-${source.key}`} className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">
               {source.label}
-              {index === 0 && sources.length > 1 && <span className="ml-1.5 font-normal text-zinc-400">优先级最高</span>}
+              {index === 0 && sources.length > 1 && (
+                <span className="rounded bg-brand-soft px-1.5 font-normal text-brand-strong">优先级最高</span>
+              )}
             </h3>
-            <span className="text-xs text-zinc-400">{source.skills.length}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{source.skills.length}</span>
           </div>
-          <p className="truncate px-2 font-mono text-xs text-zinc-500 dark:text-zinc-400" title={source.directory}>
+          <p className="truncate px-2 font-mono text-xs text-muted-foreground" title={source.directory}>
             {source.directory}
           </p>
           {source.skills.length === 0 ? (
-            <p className="px-2 pt-2 text-xs text-zinc-400">{source.exists ? '目录里还没有 skill' : '目录尚不存在，新建时自动创建'}</p>
+            <p className="px-2 pt-2 text-xs text-muted-foreground">{source.exists ? '目录里还没有 skill' : '目录尚不存在，新建时自动创建'}</p>
           ) : (
             <ul className="mt-1.5 space-y-0.5">
               {source.skills.map((skill) => (
@@ -425,47 +428,49 @@ export function SkillsPage() {
   }
 
   return (
-    <main className="h-full overflow-auto">
-      <div className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-6">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">技能</h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              团队写好的排查手册。模型只看名称和描述，问题相符时才读取全文，装多少本都不会撑大上下文。
-            </p>
-          </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <TopBar
+        actions={
           <Button variant="primary" onClick={() => select({ kind: 'new' })}>
-            <Plus className="h-4 w-4" aria-hidden />
-            新建 skill
+            <Plus className="size-4" aria-hidden />
+            新建技能
           </Button>
-        </header>
+        }
+      >
+        <TopBarTitle>技能</TopBarTitle>
+        <p className="hidden min-w-0 truncate text-sm text-muted-foreground lg:block">
+          团队写好的排查手册。agent 只看名称和描述，问题相符时才读取全文，装多少本都不会撑大上下文。
+        </p>
+      </TopBar>
 
-        {skills.isLoading && (
-          <div className="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-            <ListSkeleton rows={4} label="加载 skill" />
-            <ListSkeleton rows={6} label="加载 skill" className="hidden lg:block" />
-          </div>
-        )}
-        {skills.error && <ErrorBox error={skills.error} />}
+      {skills.isLoading && (
+        <div className="grid items-start gap-5 p-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <ListSkeleton rows={4} label="加载 skill" />
+          <ListSkeleton rows={6} label="加载 skill" className="hidden lg:block" />
+        </div>
+      )}
+      {skills.error && (
+        <div className="p-4">
+          <ErrorBox error={skills.error} />
+        </div>
+      )}
 
-        {skills.data && (
-          <div className="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-            <Card className="lg:sticky lg:top-0">
-              <CardHeader
-                title={
-                  <span className="flex items-center gap-1.5">
-                    <Layers className="h-3.5 w-3.5" aria-hidden />
-                    来源
-                  </span>
-                }
-              >
-                <span className="text-xs text-zinc-400">
-                  {active} / {total} 生效
-                </span>
-              </CardHeader>
-              <SourceList sources={sources} selection={selection} onSelect={select} />
-            </Card>
+      {skills.data && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+          <aside aria-label="技能列表" className="shrink-0 border-b border-border lg:w-80 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+            <div className="flex items-center justify-between gap-2 px-4 pb-1 pt-3">
+              <h2 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Layers className="size-3.5" aria-hidden />
+                来源
+              </h2>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {active} / {total} 生效
+              </span>
+            </div>
+            <SourceList sources={sources} selection={selection} onSelect={select} />
+          </aside>
 
+          <div className="min-w-0 flex-1 p-4 lg:overflow-y-auto">
             {selection?.kind === 'new' ? (
               <NewSkillForm
                 sources={sources}
@@ -493,8 +498,8 @@ export function SkillsPage() {
               </Card>
             )}
           </div>
-        )}
-      </div>
-    </main>
+        </div>
+      )}
+    </div>
   )
 }
