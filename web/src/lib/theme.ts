@@ -16,7 +16,6 @@ function readPreference(): ThemePreference {
 }
 
 let preference = readPreference()
-let transitionTimer = 0
 
 function resolveDark() {
   return preference === 'dark' || (preference === 'system' && media.matches)
@@ -53,12 +52,29 @@ export function setThemePreference(next: ThemePreference) {
   } catch {
     // 隐私模式下写不进去也不影响本次切换
   }
+  switchAppearance(() => {
+    apply()
+    listeners.forEach((listener) => listener())
+  })
+}
+
+/**
+ * 支持 View Transition 时整屏交叉淡化；否则（或用户要求减少动态效果）直接瞬切。
+ * 两种情况都临时禁用元素自身的 transition，保证所有颜色同一帧换完。
+ */
+function switchAppearance(update: () => void) {
   const root = document.documentElement
-  root.classList.add('theme-transition')
-  window.clearTimeout(transitionTimer)
-  transitionTimer = window.setTimeout(() => root.classList.remove('theme-transition'), 200)
-  apply()
-  listeners.forEach((listener) => listener())
+  root.classList.add('theme-switching')
+  const done = () => root.classList.remove('theme-switching')
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (!document.startViewTransition || reduceMotion) {
+    update()
+    // 强制一次样式计算让新颜色立即生效，再恢复各元素的 transition
+    void root.offsetWidth
+    done()
+    return
+  }
+  document.startViewTransition(update).finished.finally(done)
 }
 
 function subscribe(listener: () => void) {

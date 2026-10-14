@@ -172,16 +172,21 @@
   }
 }
 
-/* 切换主题时短暂打开颜色过渡（lib/theme.ts 加上这个类，结束后移除），平时不给所有元素挂 transition */
-.theme-transition,
-.theme-transition *,
-.theme-transition *::before,
-.theme-transition *::after {
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    fill 150ms ease !important;
+/*
+ * 主题切换用 View Transition 整屏截图交叉淡化（lib/theme.ts），只有一个合成层动画，
+ * 不随 DOM 节点数变慢。切换瞬间关掉所有元素自身的 transition，避免与截图动画叠加、颜色分批变化。
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
