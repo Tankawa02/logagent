@@ -121,14 +121,14 @@ export function MemoryConfirm({ memory }: { memory: SessionMemory }) {
   return (
     <section
       aria-label="待确认的记忆"
-      className="ml-10 overflow-hidden rounded-xl border border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/20"
+      className="ml-10 overflow-hidden rounded-xl border border-primary/25 bg-brand-soft/40"
     >
-      <header className="flex items-center gap-2 border-b border-amber-200/70 px-4 py-2.5 dark:border-amber-900/60">
-        <Lightbulb className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
-        <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">要记住这些吗？</h3>
-        <span className="text-xs text-zinc-500">保存后，之后每次分析都会参考</span>
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3">
+        <Lightbulb className="size-4 text-brand-strong" aria-hidden />
+        <h3 className="text-sm font-semibold text-foreground">要记住这些吗？</h3>
+        <span className="text-xs text-muted-foreground">保存后，之后每次分析都会参考</span>
       </header>
-      <ul className="divide-y divide-amber-200/70 dark:divide-amber-900/60">
+      <ul className="space-y-2 p-3">
         {memory.pending.map((c) => (
           <CandidateRow key={c.id} candidate={c} />
         ))}

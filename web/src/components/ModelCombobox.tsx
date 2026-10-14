@@ -25,6 +25,7 @@ export function ModelCombobox({
   loading,
   validate = true,
   className,
+  wrapperClassName = '',
 }: {
   id: string
   value: string
@@ -35,6 +36,7 @@ export function ModelCombobox({
   /** 列表可能已过期（比如设置页正在改接口地址）时关掉校验 */
   validate?: boolean
   className: string
+  wrapperClassName?: string
 }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
@@ -84,7 +86,7 @@ export function ModelCombobox({
   }
 
   return (
-    <div className="relative">
+    <div className={`relative ${wrapperClassName}`}>
       <input
         id={id}
         role="combobox"
