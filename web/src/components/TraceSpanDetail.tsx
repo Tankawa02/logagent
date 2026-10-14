@@ -207,7 +207,7 @@ function clippedText(value: unknown): ClippedText | undefined {
 
 function LlmOutput({ call, links }: { call: LlmCall; links?: SpanLinks }) {
   const hasText = Boolean(call.output_text?.text)
-  // 旧版本把��考 token 数（数字）写进了同名的 reasoning 字段，覆盖了思考原文
+  // 旧版本把思考 token 数（数字）写进了同名的 reasoning 字段，覆盖了思考原文
   const reasoning = clippedText(call.reasoning)
   if (!call.output_text && !reasoning && !call.tool_requests) {
     return <p className="text-zinc-500">这一轮由旧版本记录，没有保存模型输出。</p>
