@@ -16,10 +16,13 @@ function readPreference(): ThemePreference {
 }
 
 let preference = readPreference()
-let transitionTimer = 0
+
+function resolveDark() {
+  return preference === 'dark' || (preference === 'system' && media.matches)
+}
 
 function apply() {
-  const dark = preference === 'dark' || (preference === 'system' && media.matches)
+  const dark = resolveDark()
   const root = document.documentElement
   root.classList.toggle('dark', dark)
   root.style.colorScheme = dark ? 'dark' : 'light'
@@ -29,7 +32,9 @@ function apply() {
 }
 
 media.addEventListener('change', () => {
-  if (preference === 'system') apply()
+  if (preference !== 'system') return
+  apply()
+  listeners.forEach((listener) => listener())
 })
 
 window.addEventListener('storage', (event) => {
@@ -47,12 +52,29 @@ export function setThemePreference(next: ThemePreference) {
   } catch {
     // 隐私模式下写不进去也不影响本次切换
   }
+  switchAppearance(() => {
+    apply()
+    listeners.forEach((listener) => listener())
+  })
+}
+
+/**
+ * 支持 View Transition 时整屏交叉淡化；否则（或用户要求减少动态效果）直接瞬切。
+ * 两种情况都临时禁用元素自身的 transition，保证所有颜色同一帧换完。
+ */
+function switchAppearance(update: () => void) {
   const root = document.documentElement
-  root.classList.add('theme-transition')
-  window.clearTimeout(transitionTimer)
-  transitionTimer = window.setTimeout(() => root.classList.remove('theme-transition'), 200)
-  apply()
-  listeners.forEach((listener) => listener())
+  root.classList.add('theme-switching')
+  const done = () => root.classList.remove('theme-switching')
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (!document.startViewTransition || reduceMotion) {
+    update()
+    // 强制一次样式计算让新颜色立即生效，再恢复各元素的 transition
+    void root.offsetWidth
+    done()
+    return
+  }
+  document.startViewTransition(update).finished.finally(done)
 }
 
 function subscribe(listener: () => void) {
@@ -62,6 +84,20 @@ function subscribe(listener: () => void) {
 
 export function useThemePreference(): ThemePreference {
   return useSyncExternalStore(subscribe, () => preference)
+}
+
+/** 实际生效的主题（「跟随系统」已按系统设置换算） */
+export function useResolvedDark(): boolean {
+  return useSyncExternalStore(subscribe, resolveDark)
+}
+
+/**
+ * 在亮 / 暗之间切换实际外观，每次点击都一定有可见变化。
+ * 切到与系统一致的外观时回到「跟随系统」，不必再手动改回来。
+ */
+export function toggleResolvedTheme() {
+  const nextDark = !resolveDark()
+  setThemePreference(nextDark === media.matches ? 'system' : nextDark ? 'dark' : 'light')
 }
 
 apply()
