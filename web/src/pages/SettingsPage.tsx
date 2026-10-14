@@ -4,6 +4,7 @@ import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { isUnknownModel, ModelCombobox } from '../components/ModelCombobox'
 import { Select } from '../components/Select'
 import { Badge, Button, Card, CardHeader, ErrorBox, FormSkeleton, Spinner } from '../components/ui'
+import { PageScaffold } from '../components/TopBar'
 import { api } from '../lib/api'
 import type { ConnectionTestResult, SettingField, SettingKey, Settings, SettingsUpdate, SettingValue } from '../lib/types'
 
@@ -68,20 +69,16 @@ export function SettingsPage() {
   const [savedAt, setSavedAt] = useState<number | null>(null)
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:py-10">
-        <header className="space-y-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">设置</h1>
-          <p className="text-pretty text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-            模型连接与常用默认值。保存后立即对当前 serve 生效，不用重启；命令行的 analyze / chat 也读同一份配置。
-          </p>
-        </header>
-        {settings.isLoading && <FormSkeleton fields={8} label="加载设置" />}
-        {settings.error && <ErrorBox error={settings.error} />}
-        {/* 保存后用新数据重建表单，草稿自然回到「已保存」状态 */}
-        {settings.data && <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />}
-      </div>
-    </div>
+    <PageScaffold
+      title="设置"
+      width="sm"
+      description="模型连接与常用默认值。保存后立即对当前 serve 生效，不用重启；命令行的 analyze / chat 也读同一份配置。"
+    >
+      {settings.isLoading && <FormSkeleton fields={8} label="加载设置" />}
+      {settings.error && <ErrorBox error={settings.error} />}
+      {/* 保存后用新数据重建表单，草稿自然回到「已保存」状态 */}
+      {settings.data && <SettingsForm key={settings.dataUpdatedAt} settings={settings.data} savedAt={savedAt} onSaved={setSavedAt} />}
+    </PageScaffold>
   )
 }
 
@@ -174,7 +171,7 @@ function SettingsForm({
       )}
       {settings.read_only && (
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-          当前 serve 以 --read-only 启动：可以修改并保存配置，但本次运行不会提供提问功能。
+          当前 serve 以 --read-only 启动：可以修改并保存配置���但本次运行不会提供提问功能。
         </div>
       )}
 
@@ -438,9 +435,7 @@ function SettingsForm({
               已保存，立即生效
             </span>
           ) : invalidModel ? (
-            <span className="text-red-600 dark:text-red-400">
-              {invalidModelLabel}不在可用列表里，请重新选择
-            </span>
+            <span className="text-red-600 dark:text-red-400">{invalidModelLabel}不在可用列表里，请重新选择</span>
           ) : dirty ? (
             <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />

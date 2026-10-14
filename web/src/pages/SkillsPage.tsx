@@ -60,22 +60,22 @@ function SkillRow({ skill, active, onSelect }: { skill: SkillSummary; active: bo
         type="button"
         onClick={onSelect}
         aria-current={active ? 'true' : undefined}
-        className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm ${
-          active ? 'bg-zinc-200/70 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+        className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
+          active ? 'bg-accent' : 'hover:bg-accent/60'
         }`}
       >
         {broken ? (
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="格式有问题" />
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" aria-label="格式有问题" />
         ) : (
-          <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+          <BookOpen className={`mt-0.5 size-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground'}`} aria-hidden />
         )}
         <span className="min-w-0 flex-1">
           <span
-            className={`block truncate font-mono text-xs ${skill.shadowed_by ? 'text-zinc-400 line-through' : 'text-zinc-800 dark:text-zinc-100'}`}
+            className={`block truncate font-mono text-xs font-medium ${skill.shadowed_by ? 'text-muted-foreground line-through' : 'text-foreground'}`}
           >
             {skill.name}
           </span>
-          <span className="line-clamp-2 text-xs text-zinc-500">
+          <span className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
             {broken ? skill.problems[0] : skill.shadowed_by ? `被「${skill.shadowed_by}」的同名 skill 覆盖` : skill.description}
           </span>
         </span>
@@ -114,7 +114,9 @@ function SourceList({
             {source.directory}
           </p>
           {source.skills.length === 0 ? (
-            <p className="px-2 pt-2 text-xs text-muted-foreground">{source.exists ? '目录里还没有 skill' : '目录尚不存在，新建时自动创建'}</p>
+            <p className="px-2 pt-2 text-xs text-muted-foreground">
+              {source.exists ? '目录里还没有 skill' : '目录尚不存在，新建时自动创建'}
+            </p>
           ) : (
             <ul className="mt-1.5 space-y-0.5">
               {source.skills.map((skill) => (
@@ -209,7 +211,7 @@ function NewSkillForm({
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             maxLength={1024}
-            placeholder="支付回调超时、对账不一致时使用：网关日志字段、重试逻辑位置、常见根因"
+            placeholder="支付回调超��、对账不一致时使用：网关日志字段、重试逻辑位置、常见根因"
             className={FIELD}
           />
           <p className="text-xs text-zinc-400">模型只看到名称和这句描述，靠它判断什么时候读全文</p>

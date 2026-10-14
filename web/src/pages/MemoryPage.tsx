@@ -337,35 +337,34 @@ export function MemoryPage() {
         </>
       }
     >
+      {memory.isLoading && <ListSkeleton rows={5} label="加载记忆" />}
+      {memory.error && <ErrorBox error={memory.error} />}
 
-        {memory.isLoading && <ListSkeleton rows={5} label="加载记忆" />}
-        {memory.error && <ErrorBox error={memory.error} />}
-
-        {data && (
-          <>
-            {data.pending.length > 0 && (
-              <Card className="border-amber-200 dark:border-amber-900">
-                <CardHeader
-                  title={
-                    <span className="flex items-center gap-1.5">
-                      <Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />
-                      待确认的建议（{data.pending.length}）
-                    </span>
-                  }
-                >
-                  <span className="text-xs text-zinc-400">agent 在对话里发现、值得记住的内容</span>
-                </CardHeader>
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {data.pending.map((c) => (
-                    <CandidateRow key={c.id} candidate={c} />
-                  ))}
-                </ul>
-              </Card>
-            )}
-            <AddMemory index={data} />
-            <MemoryList index={data} />
-          </>
-        )}
+      {data && (
+        <>
+          {data.pending.length > 0 && (
+            <Card className="border-amber-200 dark:border-amber-900">
+              <CardHeader
+                title={
+                  <span className="flex items-center gap-1.5">
+                    <Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />
+                    待确认的建议（{data.pending.length}）
+                  </span>
+                }
+              >
+                <span className="text-xs text-zinc-400">agent 在对话里发现、值得记住的内容</span>
+              </CardHeader>
+              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {data.pending.map((c) => (
+                  <CandidateRow key={c.id} candidate={c} />
+                ))}
+              </ul>
+            </Card>
+          )}
+          <AddMemory index={data} />
+          <MemoryList index={data} />
+        </>
+      )}
     </PageScaffold>
   )
 }

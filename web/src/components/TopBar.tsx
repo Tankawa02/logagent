@@ -43,7 +43,7 @@ export function TopBarTitle({ children }: { children: ReactNode }) {
   return <h1 className="truncate font-heading text-[15px] font-semibold tracking-tight text-foreground">{children}</h1>
 }
 
-const WIDTHS = { md: 'max-w-3xl', lg: 'max-w-5xl', xl: 'max-w-7xl' } as const
+const WIDTHS = { sm: 'max-w-2xl', md: 'max-w-3xl', lg: 'max-w-5xl', xl: 'max-w-7xl' } as const
 
 /** 管理类页面的统一骨架：顶部栏 + 可滚动内容区（居中、限宽） */
 export function PageScaffold({

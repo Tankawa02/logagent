@@ -26,7 +26,6 @@ function useRefresh() {
   return () => void client.invalidateQueries({ queryKey: ['experience'] })
 }
 
-
 function AddExperience({ index }: { index: ExperienceIndex }) {
   const refresh = useRefresh()
   const toast = useToast()
@@ -326,66 +325,65 @@ export function ExperiencePage() {
         </>
       }
     >
+      {experience.isLoading && <ListSkeleton rows={5} label="加载经验" />}
+      {experience.error && <ErrorBox error={experience.error} />}
 
-        {experience.isLoading && <ListSkeleton rows={5} label="加载经验" />}
-        {experience.error && <ErrorBox error={experience.error} />}
+      {data && (
+        <>
+          <ReflectionStatus index={data} />
 
-        {data && (
-          <>
-            <ReflectionStatus index={data} />
-
-            {candidates.length > 0 && (
-              <Card className="border-amber-200 dark:border-amber-900">
-                <CardHeader
-                  title={
-                    <span className="flex items-center gap-1.5">
-                      <Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />
-                      待确认的候选（{candidates.length}）
-                    </span>
-                  }
-                />
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {candidates.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader title={`生效中（${active.length}）`}>
-                {archived.length > 0 && (
-                  <Button variant="ghost" size="xs" onClick={() => setShowArchived((v) => !v)}>
-                    {showArchived ? '收起已淘汰' : `查看已淘汰 / 已提升（${archived.length}）`}
-                  </Button>
-                )}
-              </CardHeader>
-              {active.length === 0 ? (
-                <Empty>
-                  还没有生效的经验。可以运行 <code className="font-mono">log-agent eval learn</code>{' '}
-                  从评测案例里学习，或在设置里开启在线复盘。
-                </Empty>
-              ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {active.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
-                  ))}
-                </ul>
-              )}
-              {showArchived && archived.length > 0 && (
-                <ul className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/50 dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/30">
-                  {archived.map((entry) => (
-                    <ExperienceRow key={entry.id} entry={entry} />
-                  ))}
-                </ul>
-              )}
+          {candidates.length > 0 && (
+            <Card className="border-amber-200 dark:border-amber-900">
+              <CardHeader
+                title={
+                  <span className="flex items-center gap-1.5">
+                    <Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />
+                    待确认的候选（{candidates.length}）
+                  </span>
+                }
+              />
+              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {candidates.map((entry) => (
+                  <ExperienceRow key={entry.id} entry={entry} />
+                ))}
+              </ul>
             </Card>
+          )}
 
-            <ExperienceConsolidate index={data} />
+          <Card>
+            <CardHeader title={`生效中（${active.length}）`}>
+              {archived.length > 0 && (
+                <Button variant="ghost" size="xs" onClick={() => setShowArchived((v) => !v)}>
+                  {showArchived ? '收起已淘汰' : `查看已淘汰 / 已提升（${archived.length}）`}
+                </Button>
+              )}
+            </CardHeader>
+            {active.length === 0 ? (
+              <Empty>
+                还没有生效的经验。可以运行 <code className="font-mono">log-agent eval learn</code>{' '}
+                从评测案例里学习，或在设置里开启在线复盘。
+              </Empty>
+            ) : (
+              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {active.map((entry) => (
+                  <ExperienceRow key={entry.id} entry={entry} />
+                ))}
+              </ul>
+            )}
+            {showArchived && archived.length > 0 && (
+              <ul className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/50 dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/30">
+                {archived.map((entry) => (
+                  <ExperienceRow key={entry.id} entry={entry} />
+                ))}
+              </ul>
+            )}
+          </Card>
 
-            <AddExperience index={data} />
-          </>
-        )}
+          <ExperienceConsolidate index={data} />
+
+          <AddExperience index={data} />
+        </>
+      )}
     </PageScaffold>
   )
 }
