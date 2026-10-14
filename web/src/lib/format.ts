@@ -78,6 +78,30 @@ export function formatGenerated(value: string | null | undefined): string {
   return value.replace('T', ' ').replace(/(\.\d+)?([+-]\d{2}:\d{2}|Z)$/, '')
 }
 
+function startOfDay(ms: number): number {
+  const d = new Date(ms)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** 列表里的「今天 14:28 / 昨天 18:40 / 10月9日 16:22」，跨年再带上年份 */
+export function formatDayTime(value: string | null | undefined, now: number = Date.now()): string {
+  const at = value ? Date.parse(value) : NaN
+  if (Number.isNaN(at)) return formatGenerated(value)
+  const d = new Date(at)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
+  if (days === 0) return `今天 ${hm}`
+  if (days === 1) return `昨天 ${hm}`
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`
+  return d.getFullYear() === new Date(now).getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}年${md}`
+}
+
+export function isToday(value: string | null | undefined, now: number = Date.now()): boolean {
+  const at = value ? Date.parse(value) : NaN
+  return !Number.isNaN(at) && startOfDay(at) === startOfDay(now)
+}
+
 /** 侧边栏里的「刚刚 / 5 分钟前 / 3 小时前 / 2 天前」，超过一周显示月-日 */
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const at = Date.parse(iso)

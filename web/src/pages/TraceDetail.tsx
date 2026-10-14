@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ChevronRight, MessageSquare } from 'lucide-react'
+import { ArrowRight, ChevronRight, MessageSquare } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TopBar } from '../components/TopBar'
 import { Badge, buttonClass, Card, CardHeader, Empty, ErrorBox, ListSkeleton } from '../components/ui'
 import { TraceStatusBadge } from '../components/TraceStatusBadge'
 import { api } from '../lib/api'
-import { baseName, formatDuration, formatGenerated, formatTokens, TURN_STATUS } from '../lib/format'
+import { baseName, formatDuration, formatGenerated, formatTokens, formatUsd, TURN_STATUS } from '../lib/format'
 import type { ToolCall, TurnPayload } from '../lib/types'
 import { TraceSpanDetail, type Span, type SpanLinks, type Tab } from '../components/TraceSpanDetail'
 import { groupSpans, TraceTree } from '../components/TraceTree'
@@ -38,9 +38,9 @@ function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; appro
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: ReactNode }) {
   return (
-    <div className="min-w-0 px-4 py-3">
+    <div className="min-w-0 bg-card px-4 py-3">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 truncate text-xl font-semibold tabular-nums tracking-tight text-foreground">{value}</dd>
+      <dd className="mt-0.5 truncate font-heading text-xl font-semibold tabular-nums tracking-tight text-foreground">{value}</dd>
       {hint && <dd className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</dd>}
     </div>
   )
@@ -155,6 +155,9 @@ export function TraceDetail({
   const failed = tools.filter((t) => t.failed).length
   const toolSeconds = tools.reduce((sum, t) => sum + t.seconds, 0)
   const llmSeconds = llm.reduce((sum, c) => sum + c.seconds, 0)
+  const firstTokens = llm.flatMap((c) => (c.first_token != null ? [c.first_token] : []))
+  const avgFirstToken = firstTokens.reduce((sum, s) => sum + s, 0) / Math.max(1, firstTokens.length)
+  const cost = data.cost?.usd != null ? data.cost : null
   const settings = Object.entries(data.settings ?? {}).filter(([key, value]) => key in SETTING_LABELS && value !== null && value !== '')
   const legacy = data.provenance === 'legacy_unknown'
 
@@ -204,56 +207,67 @@ export function TraceDetail({
           {data.error && <ErrorBox error={data.error} />}
           {legacy && <p className="text-sm text-muted-foreground">这是旧版会话恢复出来的记录，没有保存逐轮的耗时与工具调用。</p>}
 
-          <Card>
-            <dl className="grid grid-cols-2 divide-x divide-y divide-border lg:grid-cols-4 lg:divide-y-0">
+          <dl
+            className={`grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3 ${cost ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}
+          >
+            <Metric
+              label="总耗时"
+              value={formatDuration(data.elapsed_seconds)}
+              hint={
+                llm.length
+                  ? `模型占 ${formatDuration(llmSeconds)} · 工具 ${formatDuration(toolSeconds)}`
+                  : `工具 ${formatDuration(toolSeconds)}`
+              }
+            />
+            <Metric
+              label="模型调用"
+              value={llm.length ? String(llm.length) : '—'}
+              hint={llm.length ? (firstTokens.length ? `首 token 平均 ${avgFirstToken.toFixed(1)}s` : '主代理') : '旧记录未保存'}
+            />
+            <Metric
+              label="Token"
+              value={formatTokens(data.usage?.total)}
+              hint={`输入 ${formatTokens(data.usage?.input)} · 输出 ${formatTokens(data.usage?.output)}${
+                data.usage?.cache_read ? ` · 缓存 ${formatTokens(data.usage.cache_read)}` : ''
+              }`}
+            />
+            <Metric
+              label="工具调用"
+              value={String(tools.length)}
+              hint={
+                failed && firstFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSpanChange(firstFailed.key)
+                      setTab('output')
+                      document.getElementById('trace-spans')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }}
+                    className="inline-flex items-center gap-1 rounded-sm text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-red-400"
+                  >
+                    {failed} 次失败，查看
+                    <ArrowRight className="size-3" aria-hidden />
+                  </button>
+                ) : (
+                  '全部成功'
+                )
+              }
+            />
+            {cost && (
               <Metric
-                label="总耗时"
-                value={formatDuration(data.elapsed_seconds)}
-                hint={
-                  llm.length
-                    ? `模型 ${formatDuration(llmSeconds)} · 工具 ${formatDuration(toolSeconds)}`
-                    : `工具 ${formatDuration(toolSeconds)}`
-                }
+                label="费用"
+                value={`${formatUsd(cost.usd)}${cost.complete ? '' : '+'}`}
+                hint={cost.complete ? '按模型公开价估算' : '部分模型未定价，实际更高'}
               />
-              <Metric label="模型调用" value={llm.length ? String(llm.length) : '—'} hint={llm.length ? '主代理' : '旧记录未保存'} />
-              <Metric
-                label="tokens"
-                value={formatTokens(data.usage?.total)}
-                hint={`输入 ${formatTokens(data.usage?.input)} · 输出 ${formatTokens(data.usage?.output)}`}
-              />
-              <Metric
-                label="工具调用"
-                value={String(tools.length)}
-                hint={
-                  failed && firstFailed ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onSpanChange(firstFailed.key)
-                        setTab('output')
-                        document.getElementById('trace-spans')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                      }}
-                      className="text-red-600 underline-offset-2 hover:underline"
-                    >
-                      {failed} 次失败，查看第一个
-                    </button>
-                  ) : (
-                    '无失败'
-                  )
-                }
-              />
-            </dl>
-          </Card>
+            )}
+          </dl>
 
           <div id="trace-spans" className="scroll-mt-4">
             <Card className="overflow-hidden">
               <CardHeader title="执行过程">
                 {view.spans.length > 0 && (
-                  <span className="hidden items-center gap-1 text-xs text-zinc-400 sm:inline-flex">
-                    <kbd className="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700">↑↓</kbd>
-                    切换
-                    <kbd className="ml-1.5 rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700">←→</kbd>
-                    收起展开
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {llm.length} 次模型调用 · {tools.length} 次工具调用
                   </span>
                 )}
               </CardHeader>
@@ -276,8 +290,8 @@ export function TraceDetail({
                       onSelect={(s) => onSpanChange(s.key)}
                     />
                   </div>
-                  <div ref={detailRef} className="min-h-0 min-w-0 bg-background md:overflow-auto">
-                    <div className="p-4">
+                  <div ref={detailRef} className="min-h-0 min-w-0 bg-muted/30 md:overflow-auto">
+                    <div>
                       {selected && (
                         <TraceSpanDetail
                           span={selected}
