@@ -170,7 +170,7 @@ export function NewSession({ from }: { from?: string }) {
   }
 
   const defaultModel = models.data?.default ?? meta.data?.default_model ?? ''
-  // 收起时也能看出设了什么，免得��了某个时间过滤
+  // 收起时也能看出设了什么，免得漏了某个时间过滤
   const extras = [
     sinceCheck?.ok || untilCheck?.ok ? `${since.trim() || '开头'} → ${until.trim() || '结尾'}` : null,
     timezone.trim() || null,

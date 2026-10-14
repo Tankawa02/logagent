@@ -193,7 +193,7 @@ function SettingsForm({
       )}
       {settings.read_only && (
         <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-          当前 serve 以 --read-only 启动：可以修改并保存配置���但本次运行不会提供提问功能。
+          当前 serve 以 --read-only 启动：可以修改并保存配置，但本次运行不会提供提问功能。
         </div>
       )}
 
@@ -415,7 +415,7 @@ function SettingsForm({
         <Row
           label="在线经验复盘"
           field={fields.experience_reflection}
-          hint="每轮结束后多一次收尾模型（见「模型分层」）调用，复盘本轮做法：给用到的经验投票，证据回查通过时提炼候选经验（需在「经验」页确认后才生效）。影响之后��开始的提问。"
+          hint="每轮结束后多一次收尾模型（见「模型分层」）调用，复盘本轮做法：给用到的经验投票，证据回查通过时提炼候选经验（需在「经验」页确认后才生效）。影响之后新开始的提问。"
         >
           {(id) => {
             const field = fields.experience_reflection

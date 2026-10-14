@@ -211,7 +211,7 @@ function NewSkillForm({
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             maxLength={1024}
-            placeholder="支付回调超��、对账不一致时使用：网关日志字段、重试逻辑位置、常见根因"
+            placeholder="支付回调超时、对账不一致时使用：网关日志字段、重试逻辑位置、常见根因"
             className={FIELD}
           />
           <p className="text-xs text-zinc-400">模型只看到名称和这句描述，靠它判断什么时候读全文</p>
