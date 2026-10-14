@@ -1,5 +1,11 @@
 import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react'
-import { setThemePreference, useThemePreference, type ThemePreference } from '../lib/theme'
+import {
+  setThemePreference,
+  toggleResolvedTheme,
+  useResolvedDark,
+  useThemePreference,
+  type ThemePreference,
+} from '../lib/theme'
 
 const OPTIONS: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
   { value: 'system', label: '跟随系统', icon: Monitor },
@@ -37,18 +43,19 @@ export function ThemeToggle() {
   )
 }
 
-/** 收起的侧边栏里用：单个按钮依次切换 系统 → 亮色 → 暗色 */
+/** 侧边栏底部的单按钮：图标表示当前外观，点击在亮 / 暗之间切换 */
 export function ThemeCycleButton({ className = '' }: { className?: string }) {
-  const current = useThemePreference()
-  const index = OPTIONS.findIndex((o) => o.value === current)
-  const { icon: Icon, label } = OPTIONS[index]
-  const next = OPTIONS[(index + 1) % OPTIONS.length]
+  const preference = useThemePreference()
+  const dark = useResolvedDark()
+  const Icon = dark ? Moon : Sun
+  const label = `${dark ? '暗色' : '亮色'}${preference === 'system' ? '（跟随系统）' : ''}`
+  const nextLabel = dark ? '亮色' : '暗色'
   return (
     <button
       type="button"
-      onClick={() => setThemePreference(next.value)}
-      aria-label={`主题：${label}，点击切换为${next.label}`}
-      title={`主题：${label}`}
+      onClick={toggleResolvedTheme}
+      aria-label={`主题：${label}，点击切换为${nextLabel}`}
+      title={`主题：${label}，点击切换为${nextLabel}`}
       className={className}
     >
       <Icon className="h-[18px] w-[18px]" aria-hidden />

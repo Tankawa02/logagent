@@ -18,8 +18,12 @@ function readPreference(): ThemePreference {
 let preference = readPreference()
 let transitionTimer = 0
 
+function resolveDark() {
+  return preference === 'dark' || (preference === 'system' && media.matches)
+}
+
 function apply() {
-  const dark = preference === 'dark' || (preference === 'system' && media.matches)
+  const dark = resolveDark()
   const root = document.documentElement
   root.classList.toggle('dark', dark)
   root.style.colorScheme = dark ? 'dark' : 'light'
@@ -29,7 +33,9 @@ function apply() {
 }
 
 media.addEventListener('change', () => {
-  if (preference === 'system') apply()
+  if (preference !== 'system') return
+  apply()
+  listeners.forEach((listener) => listener())
 })
 
 window.addEventListener('storage', (event) => {
@@ -62,6 +68,20 @@ function subscribe(listener: () => void) {
 
 export function useThemePreference(): ThemePreference {
   return useSyncExternalStore(subscribe, () => preference)
+}
+
+/** 实际生效的主题（「跟随系统」已按系统设置换算） */
+export function useResolvedDark(): boolean {
+  return useSyncExternalStore(subscribe, resolveDark)
+}
+
+/**
+ * 在亮 / 暗之间切换实际外观，每次点击都一定有可见变化。
+ * 切到与系统一致的外观时回到「跟随系统」，不必再手动改回来。
+ */
+export function toggleResolvedTheme() {
+  const nextDark = !resolveDark()
+  setThemePreference(nextDark === media.matches ? 'system' : nextDark ? 'dark' : 'light')
 }
 
 apply()
