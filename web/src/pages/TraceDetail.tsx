@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ChevronRight, MessageSquare } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ArrowRight, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TopBar } from '../components/TopBar'
 import { Badge, buttonClass, Card, CardHeader, Empty, ErrorBox, ListSkeleton } from '../components/ui'
 import { TraceStatusBadge } from '../components/TraceStatusBadge'
@@ -15,10 +15,17 @@ function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; appro
   const llm = payload.llm_calls ?? []
   const tools = payload.tool_calls ?? []
   const approximate = tools.some((t) => t.started == null)
+  // 收尾 / 经验检索调用是事后追加进数组的，编号要按实际开始时间排，不能按数组下标
+  const rank = new Map(
+    llm
+      .map((call, i) => ({ i, start: call.started ?? 0 }))
+      .sort((a, b) => a.start - b.start || a.i - b.i)
+      .map((entry, order) => [entry.i, order + 1]),
+  )
   const spans: Span[] = llm.map((call, i) => ({
     kind: 'llm',
     key: `llm-${i}`,
-    label: `模型调用 #${i + 1}`,
+    label: `模型调用 #${rank.get(i)}`,
     start: call.started,
     seconds: call.seconds,
     call,
@@ -34,6 +41,45 @@ function buildSpans(payload: TurnPayload): { spans: Span[]; total: number; appro
   spans.sort((a, b) => a.start - b.start || (a.kind === 'llm' ? -1 : 1))
   const end = Math.max(0, ...spans.map((s) => s.start + s.seconds))
   return { spans, total: Math.max(payload.elapsed_seconds || 0, end, 0.001), approximate }
+}
+
+function QuestionTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLHeadingElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => {
+      if (!expanded) setOverflowing(el.scrollHeight > el.clientHeight + 1)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, expanded])
+  return (
+    <div className="space-y-1">
+      <h1
+        ref={ref}
+        title={expanded ? undefined : text}
+        className={`whitespace-pre-wrap break-words text-pretty text-[15px] font-medium leading-relaxed text-foreground ${expanded ? '' : 'line-clamp-2'}`}
+      >
+        {text}
+      </h1>
+      {(overflowing || expanded) && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronDown className={`size-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden />
+          {expanded ? '收起' : '展开全文'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: ReactNode }) {
@@ -198,9 +244,7 @@ export function TraceDetail({
               <span aria-hidden>·</span>
               <span className="tabular-nums">{formatGenerated(data.generated_at)}</span>
             </div>
-            <h1 className="text-pretty font-heading text-xl font-semibold leading-snug tracking-tight text-foreground">
-              {data.question || '（无问题文本）'}
-            </h1>
+            <QuestionTitle text={data.question || '（无问题文本）'} />
             <span className="sr-only">状态：{status.label}</span>
           </header>
 
