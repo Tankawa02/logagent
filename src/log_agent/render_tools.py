@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -297,6 +298,16 @@ class ToolRun:
     handle: Any
     started: float = field(default_factory=time.perf_counter)
     note: str = ""
+    full_output: Callable[[str], Any] | None = None
+
+    @property
+    def output(self) -> Any:
+        """优先用回调记下的完整 ToolMessage；新版 langgraph 的流式句柄只给正文字符串。"""
+        if self.full_output is not None and self.call_id:
+            found = self.full_output(self.call_id)
+            if found is not None:
+                return found
+        return getattr(self.handle, "output", None)
 
     @property
     def kind(self) -> str:
@@ -362,7 +373,7 @@ def settled_tool_line(run: ToolRun, nested: bool = False) -> ToolLine:
     if error:
         summary, failed = str(error).splitlines()[0], True
     else:
-        summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
+        summary, failed = summarize_tool_output(run.name, run.output)
 
     meta = Text()
     if summary:

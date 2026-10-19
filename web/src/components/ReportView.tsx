@@ -11,7 +11,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   ASSESSMENT,
@@ -408,9 +408,20 @@ function EvidenceCard({
   const range = `${evidence.line_start}${evidence.line_end !== evidence.line_start ? `-${evidence.line_end}` : ''}`
   const { dir, name } = splitPath(evidence.source)
   const { state, copy } = useCopy()
+  const card = useRef<HTMLDivElement>(null)
+  const mounted = useRef(false)
+  // 从原文「返回报告」时报告是重新挂载的：把刚才看的那条证据滚回视野中间；
+  // 报告一直在场时（只读模式并排显示）只做最小滚动，避免页面乱跳
+  useEffect(() => {
+    const first = !mounted.current
+    mounted.current = true
+    if (!active || !card.current) return
+    card.current.scrollIntoView({ block: first ? 'center' : 'nearest' })
+  }, [active])
   return (
     <div
-      className={`overflow-hidden rounded-xl border bg-white transition-colors dark:bg-zinc-900 ${
+      ref={card}
+      className={`scroll-my-4 overflow-hidden rounded-xl border bg-white transition-colors dark:bg-zinc-900 ${
         active
           ? 'border-brand-400 bg-brand-50/60 ring-1 ring-brand-300 dark:border-brand-700 dark:bg-brand-950/30 dark:ring-brand-800'
           : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'

@@ -64,6 +64,7 @@ class SubagentTracker(BaseCallbackHandler):
         self._usage_by_model: dict[str, dict[str, int]] = {}
         self._model_calls = 0
         self._main_inputs: list[list[Any]] = []
+        self._tool_outputs: dict[str, Any] = {}
 
     # ---- 查询（渲染线程调用）----------------------------------------------
 
@@ -160,8 +161,18 @@ class SubagentTracker(BaseCallbackHandler):
             self._calls[run_id] = call
             self._children[owner].append(call)
 
+    def tool_output(self, tool_call_id: str) -> Any:
+        """按 tool_call_id 取工具的完整返回（ToolMessage，含 artifact / status）。"""
+        with self._lock:
+            return self._tool_outputs.get(tool_call_id)
+
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         with self._lock:
+            # langgraph-prebuilt 1.1.1 起，流式 tool 事件里的 output 只剩正文字符串，
+            # artifact 和 status 都丢了；回调拿到的仍是完整 ToolMessage，在这里留一份
+            tool_call_id = getattr(output, "tool_call_id", None)
+            if tool_call_id:
+                self._tool_outputs[tool_call_id] = output
             call = self._calls.get(run_id)
             if call is not None:
                 call.output = output
