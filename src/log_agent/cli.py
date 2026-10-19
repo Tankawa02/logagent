@@ -1173,7 +1173,7 @@ def serve(
         from .web.app import STATIC_DIR, WebConfig, create_app
     except ImportError:
         _fail(
-            "Web 界面需要额外依赖：uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'"
+            "Web 界面需要额外依赖：uv tool install --reinstall 'log-agent[web] @ git+https://github.com/Tankawa02/logagent'"
             "（本地开发：uv sync --extra web）"
         )
     import secrets
