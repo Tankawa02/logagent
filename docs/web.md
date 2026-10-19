@@ -7,7 +7,7 @@
 所以终端和网页看到的结论、证据核对结果完全一致，两边开的会话也能互相接着问。
 
 ```bash
-uv tool install --reinstall 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'   # 需要 web 额外依赖
+uv tool install --reinstall 'log-agent[web] @ git+https://github.com/Tankawa02/logagent'   # 需要 web 额外依赖
 log-agent serve                           # 服务就绪后自动打开浏览器（链接带 ?token=）；先在「设置」填 Key，再在首页新建分析
 log-agent analyze -l app.log -c ./src     # 也可以照常在终端分析，结果自动存为会话，网页里能看到
 ```

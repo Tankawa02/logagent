@@ -10,7 +10,7 @@
 ### 推荐：Web 界面
 
 ```bash
-uv tool install 'log-agent[web] @ git+https://github.com/yourorg/log-agent.git'   # 安装（含 Web 依赖）
+uv tool install 'log-agent[web] @ git+https://github.com/Tankawa02/logagent'   # 安装（含 Web 依赖）
 log-agent serve                                                                   # 启动，服务就绪后自动打开浏览器
 ```
 
@@ -22,7 +22,7 @@ log-agent serve                                                                 
 ### 命令行
 
 ```bash
-uv tool install git+https://github.com/yourorg/log-agent.git  # 安装
+uv tool install git+https://github.com/Tankawa02/logagent  # 安装
 log-agent init                                                 # 检查 Key、选模型、识别日志格式，生成 .log-agent.toml
 log-agent analyze -l app.log                                   # 分析；配置里有 code 时会结合源码定位根因
 ```
