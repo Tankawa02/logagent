@@ -366,7 +366,7 @@ function ActionBlock({
   )
 }
 
-/** 报告正文容器：模型常写出 A/B 类名、长 URL 这类���有空格的长串，必须允许任意位置断行，否则会撑出卡片 */
+/** 报告正文容器：模型常写出 A/B 类名、长 URL 这类没有空格的长串，必须允许任意位置断行，否则会撑出卡片 */
 const PROSE = 'min-w-0 [overflow-wrap:anywhere]'
 
 /** 文件:行号、日志:行号 和 a.b() / FOO_BAR / key=value 这类代码片段用等宽高亮，扫一眼就能看到关键位置 */

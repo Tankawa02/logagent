@@ -275,9 +275,9 @@ class StreamRenderer:
         elif error:
             summary, failed = str(error).splitlines()[0], True
         else:
-            summary, failed = summarize_tool_output(run.name, getattr(run.handle, "output", None))
+            summary, failed = summarize_tool_output(run.name, run.output)
         ended = (None if incomplete else getattr(run.handle, "ended", None)) or time.perf_counter()
-        raw = "" if incomplete else (str(error) if error else tool_output_text(getattr(run.handle, "output", None)))
+        raw = "" if incomplete else (str(error) if error else tool_output_text(run.output))
         self.records.append(
             ToolRecord(
                 run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
@@ -414,7 +414,12 @@ class StreamRenderer:
 
         self.tool_count += 1
         # 旁白只挂在这一批的第一个工具上，并行的其它工具不重复显示
-        self.running.append(ToolRun(call_id=call_id, name=name, args=args, handle=tool_stream, note=self.pending_note))
+        self.running.append(
+            ToolRun(
+                call_id=call_id, name=name, args=args, handle=tool_stream, note=self.pending_note,
+                full_output=self.tracker.tool_output,
+            )
+        )
         self.pending_note = ""
         self.rendered_any = True
 
