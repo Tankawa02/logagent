@@ -531,7 +531,7 @@ def create_app(config: WebConfig) -> FastAPI:
     def delete_session(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
         from .runner import discard_live_run, get_live_run
 
-        # 正在跑的那一轮要先停下并收尾，��则它会一直占着分析锁，最后还往已删除的会话里存档
+        # 正在跑的那一轮要先停下并收尾，否则它会一直占着分析锁，最后还往已删除的会话里存档
         live = get_live_run(scope.name)
         if live is not None and not live.done:
             live.cancelled.set()
