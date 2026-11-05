@@ -53,10 +53,13 @@ class LiveRun:
     再接着收后续事件。只有显式的停止请求（cancelled）才会中断本轮。
     """
 
-    def __init__(self, session: str, question: str, run_id: str, *, turn: int | None = None) -> None:
+    def __init__(self, session: str, question: str, run_id: str, *, turn: int | None = None,
+                 attachments: list[dict[str, Any]] | None = None) -> None:
         self.session = session
         self.question = question
         self.run_id = run_id
+        # 只有文件名、类型和大小：切回来接上这一轮时，问题气泡下面照样列出附件
+        self.attachments = attachments or []
         # 这一轮存档后会是第几轮：前端拿它和会话历史比对，已经存档的就不再重放，避免出现两遍
         self.turn = turn
         self.saved_turn: int | None = None
@@ -144,7 +147,7 @@ class LiveRun:
 
     def describe(self) -> dict[str, Any]:
         return {"active": not self.done, "question": self.question, "run_id": self.run_id,
-                "turn": self.turn, "saved_turn": self.saved_turn,
+                "attachments": self.attachments, "turn": self.turn, "saved_turn": self.saved_turn,
                 "started": self.started, "finished_at": self.finished_at}
 
 
@@ -374,6 +377,7 @@ def run_turn(
     memory_mode: str = "suggest",
     prefix: str = "",
     experience_path: Path | None = None,
+    attachments: list[Any] | None = None,
 ) -> dict[str, Any] | None:
     """执行一轮续问并存进会话；返回本轮报告快照。调用方负责持有 TURN_LOCK。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -440,6 +444,11 @@ def run_turn(
             message = f"{pending_note}\n\n{message}"
         if prefix:
             message = f"{prefix}\n\n{message}"
+        from .attachments import build_content, describe
+
+        attachments = attachments or []
+        # 文本附件按上面已应用的会话脱敏设置处理；有图片时变成多模态内容块
+        content = build_content(message, attachments)
 
         renderer = WebStreamRenderer(
             original_emit, cancelled, linker=CitationLinker(info.logs, info.code, mode="off"), budget=budget,
@@ -447,7 +456,7 @@ def run_turn(
         )
         console.quiet = True
         try:
-            result = renderer.run(agent, {"messages": [{"role": "user", "content": message}]}, config=config)
+            result = renderer.run(agent, {"messages": [{"role": "user", "content": content}]}, config=config)
         finally:
             console.quiet = quiet
         renderer.close_message()
@@ -467,6 +476,8 @@ def run_turn(
         )
         if similar:
             payload["similar_cases"] = similar
+        if attachments:
+            payload["attachments"] = describe(attachments)
         store.record_turn(info.name, question, result.usage.get("total", 0), payload)
         if pending_note:
             latest = store.get(info.name)

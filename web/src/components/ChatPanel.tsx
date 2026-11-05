@@ -11,12 +11,36 @@ import {
   Copy,
   FileSearch,
   ListPlus,
+  Paperclip,
   RotateCcw,
   Square,
+  Upload,
   X,
 } from 'lucide-react'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react'
 import { api, scopeKey } from '../lib/api'
+import {
+  ACCEPT,
+  AttachmentReadError,
+  DEFAULT_ATTACHMENT_QUESTION,
+  MAX_ATTACHMENTS,
+  readAttachment,
+  toDisplay,
+  toUpload,
+  type DisplayAttachment,
+  type PendingAttachment,
+} from '../lib/attachments'
 import { followUpsFor } from '../lib/follow-ups'
 import { ASSESSMENT, CHECK_STATUS, visibleReport } from '../lib/format'
 import { useCopy, useStickToBottom } from '../lib/hooks'
@@ -26,6 +50,7 @@ import { PRIMARY_INPUT_ATTR } from '../lib/shortcuts'
 import { useSmoothText } from '../lib/smooth-text'
 import type { LiveRun, SourceTarget, TurnBrief } from '../lib/types'
 import { ActivityTimeline, type ToolActivity } from './ActivityTimeline'
+import { AttachmentList, AttachmentTray } from './ChatAttachments'
 import { FINISH_PHASES, FinishingStatus, type FinishPhase } from './FinishingStatus'
 import { Markdown } from './Markdown'
 import { MemoryConfirm, MemoryStatus } from './SessionMemory'
@@ -88,7 +113,15 @@ export function ChatPanel({
   const [stopping, setStopping] = useState(false)
   const [phase, setPhase] = useState<FinishPhase | null>(null)
   /** 分析进行中提的问题（输入框回车 / 时间线「问这一段」）先排队，本轮结束后自动发出 */
-  const [queued, setQueued] = useState<string | null>(null)
+  const [queued, setQueued] = useState<{ text: string; files: PendingAttachment[] } | null>(null)
+  /** 已选好、还没发出的附件（图片、日志片段、配置等） */
+  const [files, setFiles] = useState<PendingAttachment[]>([])
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [readingFiles, setReadingFiles] = useState(0)
+  const [dragging, setDragging] = useState(false)
+  /** 本页发出的问题带了哪些附件（含图片预览），按消息 id 记；历史轮次从会话存档里取 */
+  const [sentFiles, setSentFiles] = useState<Record<string, DisplayAttachment[]>>({})
+  const fileInput = useRef<HTMLInputElement>(null)
   /** 在输入框里按 ↑ / ↓ 翻看之前问过的问题时，当前停在第几个 */
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const [inputFocused, setInputFocused] = useState(false)
@@ -119,6 +152,11 @@ export function ChatPanel({
     ]
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
   const briefs = useMemo(() => new Map(turns.map((t) => [t.turn, t])), [turns])
+  const savedFiles = useMemo(() => {
+    const map = new Map<string, DisplayAttachment[]>(turns.map((t) => [`turn-${t.turn}-q`, t.attachments ?? []]))
+    if (live?.attachments?.length) map.set(`live-${live.run_id ?? 'run'}-q`, live.attachments)
+    return map
+  }, [turns, live?.attachments, live?.run_id])
 
   const { messages, sendMessage, reload, isLoading, error } = useChat({
     connection,
@@ -160,12 +198,12 @@ export function ChatPanel({
   })
 
   /** 发出或排队；返回 false 表示没收下（空问题，或已经有一个在排队），调用方要保留输入 */
-  function submit(text: string, retry?: { extra: string }): boolean {
-    const question = text.trim()
+  function submit(text: string, retry?: { extra: string }, attached: PendingAttachment[] = []): boolean {
+    const question = text.trim() || (attached.length > 0 ? DEFAULT_ATTACHMENT_QUESTION : '')
     if (!question) return false
     if (isLoading) {
       if (queued !== null || retry) return false
-      setQueued(question)
+      setQueued({ text: question, files: attached })
       return true
     }
     setTools([])
@@ -175,9 +213,67 @@ export function ChatPanel({
     setSavedTurn(null)
     setRetrying(false)
     scrollToBottom('auto')
+    // 附件只随这一次请求上传（不放进消息本身），否则之后每次追问都会把整段历史里的图片重新传一遍
+    const id = `user-${crypto.randomUUID()}`
+    if (attached.length > 0) setSentFiles((map) => ({ ...map, [id]: attached.map(toDisplay) }))
+    const body: Record<string, unknown> = {}
     // 重答：问题原样存档，服务端在发给模型的消息前加上「重新核实」和补充要求
-    void sendMessage(question, retry ? { body: { retry } } : undefined)
+    if (retry) body.retry = retry
+    if (attached.length > 0) body.attachments = attached.map(toUpload)
+    void sendMessage({ content: question, id }, Object.keys(body).length > 0 ? { body } : undefined)
     return true
+  }
+
+  async function addFiles(list: FileList | File[]) {
+    const incoming = Array.from(list)
+    if (incoming.length === 0) return
+    const room = MAX_ATTACHMENTS - files.length - readingFiles
+    if (room <= 0) {
+      setFileError(`一次最多附 ${MAX_ATTACHMENTS} 个文件`)
+      return
+    }
+    const accepted = incoming.slice(0, room)
+    setFileError(incoming.length > room ? `一次最多附 ${MAX_ATTACHMENTS} 个文件，多出的没有添加` : null)
+    setReadingFiles((n) => n + accepted.length)
+    const results = await Promise.allSettled(accepted.map((file, index) => readAttachment(file, index)))
+    setReadingFiles((n) => n - accepted.length)
+    const ok = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    const failed = results.flatMap((r) =>
+      r.status === 'rejected' ? [r.reason instanceof AttachmentReadError ? r.reason.message : '有文件读取失败'] : [],
+    )
+    if (ok.length > 0) setFiles((current) => [...current, ...ok].slice(0, MAX_ATTACHMENTS))
+    if (failed.length > 0) setFileError(failed.join('；'))
+  }
+
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = Array.from(event.clipboardData.files)
+    if (pasted.length === 0) return
+    // 只有文件（截图）时拦下默认行为；同时带文字的照常粘贴文字
+    if (!event.clipboardData.getData('text/plain')) event.preventDefault()
+    void addFiles(pasted)
+  }
+
+  function hasFiles(event: DragEvent) {
+    return Array.from(event.dataTransfer.types).includes('Files')
+  }
+
+  function onDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!hasFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (!dragging) setDragging(true)
+  }
+
+  function onDragLeave(event: DragEvent<HTMLFormElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false)
+  }
+
+  function onDrop(event: DragEvent<HTMLFormElement>) {
+    if (!hasFiles(event)) return
+    event.preventDefault()
+    setDragging(false)
+    void addFiles(event.dataTransfer.files)
+    textarea.current?.focus()
   }
 
   // 接回切走前还没跑完的那一轮；延迟一拍，StrictMode 的二次挂载只会真正接一次
@@ -209,7 +305,7 @@ export function ChatPanel({
     if (queued !== null) {
       const next = queued
       setQueued(null)
-      submit(next)
+      submit(next.text, undefined, next.files)
       return
     }
     // 焦点还在对话区（或哪儿都不在）时放回输入框，方便直接追问；用户正在面板里看东西就不打扰
@@ -272,8 +368,11 @@ export function ChatPanel({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (submit(input)) {
+    if (readingFiles > 0) return
+    if (submit(input, undefined, files)) {
       setInput('')
+      setFiles([])
+      setFileError(null)
       setHistoryIndex(null)
     }
   }
@@ -364,8 +463,9 @@ export function ChatPanel({
                 message.role === 'user' ? (
                   <div
                     key={message.id}
-                    className={`flex justify-end ${index > 0 ? 'mt-10 border-t border-zinc-200/80 pt-10 dark:border-zinc-800' : ''}`}
+                    className={`flex flex-col items-end gap-2 ${index > 0 ? 'mt-10 border-t border-zinc-200/80 pt-10 dark:border-zinc-800' : ''}`}
                   >
+                    <AttachmentList items={sentFiles[message.id] ?? savedFiles.get(message.id) ?? []} />
                     <h2 className="max-w-[85%] whitespace-pre-wrap break-words text-pretty rounded-2xl rounded-br-md bg-brand-50 px-4 py-2.5 text-[15px] font-normal leading-relaxed text-zinc-900 ring-1 ring-inset ring-brand-100 dark:bg-brand-950/50 dark:text-zinc-50 dark:ring-brand-900/70">
                       <span className="sr-only">问题：</span>
                       {text}
@@ -481,14 +581,16 @@ export function ChatPanel({
               className="flex items-center gap-2 rounded-2xl border border-brand-200 bg-brand-50 py-1.5 pl-3 pr-1.5 text-xs text-brand-800 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-200"
             >
               <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1 truncate" title={queued}>
-                本轮结束后自动提问：{queued}
+              <span className="min-w-0 flex-1 truncate" title={queued.text}>
+                本轮结束后自动提问：{queued.text}
+                {queued.files.length > 0 ? `（附 ${queued.files.length} 个文件）` : ''}
               </span>
               <button
                 type="button"
                 onClick={() => {
-                  const text = queued
+                  const { text, files: queuedFiles } = queued
                   setQueued(null)
+                  if (queuedFiles.length > 0) setFiles((current) => [...queuedFiles, ...current].slice(0, MAX_ATTACHMENTS))
                   fillInput(input.trim() ? `${text}\n${input}` : text)
                 }}
                 className="shrink-0 rounded-lg px-2 py-1 font-medium hover:bg-brand-100 dark:hover:bg-brand-900/50"
@@ -505,10 +607,54 @@ export function ChatPanel({
               </button>
             </div>
           )}
+          {fileError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 py-1.5 pl-3 pr-1.5 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+            >
+              <span className="min-w-0 flex-1 py-0.5 leading-relaxed">{fileError}</span>
+              <button
+                type="button"
+                onClick={() => setFileError(null)}
+                aria-label="关闭提示"
+                className="shrink-0 rounded-lg p-1 hover:bg-red-100 dark:hover:bg-red-900/50"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+          )}
           <form
             onSubmit={onSubmit}
-            className="rounded-3xl border border-zinc-200 bg-white p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.1)] transition-shadow focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/10 dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-brand-800"
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            className={`relative rounded-3xl border bg-white p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.1)] transition-shadow focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/10 dark:bg-zinc-900 dark:focus-within:border-brand-800 ${
+              dragging ? 'border-brand-400 ring-4 ring-brand-500/15 dark:border-brand-700' : 'border-zinc-200 dark:border-zinc-800'
+            }`}
           >
+            {dragging && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center gap-2 rounded-[1.35rem] border-2 border-dashed border-brand-300 bg-brand-50/90 text-sm font-medium text-brand-800 dark:border-brand-700 dark:bg-brand-950/80 dark:text-brand-200"
+              >
+                <Upload className="h-4 w-4" />
+                松开即可添加附件
+              </div>
+            )}
+            <AttachmentTray items={files} onRemove={(id) => setFiles((current) => current.filter((f) => f.id !== id))} />
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              accept={ACCEPT}
+              tabIndex={-1}
+              aria-hidden
+              className="sr-only"
+              onChange={(e) => {
+                if (e.target.files) void addFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
             <label htmlFor="chat-input" className="sr-only">
               追问
             </label>
@@ -521,6 +667,7 @@ export function ChatPanel({
                 setHistoryIndex(null)
               }}
               onKeyDown={onKey}
+              onPaste={onPaste}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               rows={1}
@@ -537,11 +684,28 @@ export function ChatPanel({
               className="block max-h-48 min-h-10 w-full resize-none bg-transparent px-3 py-2 text-[15px] leading-relaxed outline-none [field-sizing:content] placeholder:text-zinc-400"
             />
             <div className="flex items-center justify-between gap-2 pl-1">
-              <div className="min-w-0">{memory.data && <MemoryStatus memory={memory.data} />}</div>
+              <div className="flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={files.length + readingFiles >= MAX_ATTACHMENTS}
+                  aria-label="添加图片或文件"
+                  title={
+                    files.length + readingFiles >= MAX_ATTACHMENTS
+                      ? `一次最多附 ${MAX_ATTACHMENTS} 个文件`
+                      : '添加图片或文件（截图、日志片段、配置、堆栈等），也可以直接粘贴或拖进来'
+                  }
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                >
+                  {readingFiles > 0 ? <Spinner /> : <Paperclip className="h-4 w-4" aria-hidden />}
+                </button>
+                {memory.data && <MemoryStatus memory={memory.data} />}
+              </div>
               <div className="flex items-center gap-3">
                 {inputFocused && (
                   <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">
-                    {isLoading ? 'Enter 排队' : 'Enter 发送'} · Shift+Enter 换行{!input && questions.length > 0 ? ' · ↑ 上一问' : ''}
+                    {isLoading ? 'Enter 排队' : 'Enter 发送'} · Shift+Enter 换行
+                    {!input && questions.length > 0 ? ' · ↑ 上一问' : ' · 可粘贴截图'}
                   </span>
                 )}
                 {isLoading ? (
@@ -558,8 +722,8 @@ export function ChatPanel({
                 ) : (
                   <button
                     type="submit"
-                    disabled={!input.trim()}
-                    title={input.trim() ? '发送' : '先输入追问内容'}
+                    disabled={(!input.trim() && files.length === 0) || readingFiles > 0}
+                    title={readingFiles > 0 ? '正在读取附件…' : input.trim() || files.length > 0 ? '发送' : '先输入追问内容或添加附件'}
                     aria-label="发送"
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm transition-colors hover:bg-brand-700 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
                   >

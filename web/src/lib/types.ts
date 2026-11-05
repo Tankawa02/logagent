@@ -232,6 +232,15 @@ export interface TurnBrief {
   confidence: Confidence | null
   evidence_status: EvidenceCheck['status'] | null
   issues: number
+  /** 网页对话里随问题上传的附件：只存文件名、类型和大小 */
+  attachments?: AttachmentMeta[]
+}
+
+export interface AttachmentMeta {
+  name: string
+  kind: 'image' | 'text'
+  size: number
+  truncated?: boolean
 }
 
 export interface SourceRef {
@@ -351,6 +360,7 @@ export interface FsListing {
 export interface LiveRun {
   active: boolean
   question?: string
+  attachments?: AttachmentMeta[]
   run_id?: string
   /** 这一轮存档后的轮次号；会话历史里已有它就说明已经存档，不用再接 */
   turn?: number | null
