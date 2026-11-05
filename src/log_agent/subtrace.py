@@ -65,8 +65,19 @@ class SubagentTracker(BaseCallbackHandler):
         self._model_calls = 0
         self._main_inputs: list[list[Any]] = []
         self._tool_outputs: dict[str, Any] = {}
+        self._main_runs: dict[UUID, str] = {}
+        self._main_times: dict[str, tuple[float, float | None]] = {}
 
     # ---- 查询（渲染线程调用）----------------------------------------------
+
+    def tool_timing(self, tool_call_id: str) -> tuple[float | None, float | None]:
+        """主代理工具真实的（开始, 结束）时刻。
+
+        新版 langgraph 的流式句柄不带结束时间，并行工具只能等到下一条消息才统一结算，
+        直接用结算时刻会让同一批工具显示成一样的耗时，所以以回调记下的时刻为准。
+        """
+        with self._lock:
+            return self._main_times.get(tool_call_id, (None, None))
 
     def children(self, task_call_id: str) -> list[SubCall]:
         with self._lock:
@@ -149,11 +160,15 @@ class SubagentTracker(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         name = (serialized or {}).get("name") or kwargs.get("name") or ""
+        tool_call_id = kwargs.get("tool_call_id")
         with self._lock:
             self._parent[run_id] = parent_run_id
             owner = self._owner(parent_run_id)
+            if owner is None and tool_call_id:
+                self._main_runs[run_id] = tool_call_id
+                self._main_times[tool_call_id] = (time.perf_counter(), None)
             if name == "task" and owner is None:
-                self._task_runs[run_id] = kwargs.get("tool_call_id") or str(run_id)
+                self._task_runs[run_id] = tool_call_id or str(run_id)
                 return
             if owner is None:
                 return
@@ -173,13 +188,20 @@ class SubagentTracker(BaseCallbackHandler):
             tool_call_id = getattr(output, "tool_call_id", None)
             if tool_call_id:
                 self._tool_outputs[tool_call_id] = output
+            self._finish_main(run_id)
             call = self._calls.get(run_id)
             if call is not None:
                 call.output = output
                 call.ended = time.perf_counter()
 
+    def _finish_main(self, run_id: UUID) -> None:
+        call_id = self._main_runs.pop(run_id, None)
+        if call_id is not None and call_id in self._main_times:
+            self._main_times[call_id] = (self._main_times[call_id][0], time.perf_counter())
+
     def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
         with self._lock:
+            self._finish_main(run_id)
             call = self._calls.get(run_id)
             if call is not None:
                 call.error = str(error) or type(error).__name__

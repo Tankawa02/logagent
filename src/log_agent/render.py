@@ -217,7 +217,7 @@ class StreamRenderer:
         icon = self.spinner.render(now)
         icon = icon.copy() if isinstance(icon, Text) else Text(str(icon))
         icon.stylize(f"tool.{run.kind}")
-        meta = Text(format_duration(now - run.started), style="muted")
+        meta = Text(format_duration(max(0.0, now - run.began)), style="muted")
         return ToolLine(run, icon, meta, nested=nested)
 
     def _live_subcalls(self, task: ToolRun, now: float) -> list[RenderableType]:
@@ -276,12 +276,13 @@ class StreamRenderer:
             summary, failed = str(error).splitlines()[0], True
         else:
             summary, failed = summarize_tool_output(run.name, run.output)
-        ended = (None if incomplete else getattr(run.handle, "ended", None)) or time.perf_counter()
+        ended = (None if incomplete else run.ended) or time.perf_counter()
+        began = run.began
         raw = "" if incomplete else (str(error) if error else tool_output_text(run.output))
         self.records.append(
             ToolRecord(
-                run.name, dict(run.args), summary, failed, round(ended - run.started, 3), subagent, run.note,
-                started=round(max(0.0, run.started - self.start), 3),
+                run.name, dict(run.args), summary, failed, round(max(0.0, ended - began), 3), subagent, run.note,
+                started=round(max(0.0, began - self.start), 3),
                 incomplete=incomplete,
                 output=raw[:TOOL_OUTPUT_CHARS],
                 output_chars=len(raw),
@@ -417,7 +418,7 @@ class StreamRenderer:
         self.running.append(
             ToolRun(
                 call_id=call_id, name=name, args=args, handle=tool_stream, note=self.pending_note,
-                full_output=self.tracker.tool_output,
+                full_output=self.tracker.tool_output, timing=self.tracker.tool_timing,
             )
         )
         self.pending_note = ""
