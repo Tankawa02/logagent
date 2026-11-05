@@ -299,6 +299,22 @@ class ToolRun:
     started: float = field(default_factory=time.perf_counter)
     note: str = ""
     full_output: Callable[[str], Any] | None = None
+    timing: Callable[[str], tuple[float | None, float | None]] | None = None
+
+    def _timing(self) -> tuple[float | None, float | None]:
+        if self.timing is not None and self.call_id:
+            return self.timing(self.call_id)
+        return None, None
+
+    @property
+    def began(self) -> float:
+        """工具真正开始执行的时刻；`started` 只是流里看到这次调用的时刻。"""
+        return self._timing()[0] or self.started
+
+    @property
+    def ended(self) -> float | None:
+        ended = self._timing()[1]
+        return ended if ended is not None else getattr(self.handle, "ended", None)
 
     @property
     def output(self) -> Any:
@@ -367,8 +383,7 @@ def _tool_icon(kind: str) -> Text:
 
 
 def settled_tool_line(run: ToolRun, nested: bool = False) -> ToolLine:
-    ended = getattr(run.handle, "ended", None)
-    duration = format_duration((ended or time.perf_counter()) - run.started)
+    duration = format_duration((run.ended or time.perf_counter()) - run.began)
     error = getattr(run.handle, "error", None)
     if error:
         summary, failed = str(error).splitlines()[0], True
