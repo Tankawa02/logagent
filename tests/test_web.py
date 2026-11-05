@@ -510,6 +510,77 @@ def test_chat_accepts_plain_question_and_rejects_empty(demo, scripted_agent) -> 
         assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
 
 
+_PNG_1PX = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def _b64(text: str) -> str:
+    import base64
+
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def test_chat_sends_image_and_text_attachments_to_model(demo, scripted_agent, monkeypatch) -> None:
+    db, *_ = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    sent: list = []
+    real_run = runner.WebStreamRenderer.run
+
+    def capture(self, agent, inputs, **kwargs):
+        sent.append(inputs["messages"][0]["content"])
+        return real_run(self, agent, inputs, **kwargs)
+
+    monkeypatch.setattr(runner.WebStreamRenderer, "run", capture)
+    attachments = [
+        {"name": "dashboard.png", "mime": "image/png", "data": _PNG_1PX},
+        {"name": "C:\\tmp\\error.log", "mime": "text/plain", "data": _b64("ERROR 用户 13812345678 下单失败\n```\nstack\n")},
+    ]
+    body = {"question": "这张监控图和报错有关吗？", "forwardedProps": {"attachments": attachments}}
+    with client.stream("POST", f"/api/sessions/{SESSION}/chat", json=body, headers=WRITE) as response:
+        assert response.status_code == 200
+        assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
+
+    content = sent[0]
+    assert isinstance(content, list) and content[0]["type"] == "text"
+    text = content[0]["text"]
+    assert "这张监控图和报错有关吗？" in text and "附件「error.log」" in text  # 路径只保留文件名
+    assert "13812345678" not in text and "下单失败" in text  # 文本附件和读日志一样脱敏
+    assert "````" in text  # 附件里有 ``` 时用更长的围栏包住
+    assert "「dashboard.png」" in text
+    assert content[1] == {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_PNG_1PX}"}}
+
+    detail = client.get(f"/api/sessions/{SESSION}", headers=OWNER).json()
+    latest = detail["turn_list"][-1]
+    assert latest["question"] == "这张监控图和报错有关吗？"
+    assert [(a["name"], a["kind"]) for a in latest["attachments"]] == [("dashboard.png", "image"), ("error.log", "text")]
+    turn = client.get(f"/api/sessions/{SESSION}/turns/{latest['turn']}", headers=OWNER).json()
+    assert _PNG_1PX not in json.dumps(turn)  # 存档只记文件名和大小，不存原图
+
+
+def test_chat_attachments_only_uses_default_question_and_rejects_bad_files(demo, scripted_agent) -> None:
+    from log_agent.web.attachments import DEFAULT_QUESTION, MAX_ATTACHMENTS
+
+    db, *_ = demo
+    client = client_for(db, agent_factory=cli._web_agent_factory)
+    url = f"/api/sessions/{SESSION}/chat"
+    image = {"name": "a.png", "mime": "image/png", "data": _PNG_1PX}
+    bad = [
+        [{"name": "x.bin", "mime": "application/octet-stream", "data": _b64("ab\x00cd")}],
+        [{"name": "fake.png", "mime": "image/png", "data": _b64("not an image")}],
+        [{"name": "a.txt", "data": "!!!not-base64!!!"}],
+        [image] * (MAX_ATTACHMENTS + 1),
+        "not-a-list",
+    ]
+    for attachments in bad:
+        response = client.post(url, json={"question": "看看", "attachments": attachments}, headers=WRITE)
+        assert response.status_code == 400, attachments
+    with client.stream("POST", url, json={"question": "", "attachments": [image]}, headers=WRITE) as response:
+        assert sse_events(response)[-1]["type"] == "RUN_FINISHED"
+    detail = client.get(f"/api/sessions/{SESSION}", headers=OWNER).json()
+    assert detail["turn_list"][-1]["question"] == DEFAULT_QUESTION
+
+
 def test_fs_browse_is_owner_only_and_lists_dirs_first(demo) -> None:
     db, log, code = demo
     client = client_for(db)

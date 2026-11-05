@@ -635,7 +635,18 @@ def create_app(config: WebConfig) -> FastAPI:
             body = await request.json()
         except ValueError as exc:
             raise HTTPException(400, "请求体不是 JSON") from exc
+        from .attachments import DEFAULT_QUESTION, AttachmentError, parse_attachments
+
         question = _question_from(body)
+        forwarded = body.get("forwardedProps") if isinstance(body, dict) else None
+        raw_attachments = (body.get("attachments") if isinstance(body, dict) else None) or (
+            forwarded.get("attachments") if isinstance(forwarded, dict) else None)
+        try:
+            attachments = parse_attachments(raw_attachments)
+        except AttachmentError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not question and attachments:
+            question = DEFAULT_QUESTION
         if not question:
             raise HTTPException(400, "问题不能为空")
         with _connect(config) as conn:
@@ -643,7 +654,7 @@ def create_app(config: WebConfig) -> FastAPI:
         missing = [p for p in info.logs if not Path(p).is_file()]
         if missing:
             raise HTTPException(409, f"会话使用的日志已不存在：{missing[0]}")
-        return _start_turn(config, info, question, body)
+        return _start_turn(config, info, question, body, attachments)
 
     @app.get("/api/sessions/{name}/chat/live")
     def chat_live(scope: Scope = Depends(owner_scope)) -> dict[str, Any]:
@@ -745,7 +756,8 @@ def _register_read_routes(router: APIRouter, dep, config: WebConfig) -> None:
     def session_detail(scope: Scope = Depends(dep)) -> dict[str, Any]:
         with _connect(config) as conn:
             store, info = _load(conn, scope.name)
-            turns = [_turn_brief(n, p) for n, p in store.history(scope.name)]
+            # 对话页在历史问题下列出当时上传的附件（只有文件名、类型和大小）；侧边栏的概况用不到
+            turns = [{**_turn_brief(n, p), "attachments": p.get("attachments") or []} for n, p in store.history(scope.name)]
             feedback = {} if scope.read_only else store.feedback(scope.name)
         for brief in turns:
             brief["feedback"] = feedback.get(brief["turn"])
@@ -848,7 +860,9 @@ def _question_from(body: Any) -> str:
     return ""
 
 
-def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[str, Any]) -> StreamingResponse:
+def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[str, Any],
+                attachments: list[Any] | None = None) -> StreamingResponse:
+    from .attachments import describe
     from .runner import TURN_LOCK, LiveRun, custom, register_live_run, run_turn
 
     if not TURN_LOCK.acquire(blocking=False):
@@ -862,7 +876,8 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
     if isinstance(retry, dict):
         extra = str(retry.get("extra") or "").strip()[:RETRY_EXTRA_MAX]
         prefix = RETRY_PREFIX + (f"\n补充要求：{extra}" if extra else "")
-    live = LiveRun(info.name, question, run_id, turn=info.turns + 1)
+    attachments = attachments or []
+    live = LiveRun(info.name, question, run_id, turn=info.turns + 1, attachments=describe(attachments))
     register_live_run(live)
     emit = live.emit
 
@@ -872,7 +887,7 @@ def _start_turn(config: WebConfig, info: SessionInfo, question: str, body: dict[
                 db_path=config.db_path, info=info, question=question, emit=emit, cancelled=live.cancelled,
                 agent_factory=config.agent_factory, base_url=config.base_url, thread_id=thread_id, run_id=run_id,
                 redact_owner=config.redact_owner, memory_path=config.memory_path, memory_mode=config.memory_mode,
-                prefix=prefix, experience_path=config.experience_path,
+                prefix=prefix, experience_path=config.experience_path, attachments=attachments,
             )
         except Exception as exc:  # noqa: BLE001 — 任何失败都要以 RUN_ERROR 告知浏览器，而不是让流悄悄断开
             from ..redact import redact_log

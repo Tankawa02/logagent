@@ -38,6 +38,9 @@ def content_to_text(content: Any) -> str:
             elif isinstance(block, dict) and block.get("type") == "text":
                 if isinstance(block.get("text"), str):
                     parts.append(block["text"])
+            elif isinstance(block, dict) and block.get("type") in ("image_url", "image"):
+                # 网页对话上传的图片：trace 里只标出位置，不存 base64 原文
+                parts.append("[图片]")
         return "\n".join(parts)
     return str(content) if content else ""
 
